@@ -16,6 +16,7 @@ on:
 
 env:
   SCALA_VERSION: "2.11.12"
+  MILL_VERSION: "0.12.1"
 
 jobs:
   compile:
@@ -30,7 +31,7 @@ jobs:
       run: git submodule update --init --recursive
     - uses: jodersky/setup-mill@master
       with:
-        mill-version: 0.12.1
+        mill-version: $MILL_VERSION
     - run: mill __.compile
     - uses: actions/cache/save@v3
       with:
@@ -47,6 +48,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    - uses: jodersky/setup-mill@master
+      with:
+        mill-version: $MILL_VERSION
     - run: mill idslplugin[$SCALA_VERSION].test
 
   idslpayload-test:
@@ -58,6 +62,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    - uses: jodersky/setup-mill@master
+      with:
+        mill-version: $MILL_VERSION
     - run: mill idslpayload[$SCALA_VERSION].test
 
   core-test:
@@ -69,6 +76,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    - uses: jodersky/setup-mill@master
+      with:
+        mill-version: $MILL_VERSION
     - run: mill core[$SCALA_VERSION].test
     - run: mill tester[$SCALA_VERSION].testOnly spinal.core.* -- -l spinal.tester.formal -l spinal.tester.psl
 
@@ -81,18 +91,24 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    - uses: jodersky/setup-mill@master
+      with:
+        mill-version: $MILL_VERSION
     - run: mill tester[$SCALA_VERSION].testOnly spinal.core.* -- -n spinal.tester.formal
 
   core-psl:
-      needs: compile
-      runs-on: ubuntu-latest
-      timeout-minutes: 90
-      container:
-        image: ghcr.io/spinalhdl/docker:latest
-      steps:
-      - uses: actions/checkout@v3
-      - uses: ./.github/actions/get-compiled
-      - run: mill tester[$SCALA_VERSION].testOnly spinal.core.* -- -n spinal.tester.psl
+    needs: compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/spinalhdl/docker:latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: ./.github/actions/get-compiled
+    - uses: jodersky/setup-mill@master
+      with:
+        mill-version: $MILL_VERSION
+    - run: mill tester[$SCALA_VERSION].testOnly spinal.core.* -- -n spinal.tester.psl
 
   sim-test:
     needs: compile
@@ -103,6 +119,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    - uses: jodersky/setup-mill@master
+      with:
+        mill-version: $MILL_VERSION
     - run: mill sim[$SCALA_VERSION].test
 
   tester-test:
@@ -114,6 +133,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    - uses: jodersky/setup-mill@master
+      with:
+        mill-version: $MILL_VERSION
     - run: mill tester[$SCALA_VERSION].testOnly spinal.tester.* -- -l spinal.tester.formal -l spinal.tester.psl
 
   tester-formal:
@@ -125,6 +147,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    - uses: jodersky/setup-mill@master
+      with:
+        mill-version: $MILL_VERSION
     - run: mill tester[$SCALA_VERSION].testOnly spinal.tester.* -- -n spinal.tester.formal
 
   tester-psl:
@@ -136,6 +161,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    - uses: jodersky/setup-mill@master
+      with:
+        mill-version: $MILL_VERSION
     - run: mill tester[$SCALA_VERSION].testOnly spinal.tester.* -- -n spinal.tester.psl
 
   lib-test:
@@ -147,6 +175,9 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    - uses: jodersky/setup-mill@master
+      with:
+        mill-version: $MILL_VERSION
     - run: mill lib[$SCALA_VERSION].test
     - run: mill tester[$SCALA_VERSION].testOnly spinal.lib.* -- -l spinal.tester.formal -l spinal.tester.psl
 
@@ -159,20 +190,26 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    - uses: jodersky/setup-mill@master
+      with:
+        mill-version: $MILL_VERSION
     - run: mill tester[$SCALA_VERSION].testOnly spinal.lib.* -- -n spinal.tester.formal
 
 
   lib-psl:
-      needs: compile
-      runs-on: ubuntu-latest
-      timeout-minutes: 90
-      container:
-        image: ghcr.io/spinalhdl/docker:latest
-      steps:
-      - uses: actions/checkout@v3
-      - uses: ./.github/actions/get-compiled
-      - run: mill tester[$SCALA_VERSION].testOnly spinal.lib.* -- -n spinal.tester.psl
-      
+    needs: compile
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    container:
+      image: ghcr.io/spinalhdl/docker:latest
+    steps:
+    - uses: actions/checkout@v3
+    - uses: ./.github/actions/get-compiled
+    - uses: jodersky/setup-mill@master
+      with:
+        mill-version: $MILL_VERSION
+    - run: mill tester[$SCALA_VERSION].testOnly spinal.lib.* -- -n spinal.tester.psl
+
   # scaladoc:
   #   needs: compile
   #   runs-on: ubuntu-latest
