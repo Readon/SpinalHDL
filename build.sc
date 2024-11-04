@@ -21,7 +21,7 @@ trait SpinalModule extends SbtModule with CrossSbtModule { outer =>
   object test extends CrossSbtModuleTests with TestModule.ScalaTest {
     def ivyDeps = Agg(ivy"org.scalatest::scalatest::${scalatestVersion}")
   }
-  def testOnly(args: String*) = T.command { test.testOnly(args: _*) }
+  def testOnly(args: String*) = T.command { test.testOnly(args: _*)() }
 
   // Default definitions for moduleDeps.  For projects that consume us as a
   // foreign module (with a git submodule), override these to avoid building
@@ -143,8 +143,16 @@ trait Tester extends SpinalModule with SpinalPublishModule {
     os.copy.over(sourcePath, destPath, createFolders = true)
   }
 
-  def testOnly(args: String*) = T.command {
-    copyPythonResources()
-    super.testOnly(args: _*)
+  def testOnly(args: String*) = {
+    val (selector, testArgs) = args.indexOf("--") match {
+      case -1 => (args, Seq.empty)
+      case pos =>
+        val (s, t) = args.splitAt(pos)
+        (s, t.tail)
+    }
+    val argsTask = Task.Anon { copyPythonResources(); testArgs }
+    Task.Command {
+      testTask(argsTask, Task.Anon { selector })()
+    }
   }
 }
