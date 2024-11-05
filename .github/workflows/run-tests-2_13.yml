@@ -29,7 +29,7 @@ jobs:
     - name: Get submodules
       shell: bash
       run: git submodule update --init --recursive
-    - uses: jodersky/setup-mill@master
+    - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
     - run: mill __.compile
@@ -48,7 +48,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
-    - uses: jodersky/setup-mill@master
+    - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
     - run: mill idslplugin[$SCALA_VERSION].test
@@ -62,7 +62,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
-    - uses: jodersky/setup-mill@master
+    - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
     - run: mill idslpayload[$SCALA_VERSION].test
@@ -76,7 +76,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
-    - uses: jodersky/setup-mill@master
+    - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
     - run: mill core[$SCALA_VERSION].test
@@ -91,7 +91,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
-    - uses: jodersky/setup-mill@master
+    - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
     - run: mill tester[$SCALA_VERSION].testOnly spinal.core.* -- -n spinal.tester.formal
@@ -105,7 +105,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
-    - uses: jodersky/setup-mill@master
+    - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
     - run: mill tester[$SCALA_VERSION].testOnly spinal.core.* -- -n spinal.tester.psl
@@ -119,7 +119,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
-    - uses: jodersky/setup-mill@master
+    - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
     - run: mill sim[$SCALA_VERSION].test
@@ -133,7 +133,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
-    - uses: jodersky/setup-mill@master
+    - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
     - run: mill tester[$SCALA_VERSION].testOnly spinal.tester.* -- -l spinal.tester.formal -l spinal.tester.psl
@@ -147,7 +147,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
-    - uses: jodersky/setup-mill@master
+    - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
     - run: mill tester[$SCALA_VERSION].testOnly spinal.tester.* -- -n spinal.tester.formal
@@ -161,7 +161,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
-    - uses: jodersky/setup-mill@master
+    - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
     - run: mill tester[$SCALA_VERSION].testOnly spinal.tester.* -- -n spinal.tester.psl
@@ -175,7 +175,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
-    - uses: jodersky/setup-mill@master
+    - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
     - run: mill lib[$SCALA_VERSION].test
@@ -190,7 +190,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
-    - uses: jodersky/setup-mill@master
+    - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
     - run: mill tester[$SCALA_VERSION].testOnly spinal.lib.* -- -n spinal.tester.formal
@@ -205,7 +205,7 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
-    - uses: jodersky/setup-mill@master
+    - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
     - run: mill tester[$SCALA_VERSION].testOnly spinal.lib.* -- -n spinal.tester.psl
