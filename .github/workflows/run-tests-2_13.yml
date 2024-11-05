@@ -47,10 +47,10 @@ jobs:
       image: ghcr.io/spinalhdl/docker:latest
     steps:
     - uses: actions/checkout@v3
-    - uses: ./.github/actions/get-compiled
     - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
+    - uses: ./.github/actions/get-compiled
     - run: mill idslplugin[$SCALA_VERSION].test
 
   idslpayload-test:
@@ -61,10 +61,10 @@ jobs:
       image: ghcr.io/spinalhdl/docker:latest
     steps:
     - uses: actions/checkout@v3
-    - uses: ./.github/actions/get-compiled
     - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
+    - uses: ./.github/actions/get-compiled
     - run: mill idslpayload[$SCALA_VERSION].test
 
   core-test:
@@ -74,11 +74,11 @@ jobs:
     container:
       image: ghcr.io/spinalhdl/docker:latest
     steps:
-    - uses: actions/checkout@v3
-    - uses: ./.github/actions/get-compiled
+    - uses: actions/checkout@v3    
     - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
+    - uses: ./.github/actions/get-compiled
     - run: mill core[$SCALA_VERSION].test
     - run: mill tester[$SCALA_VERSION].testOnly spinal.core.* -- -l spinal.tester.formal -l spinal.tester.psl
 
@@ -90,10 +90,10 @@ jobs:
       image: ghcr.io/spinalhdl/docker:latest
     steps:
     - uses: actions/checkout@v3
-    - uses: ./.github/actions/get-compiled
     - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
+    - uses: ./.github/actions/get-compiled
     - run: mill tester[$SCALA_VERSION].testOnly spinal.core.* -- -n spinal.tester.formal
 
   core-psl:
@@ -104,10 +104,10 @@ jobs:
       image: ghcr.io/spinalhdl/docker:latest
     steps:
     - uses: actions/checkout@v3
-    - uses: ./.github/actions/get-compiled
     - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
+    - uses: ./.github/actions/get-compiled
     - run: mill tester[$SCALA_VERSION].testOnly spinal.core.* -- -n spinal.tester.psl
 
   sim-test:
@@ -118,10 +118,10 @@ jobs:
       image: ghcr.io/spinalhdl/docker:latest
     steps:
     - uses: actions/checkout@v3
-    - uses: ./.github/actions/get-compiled
     - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
+    - uses: ./.github/actions/get-compiled
     - run: mill sim[$SCALA_VERSION].test
 
   tester-test:
@@ -132,10 +132,10 @@ jobs:
       image: ghcr.io/spinalhdl/docker:latest
     steps:
     - uses: actions/checkout@v3
-    - uses: ./.github/actions/get-compiled
     - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
+    - uses: ./.github/actions/get-compiled
     - run: mill tester[$SCALA_VERSION].testOnly spinal.tester.* -- -l spinal.tester.formal -l spinal.tester.psl
 
   tester-formal:
@@ -146,10 +146,10 @@ jobs:
       image: ghcr.io/spinalhdl/docker:latest
     steps:
     - uses: actions/checkout@v3
-    - uses: ./.github/actions/get-compiled
     - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
+    - uses: ./.github/actions/get-compiled
     - run: mill tester[$SCALA_VERSION].testOnly spinal.tester.* -- -n spinal.tester.formal
 
   tester-psl:
@@ -160,10 +160,10 @@ jobs:
       image: ghcr.io/spinalhdl/docker:latest
     steps:
     - uses: actions/checkout@v3
-    - uses: ./.github/actions/get-compiled
     - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
+    - uses: ./.github/actions/get-compiled
     - run: mill tester[$SCALA_VERSION].testOnly spinal.tester.* -- -n spinal.tester.psl
 
   lib-test:
@@ -174,10 +174,10 @@ jobs:
       image: ghcr.io/spinalhdl/docker:latest
     steps:
     - uses: actions/checkout@v3
-    - uses: ./.github/actions/get-compiled
     - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
+    - uses: ./.github/actions/get-compiled
     - run: mill lib[$SCALA_VERSION].test
     - run: mill tester[$SCALA_VERSION].testOnly spinal.lib.* -- -l spinal.tester.formal -l spinal.tester.psl
 
@@ -189,10 +189,10 @@ jobs:
       image: ghcr.io/spinalhdl/docker:latest
     steps:
     - uses: actions/checkout@v3
-    - uses: ./.github/actions/get-compiled
     - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
+    - uses: ./.github/actions/get-compiled
     - run: mill tester[$SCALA_VERSION].testOnly spinal.lib.* -- -n spinal.tester.formal
 
 
@@ -204,10 +204,10 @@ jobs:
       image: ghcr.io/spinalhdl/docker:latest
     steps:
     - uses: actions/checkout@v3
-    - uses: ./.github/actions/get-compiled
     - uses: zhutmost/setup-mill@main
       with:
         mill-version: $MILL_VERSION
+    - uses: ./.github/actions/get-compiled
     - run: mill tester[$SCALA_VERSION].testOnly spinal.lib.* -- -n spinal.tester.psl
 
   # scaladoc:
