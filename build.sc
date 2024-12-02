@@ -3,9 +3,11 @@ import mill._, scalalib._, publish._
 import mill.define.ModuleRef
 import $file.project.Version
 
+def parallelTest = sys.env.getOrElse("SBT_TEST_PARALLEL", "1") == "1"
+
 trait SpinalModule extends SbtModule with CrossSbtModule { outer =>
   def scalatestVersion = "3.2.14"
-  def scalacOptions = super.scalacOptions() ++ Seq("-unchecked", "-target:jvm-1.8")
+  def scalacOptions = super.scalacOptions() ++ Seq("-unchecked", "-target:jvm-1.8", "-language:reflectiveCalls")
   def javacOptions = super.javacOptions() ++ Seq("-source", "1.8", "-target", "1.8")
 
   val IvyDeps = Agg(
@@ -18,7 +20,11 @@ trait SpinalModule extends SbtModule with CrossSbtModule { outer =>
   )
 
   object test extends CrossSbtModuleTests with TestModule.ScalaTest {
-    def ivyDeps = Agg(ivy"org.scalatest::scalatest::${scalatestVersion}")
+    def ivyDeps = Agg(ivy"org.scalatest::scalatest::${scalatestVersion}")    
+    override def forkArgs = Seq(
+      "-Xmx2G",
+      if(parallelTest) "-Dorg.scalatest.parallel=true" else ""
+    )
   }
   def testOnly(args: String*) = T.command { test.testOnly(args: _*) }
 
