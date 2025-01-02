@@ -23,12 +23,6 @@ class DfiMemoryAgent(ctrl: DfiControlInterface, wr: DfiWriteInterface, rd: DfiRe
   val rowWidth = busConfig.sdram.rowWidth
   val columnWidth = busConfig.sdram.columnWidth
 
-  val ckeProxy = ctrl.cke.simProxy()
-  val csNProxy = ctrl.csN.simProxy()
-  val rasNProxy = ctrl.rasN.simProxy()
-  val casNProxy = ctrl.casN.simProxy()
-  val weNProxy = ctrl.weN.simProxy()
-
   val wrEnProxy = wr.wr.map(_.wrdataEn.simProxy())
   val wrDataProxy = wr.wr.map(_.wrdata.simProxy())
   val rdEnProxy = rd.rden.map(_.simProxy())
@@ -147,11 +141,11 @@ class DfiMemoryAgent(ctrl: DfiControlInterface, wr: DfiWriteInterface, rd: DfiRe
   }
 
   clockDomain.onSamplings {
-    val cke = selectBit(ckeProxy.toBigInt.asInstanceOf[BigInt], cmdPhase, csCount)
-    val csN = selectBit(csNProxy.toBigInt.asInstanceOf[BigInt], cmdPhase, csCount)
-    val ras = rasNProxy.toBigInt.asInstanceOf[BigInt].testBit(cmdPhase)
-    val cas = casNProxy.toBigInt.asInstanceOf[BigInt].testBit(cmdPhase)
-    val weN = weNProxy.toBigInt.asInstanceOf[BigInt].testBit(cmdPhase)
+    val cke = selectBit(ctrl.cke.toBigInt, cmdPhase, csCount)
+    val csN = selectBit(ctrl.csN.toBigInt, cmdPhase, csCount)
+    val ras = ctrl.rasN.toBigInt.testBit(cmdPhase)
+    val cas = ctrl.casN.toBigInt.testBit(cmdPhase)
+    val weN = ctrl.weN.toBigInt.testBit(cmdPhase)
     val wrEn = wrEnProxy.map(_.toBoolean)
     val wrData = wrDataProxy.map(_.toLong)
     val rdEn = rdEnProxy.map(_.toBoolean)
