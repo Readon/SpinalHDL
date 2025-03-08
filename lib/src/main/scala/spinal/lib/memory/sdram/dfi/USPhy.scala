@@ -129,9 +129,15 @@ class UsDdrPhy(dfiConfig: DfiConfig) extends Component {
     val initDone       = busCtrl.createReadOnly(Bool(), 0x08, 0)            // [2]
     val halfSys8xTaps  = busCtrl.createReadOnly(UInt(9 bits), 0x0C)         // [3:11]
     
+    // 电气特性寄存器组
+    val vccConfig = busCtrl.createReadAndWrite(UInt(4 bits), 0x60) init(0)    // 电压配置 [24:27]
+    val tempComp = busCtrl.createReadAndWrite(UInt(4 bits), 0x64) init(0)     // 温度补偿 [28:31]
+    val driveStrength = busCtrl.createReadAndWrite(UInt(3 bits), 0x68) init(7)// 驱动强度 [32:34]
+    
     // 写电平校准寄存器
     val wlevelEn = busCtrl.createReadAndWrite(Bool(), 0x10, 0)       // [4] 写电平使能
     val wlevelStrobe = busCtrl.createWriteOnly(Bool(), 0x14)         // [5] 写电平触发
+    val wlevelDone = busCtrl.createReadOnly(Bool(), 0x6C)            // 校准完成状态 [35]
     
     // 命令延迟控制寄存器
     val cdlyRst = busCtrl.createWriteOnly(Bool(), 0x18)         // [6] 延迟线复位
@@ -222,11 +228,37 @@ class UsDdrPhy(dfiConfig: DfiConfig) extends Component {
 
   // Data path
   val dataPath = new Area {
+    // DQS pattern生成模块
+    val dqsPattern = new Area {
+      val dqs = Reg(Bool())
+      val dqs_n = Reg(Bool())
+      val phase = io.phyCtrl.wrphase
+      
+      // 生成DQS脉冲（4x时钟域）
+      sys4xDomain {
+        when(io.dfi.write.wr(0).wrdataEn) {
+          switch(phase) {
+            is(0) { dqs := True; dqs_n := False }
+            is(1) { dqs := False; dqs_n := True }
+            is(2) { dqs := !dqs; dqs_n := !dqs_n }
+          }
+        } otherwise {
+          dqs := False
+          dqs_n := False
+        }
+      }
+    }
+
     // Write path
     val wrData = io.dfi.write.wr(0).wrdata
+    val wrDataEn = io.dfi.write.wr(0).wrdataEn
+    val wrDataMask = io.dfi.write.wr(0).wrdataMask
+    val wrDataCsN = if(dfiConfig.useWrdataCsN) Some(io.dfi.write.wr(0).wrdataCsN) else None
+    
     val dqOserdes = Seq.fill(dfiConfig.dataWidth)(new Oserdese3BlackBox())
     for((osd, data) <- dqOserdes.zip(wrData.asBools)){
       osd.io.D := data.asBits #* 8
+      osd.io.T_OUT := wrDataCsN.map(_.asBools.head).getOrElse(wrDataMask.asBools.head) // 显式转换为Bool
     }
 
     // Read path
@@ -234,6 +266,10 @@ class UsDdrPhy(dfiConfig: DfiConfig) extends Component {
     for((osd, data) <- dqOserdes.zip(rdData.asBools)){
       data := osd.io.OQ
     }
+
+    // DQS输出连接
+    io.pads.dqs_p := dqsPattern.dqs.asBits
+    io.pads.dqs_n := dqsPattern.dqs_n.asBits
   }
 
 
@@ -264,6 +300,37 @@ class UsDdrPhy(dfiConfig: DfiConfig) extends Component {
       val stateReady = new State {
         onEntry(io.ctrl.initDone := True)
       }
+      
+    // 新增BitSlip模块（第530-551行Python代码转写）
+    class BitSlip(width: Int) extends Component {
+      val io = new Bundle {
+        val input = in Bits(width bits)
+        val slip = in Bool()
+        val output = out Bits(width bits)
+        val rst = in Bool()
+      }
+    
+      val buffer = RegNextWhen(io.input, io.slip) init(0)
+      when(io.rst) {
+        buffer := 0
+      }
+      io.output := buffer
+    }
+    
+    // 新增TappedDelayLine模块（第554-561行Python代码转写）
+    class TappedDelayLine(width: Int, taps: Int) extends Component {
+      val io = new Bundle {
+        val input = in Bool()
+        val outputs = out Vec(Bool(), taps)
+      }
+    
+      val delayLine = Vec(Reg(Bool())).addAttribute("async_reg")
+      delayLine(0) := io.input
+      for(i <- 1 until taps) {
+        delayLine(i) := delayLine(i-1)
+      }
+      io.outputs := delayLine
+    }
     }
   }
 }
