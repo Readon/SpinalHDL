@@ -282,6 +282,12 @@ object RowBankColumn extends AddrMap
 object BankRowColumn extends AddrMap
 object RowColumnBank extends AddrMap
 
+case class RdimmConfig(
+  rcw: Int = 5,   // Registered CAS Write
+  rcd: Int = 5,   // Registered CAS Delay
+  rp: Int = 5     // Registered Precharge
+)
+
 case class DfiConfig(
     addrMap: AddrMap = RowBankColumn,
     frequencyRatio: Int, // PHY:MC
@@ -292,7 +298,8 @@ case class DfiConfig(
     cmdPhase: Int,
     signalConfig: DDRSignalConfig,
     timeConfig: DfiTimeConfig,
-    sdram: SdramConfig
+    sdram: SdramConfig,
+    rdimmConfig: RdimmConfig = RdimmConfig() // 新增RDIMM配置
 ) {
   assert(signalConfig.isPLDDR == false)
   val useBank = signalConfig.useBank

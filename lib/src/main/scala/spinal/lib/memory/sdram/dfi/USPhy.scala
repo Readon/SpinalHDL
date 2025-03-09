@@ -7,6 +7,41 @@ import spinal.lib.fsm.{StateMachine, State, EntryPoint}
 import spinal.lib.memory.sdram.dfi.interface._
 import spinal.lib.memory.sdram.SdramGeneration.DDR3
 
+case class PhySettings(
+  // 基础时序参数
+  tCK: Double,
+  // RDIMM配置
+  rdimm: Boolean = false,
+  rcw: Int = 5,       // Registered CAS Write
+  rcd: Int = 5,       // Registered CAS Delay
+  rp: Int = 5,        // Registered Precharge
+  // 动态计算参数
+  cl: Int = 5,
+  cwl: Int = 5
+) {
+  // CL/CWL自动计算逻辑
+  def setRdimm(en: Boolean, speedGrade: Int = 1600): PhySettings = {
+    val (calcCL, calcCWL) = PhySettings.calculateTiming(speedGrade, tCK)
+    this.copy(
+      rdimm = en,
+      cl = if(en) calcCL else this.cl,
+      cwl = if(en) calcCWL else this.cwl
+    )
+  }
+}
+
+object PhySettings {
+  // JEDEC标准时序计算（来自usphy.py第523-528行）
+  def calculateTiming(speedGrade: Int, tCK: Double): (Int, Int) = {
+    val clMap = Map(
+      1600 -> 11,
+      1866 -> 13,
+      2133 -> 15
+    )
+    val cwl = (scala.math.ceil((tCK - 0.25) / 0.25).toInt).max(5)
+    (clMap.getOrElse(speedGrade, 11), cwl)
+  }
+}
 
 class Oserdese3BlackBox extends BlackBox {
   val generic = new Generic {
