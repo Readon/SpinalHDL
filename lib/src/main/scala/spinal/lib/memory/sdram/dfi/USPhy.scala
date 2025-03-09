@@ -277,6 +277,9 @@ class UsDdrPhy(dfiConfig: DfiConfig) extends Component {
   val trainingFSM = new Area {
     val initDoneReg = RegInit(False)
     val calibDoneReg = RegInit(False)
+    val writeLevelDone = RegInit(False)
+    val readGateDone = RegInit(False)
+    val readEyeDone = RegInit(False)
 
     val fsm = new StateMachine {
       val stateIdle = new State with EntryPoint {
@@ -289,10 +292,38 @@ class UsDdrPhy(dfiConfig: DfiConfig) extends Component {
 
       val stateInit = new State {
         onEntry(initDoneReg := False)
-        whenIsNext(stateCalibration)
+        whenIsNext(stateWriteLeveling)
       }
 
-      val stateCalibration = new State {
+      val stateWriteLeveling = new State {
+        onEntry(writeLevelDone := False)
+        whenIsActive {
+          when(io.phyCtrl.wlevel_en) {
+            writeLevelDone := True
+            goto(stateReadGateTraining)
+          }
+        }
+      }
+
+      val stateReadGateTraining = new State {
+        onEntry(readGateDone := False)
+        whenIsActive {
+          // 添加读门训练逻辑
+          readGateDone := True
+          goto(stateReadEyeTraining)
+        }
+      }
+
+      val stateReadEyeTraining = new State {
+        onEntry(readEyeDone := False)
+        whenIsActive {
+          // 添加读眼训练逻辑
+          readEyeDone := True
+          goto(stateCalibrationDone)
+        }
+      }
+
+      val stateCalibrationDone = new State {
         onEntry(calibDoneReg := False)
         whenIsNext(stateReady)
       }
