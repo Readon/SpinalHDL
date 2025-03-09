@@ -66,12 +66,12 @@ class Oserdese3BlackBox extends BlackBox {
 }
 
 // IODELAYE3 BlackBox definition
-class IODELAYE3BlackBox extends BlackBox {
+class IODELAYE3BlackBox(refClkFreq: Double = 200.0) extends BlackBox {
     val generic = new Generic {
         val SIM_DEVICE       = "ULTRASCALE"
         val CASCADE          = "NONE"
         val UPDATE_MODE      = "ASYNC"
-        val REFCLK_FREQUENCY = 200.0 // Will be parameterized later
+        val REFCLK_FREQUENCY = refClkFreq
         val DELAY_FORMAT     = "TIME"
         val DELAY_TYPE       = "VARIABLE"
         val DELAY_VALUE      = 0
@@ -81,15 +81,45 @@ class IODELAYE3BlackBox extends BlackBox {
     }
 
     val io = new Bundle {
-        val RST         = in Bool()
         val CLK         = in Bool()
+        val RST         = in Bool()
         val EN_VTC      = in Bool()
         val CE          = in Bool()
         val INC         = in Bool()
-        val ODATAIN     = in Bool()
+        val LD          = in Bool()
+        val CNTVALUEIN  = in UInt(9 bits)
+        val IDATAIN     = in Bool()
         val DATAOUT     = out Bool()
-        val CNTVALUEOUT = out UInt(9 bits) // Assuming 9 bits based on usphy.py
+        val CNTVALUEOUT = out UInt(9 bits)
     }
+}
+
+// 参数化延迟线组件 (来自usphy.py第412-432行)
+case class ParametrizedDelayLine(refClkFreq: Double) extends Component {
+  val io = new Bundle {
+    val ctrl = new Bundle {
+      val ce         = in Bool()
+      val inc        = in Bool()
+      val ld         = in Bool()
+      val cntvaluein = in UInt(9 bits)
+      val cntvalueout= out UInt(9 bits)
+      val en_vtc     = in Bool()
+    }
+    val dataIn  = in Bool()
+    val dataOut = out Bool()
+  }
+
+  val iodelay = new IODELAYE3BlackBox(refClkFreq)
+
+  // 连接控制信号
+  iodelay.io.CE := io.ctrl.ce
+  iodelay.io.INC := io.ctrl.inc
+  iodelay.io.LD := io.ctrl.ld
+  iodelay.io.CNTVALUEIN := io.ctrl.cntvaluein
+  io.ctrl.cntvalueout := iodelay.io.CNTVALUEOUT
+  iodelay.io.EN_VTC := io.ctrl.en_vtc
+  iodelay.io.IDATAIN := io.dataIn
+  io.dataOut := iodelay.io.DATAOUT
 }
 
 case class SdramPads(dfiConfig: DfiConfig) extends Bundle {
@@ -104,46 +134,72 @@ case class SdramPads(dfiConfig: DfiConfig) extends Bundle {
   val dm = out(Bits(dfiConfig.dataWidth/8 bits))
 }
 
-class UsDdrPhy(dfiConfig: DfiConfig) extends Component {
+class USPhy(dfiConfig: DfiConfig) extends Component {
   val io = new Bundle {
     val dfi = slave(Dfi(dfiConfig))
     val pads = new SdramPads(dfiConfig)
+    
+    // 统一PHY控制接口
+    val phyCtrl = new Bundle {
+      // IODELAYE3控制
+      val idelay = new Bundle {
+        val ce          = in Bool()
+        val inc         = in Bool()
+        val ld          = in Bool()
+        val cntvaluein  = in UInt(9 bits)
+        val cntvalueout = out Vec(UInt(9 bits), 8)
+      }
+      
+      // 延迟配置
+      val delay = new Bundle {
+        val resolution = in UInt(3 bits)
+        val max        = in UInt(12 bits)
+        val en_vtc     = in Bool()
+      }
+      
+      // 系统控制
+      val ctrl = new Bundle {
+        val wlevel_en    = in Bool()
+        val dly_sel      = in Bits(8 bits)
+        val cdly_rst     = in Bool()
+        val cdly_inc     = in Bool()
+      }
+      
+      // 读路径控制
+      val read = new Bundle {
+        val dq_rst         = in Bool()
+        val dq_inc         = in Bool()
+        val bitslip_rst    = in Bool()
+        val bitslip        = in Bool()
+      }
+      
+      // 写路径控制
+      val write = new Bundle {
+        val dq_rst         = in Bool()
+        val dq_inc         = in Bool()
+        val dqs_rst        = in Bool()
+        val dqs_inc        = in Bool()
+        val bitslip_rst    = in Bool()
+        val bitslip        = in Bool()
+      }
+      
+      // 相位控制
+      val phase = new Bundle {
+        val rd = in UInt(2 bits)
+        val wr = in UInt(2 bits)
+      }
+      
+      // 状态监测
+      val status = new Bundle {
+        val half_sys8x_taps    = out UInt(9 bits)
+        val wdly_dqs_inc_count = out UInt(9 bits)
+        val cdly_value         = out UInt(9 bits)
+      }
+    }
+
     val ctrl = new Bundle {
       val reset = in Bool()
       val initDone = out Bool()
-    }
-    
-    // PHY Control Interface
-    val phyCtrl = new Bundle {
-      // Control Signals
-      val en_vtc       = in Bool()
-      val wlevel_en    = in Bool()
-      val cdly_rst     = in Bool()
-      val cdly_inc     = in Bool()
-      val dly_sel      = in Bits(8 bits)
-      
-      // Read Path
-      val rdly_dq_rst         = in Bool()
-      val rdly_dq_inc         = in Bool()
-      val rdly_dq_bitslip_rst = in Bool()
-      val rdly_dq_bitslip     = in Bool()
-      
-      // Write Path
-      val wdly_dq_rst         = in Bool()
-      val wdly_dq_inc         = in Bool()
-      val wdly_dqs_rst        = in Bool()
-      val wdly_dqs_inc        = in Bool()
-      val wdly_dq_bitslip_rst = in Bool()
-      val wdly_dq_bitslip     = in Bool()
-      
-      // Phase Control
-      val rdphase = in UInt(2 bits)
-      val wrphase = in UInt(2 bits)
-      
-      // Status Signals
-      val half_sys8x_taps    = out UInt(9 bits)
-      val wdly_dqs_inc_count = out UInt(9 bits)
-      val cdly_value         = out UInt(9 bits)
     }
   }
 
@@ -207,50 +263,87 @@ class UsDdrPhy(dfiConfig: DfiConfig) extends Component {
     io.ctrl.reset := resetReg
     io.ctrl.initDone := initDone
     
-    // 连接控制信号到PHY接口
-    io.phyCtrl.en_vtc       := enVtcReg
-    io.phyCtrl.wlevel_en    := wlevelEn
-    io.phyCtrl.cdly_rst     := cdlyRst
-    io.phyCtrl.cdly_inc     := cdlyInc
+    // 新增IODELAY控制寄存器映射 (地址0x70-0x7C)
+    // IODELAY控制寄存器映射
+    val idelayCeReg    = busCtrl.createReadAndWrite(Bool(), 0x70) init(False)
+    val idelayIncReg   = busCtrl.createReadAndWrite(Bool(), 0x74) init(False)
+    val idelayLdReg    = busCtrl.createReadAndWrite(Bool(), 0x78) init(False)
+    val idelayValueReg = busCtrl.createReadAndWrite(UInt(9 bits), 0x7C) init(0)
+
+    // 连接控制信号到新结构
+    io.phyCtrl.idelay.ce         := idelayCeReg
+    io.phyCtrl.idelay.inc        := idelayIncReg
+    io.phyCtrl.idelay.ld         := idelayLdReg
+    io.phyCtrl.idelay.cntvaluein := idelayValueReg
+    busCtrl.read(io.phyCtrl.idelay.cntvalueout, 0x80, 0)
+
+    // 系统控制信号连接
+    io.phyCtrl.delay.en_vtc     := enVtcReg
+    io.phyCtrl.ctrl.wlevel_en  := wlevelEn
+    io.phyCtrl.ctrl.cdly_rst   := cdlyRst
+    io.phyCtrl.ctrl.cdly_inc   := cdlyInc
     
     // 连接读延迟控制
-    io.phyCtrl.rdly_dq_rst         := rdlyDqRst
-    io.phyCtrl.rdly_dq_inc         := rdlyDqInc
-    io.phyCtrl.rdly_dq_bitslip_rst := rdlyDqBitslipRst
-    io.phyCtrl.rdly_dq_bitslip     := rdlyDqBitslip
+    io.phyCtrl.read.dq_rst         := rdlyDqRst
+    io.phyCtrl.read.dq_inc         := rdlyDqInc
+    io.phyCtrl.read.bitslip_rst    := rdlyDqBitslipRst
+    io.phyCtrl.read.bitslip        := rdlyDqBitslip
     
-    // 连接写延迟控制
-    io.phyCtrl.wdly_dq_rst         := wdlyDqRst
-    io.phyCtrl.wdly_dq_inc         := wdlyDqInc
-    io.phyCtrl.wdly_dqs_rst        := wdlyDqsRst
-    io.phyCtrl.wdly_dqs_inc        := wdlyDqsInc
+    // 连接写路径控制
+    io.phyCtrl.write.dq_rst         := wdlyDqRst
+    io.phyCtrl.write.dq_inc         := wdlyDqInc
+    io.phyCtrl.write.dqs_rst        := wdlyDqsRst
+    io.phyCtrl.write.dqs_inc        := wdlyDqsInc
     
     // 连接相位控制
-    io.phyCtrl.rdphase := rdPhase
-    io.phyCtrl.wrphase := wrPhase
+    io.phyCtrl.phase.rd := rdPhase
+    io.phyCtrl.phase.wr := wrPhase
     
-    // 连接状态信号（方向为out）
-    halfSys8xTaps      := io.phyCtrl.half_sys8x_taps
-    wdlyDqsIncCount    := io.phyCtrl.wdly_dqs_inc_count
-    cdlyValue          := io.phyCtrl.cdly_value
+    // 连接状态信号
+    io.phyCtrl.status.half_sys8x_taps    := halfSys8xTaps
+    io.phyCtrl.status.wdly_dqs_inc_count := wdlyDqsIncCount
+    io.phyCtrl.status.cdly_value         := cdlyValue
     
     // 连接其他控制信号
-    io.phyCtrl.wdly_dq_bitslip_rst := wdlyDqBitslipRst
-    io.phyCtrl.wdly_dq_bitslip     := wdlyDqBitslip
-    io.phyCtrl.dly_sel             := dlySel
+    io.phyCtrl.write.bitslip_rst    := wdlyDqBitslipRst
+    io.phyCtrl.write.bitslip        := wdlyDqBitslip
+    io.phyCtrl.ctrl.dly_sel         := dlySel // 使用ctrl子Bundle
 
     // 删除旧的phy对象引用
   }
 
+  // 实例化参数化延迟线组件
+  val delayLine = new ClockingArea(sys4xDomain) {
+    val delayCells = Seq.fill(8)(ParametrizedDelayLine(refClkFreq = 200.0))
+    
+    // 连接控制信号
+    for((cell, idx) <- delayCells.zipWithIndex) {
+      cell.io.ctrl.ce         := io.phyCtrl.idelay.ce && io.phyCtrl.ctrl.dly_sel(idx)
+      cell.io.ctrl.inc        := io.phyCtrl.idelay.inc
+      cell.io.ctrl.ld         := io.phyCtrl.idelay.ld
+      cell.io.ctrl.cntvaluein := io.phyCtrl.idelay.cntvaluein
+      cell.io.ctrl.en_vtc     := io.phyCtrl.delay.en_vtc
+      io.phyCtrl.idelay.cntvalueout(idx) := cell.io.ctrl.cntvalueout
+      
+      // 连接数据通路
+      cell.io.dataIn  := cmdPath.cmdSignals(idx)
+      cmdPath.cmdSignals(idx) := cell.io.dataOut
+    }
+  }
+
   // Command path
   val cmdPath = new Area {
-    val cmdSignals = Vec(
-      io.dfi.control.address,
-      io.dfi.control.bank,
-      io.dfi.control.rasN,
-      io.dfi.control.casN,
-      io.dfi.control.weN
-    ).flatMap(_.asBools)
+    // 命令信号同步寄存器
+    val syncedAddress = RegNextWhen(io.dfi.control.address, io.dfi.control.cke.asBool)
+    val syncedBank = RegNextWhen(io.dfi.control.bank, io.dfi.control.cke.asBool)
+    
+    // 组合命令信号并展开为Bool向量
+    val cmdSignals: Seq[Bool] = 
+      syncedAddress.asBools ++
+      syncedBank.asBools ++
+      io.dfi.control.rasN.asBools ++
+      io.dfi.control.casN.asBools ++
+      io.dfi.control.weN.asBools
 
     val oserdesVec = Seq.fill(cmdSignals.length)(new Oserdese3BlackBox())
     for((osd,sig) <- oserdesVec.zip(cmdSignals)){
@@ -267,7 +360,7 @@ class UsDdrPhy(dfiConfig: DfiConfig) extends Component {
     val dqsPattern = new Area {
       val dqs = Reg(Bool())
       val dqs_n = Reg(Bool())
-      val phase = io.phyCtrl.wrphase
+      val phase = io.phyCtrl.phase.wr
       
       // 生成DQS脉冲（4x时钟域）
       sys4xDomain {
@@ -333,7 +426,7 @@ class UsDdrPhy(dfiConfig: DfiConfig) extends Component {
       val stateWriteLeveling = new State {
         onEntry(writeLevelDone := False)
         whenIsActive {
-          when(io.phyCtrl.wlevel_en) {
+          when(io.phyCtrl.ctrl.wlevel_en) {
             writeLevelDone := True
             goto(stateReadGateTraining)
           }
