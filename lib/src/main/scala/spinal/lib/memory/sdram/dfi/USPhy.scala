@@ -5,7 +5,6 @@ import spinal.lib._
 import spinal.lib.bus.misc.BusSlaveFactory
 import spinal.lib.fsm.{StateMachine, State, EntryPoint}
 import spinal.lib.memory.sdram.dfi.interface._
-import spinal.lib.memory.sdram.SdramGeneration.DDR3
 
 case class PhySettings(
   // 基础时序参数
@@ -92,34 +91,6 @@ class IODELAYE3BlackBox(refClkFreq: Double = 200.0) extends BlackBox {
         val DATAOUT     = out Bool()
         val CNTVALUEOUT = out UInt(9 bits)
     }
-}
-
-// 参数化延迟线组件 (来自usphy.py第412-432行)
-case class ParametrizedDelayLine(refClkFreq: Double) extends Component {
-  val io = new Bundle {
-    val ctrl = new Bundle {
-      val ce         = in Bool()
-      val inc        = in Bool()
-      val ld         = in Bool()
-      val cntvaluein = in UInt(9 bits)
-      val cntvalueout= out UInt(9 bits)
-      val en_vtc     = in Bool()
-    }
-    val dataIn  = in Bool()
-    val dataOut = out Bool()
-  }
-
-  val iodelay = new IODELAYE3BlackBox(refClkFreq)
-
-  // 连接控制信号
-  iodelay.io.CE := io.ctrl.ce
-  iodelay.io.INC := io.ctrl.inc
-  iodelay.io.LD := io.ctrl.ld
-  iodelay.io.CNTVALUEIN := io.ctrl.cntvaluein
-  io.ctrl.cntvalueout := iodelay.io.CNTVALUEOUT
-  iodelay.io.EN_VTC := io.ctrl.en_vtc
-  iodelay.io.IDATAIN := io.dataIn
-  io.dataOut := iodelay.io.DATAOUT
 }
 
 case class SdramPads(dfiConfig: DfiConfig) extends Bundle {
@@ -314,20 +285,20 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
 
   // 实例化参数化延迟线组件
   val delayLine = new ClockingArea(sys4xDomain) {
-    val delayCells = Seq.fill(8)(ParametrizedDelayLine(refClkFreq = 200.0))
+    val delayCells = Seq.fill(8)(new IODELAYE3BlackBox(refClkFreq = 200.0))
     
     // 连接控制信号
     for((cell, idx) <- delayCells.zipWithIndex) {
-      cell.io.ctrl.ce         := io.phyCtrl.idelay.ce && io.phyCtrl.ctrl.dly_sel(idx)
-      cell.io.ctrl.inc        := io.phyCtrl.idelay.inc
-      cell.io.ctrl.ld         := io.phyCtrl.idelay.ld
-      cell.io.ctrl.cntvaluein := io.phyCtrl.idelay.cntvaluein
-      cell.io.ctrl.en_vtc     := io.phyCtrl.delay.en_vtc
-      io.phyCtrl.idelay.cntvalueout(idx) := cell.io.ctrl.cntvalueout
+      cell.io.CE         := io.phyCtrl.idelay.ce && io.phyCtrl.ctrl.dly_sel(idx)
+      cell.io.INC        := io.phyCtrl.idelay.inc
+      cell.io.LD         := io.phyCtrl.idelay.ld
+      cell.io.CNTVALUEIN := io.phyCtrl.idelay.cntvaluein
+      cell.io.EN_VTC     := io.phyCtrl.delay.en_vtc
+      io.phyCtrl.idelay.cntvalueout(idx) := cell.io.CNTVALUEOUT
       
       // 连接数据通路
-      cell.io.dataIn  := cmdPath.cmdSignals(idx)
-      cmdPath.cmdSignals(idx) := cell.io.dataOut
+      cell.io.IDATAIN  := cmdPath.cmdSignals(idx)
+      cmdPath.cmdSignals(idx) := cell.io.DATAOUT
     }
   }
 
