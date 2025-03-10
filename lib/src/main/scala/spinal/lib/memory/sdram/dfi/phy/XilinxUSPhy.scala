@@ -43,38 +43,6 @@ object PhySettings {
   }
 }
 
-// IODELAYE3 BlackBox definition
-class IODELAYE3BlackBox(refClkFreq: Double = 200.0) extends BlackBox {
-  val generic = new Generic {
-      val SIM_DEVICE       = "ULTRASCALE"
-      val CASCADE          = "NONE"
-      val UPDATE_MODE      = "ASYNC"
-      val REFCLK_FREQUENCY = refClkFreq
-      val DELAY_FORMAT     = "TIME"
-      val DELAY_TYPE       = "VARIABLE"
-      val DELAY_VALUE      = 0
-      val IS_CLK_INVERTED  = 0
-      val IS_RST_INVERTED  = 0
-      val DELAY_SRC        = "IDATAIN"
-  }
-
-  val io = new Bundle {
-      val CLK         = in Bool()
-      val RST         = in Bool()
-      val EN_VTC      = in Bool()
-      val CE          = in Bool()
-      val INC         = in Bool()
-      val LD          = in Bool()
-      val CNTVALUEIN  = in UInt(9 bits)
-      val IDATAIN     = in Bool()
-      val DATAOUT     = out Bool()
-      val CNTVALUEOUT = out UInt(9 bits)
-  }
-
-  mapCurrentClockDomain(io.CLK, io.RST)
-  noIoPrefix()
-}
-
 case class SdramPads(dfiConfig: DfiConfig) extends Bundle {
   val clk_p = out(Bool())
   val clk_n = out(Bool())
@@ -267,20 +235,20 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
 
   // 实例化参数化延迟线组件
   val delayLine = new ClockingArea(sys4xDomain) {
-    val delayCells = Seq.fill(8)(new IODELAYE3BlackBox(refClkFreq = 200.0))
+    val delayCells = Seq.fill(8)(new ODELAYE3(REFCLK_FREQUENCY = 200.0))
     
     // 连接控制信号
     for((cell, idx) <- delayCells.zipWithIndex) {
-      cell.io.CE         := io.phyCtrl.idelay.ce && io.phyCtrl.ctrl.dly_sel(idx)
-      cell.io.INC        := io.phyCtrl.idelay.inc
-      cell.io.LD         := io.phyCtrl.idelay.ld
-      cell.io.CNTVALUEIN := io.phyCtrl.idelay.cntvaluein
-      cell.io.EN_VTC     := io.phyCtrl.delay.en_vtc
-      io.phyCtrl.idelay.cntvalueout(idx) := cell.io.CNTVALUEOUT
+      cell.CE         := io.phyCtrl.idelay.ce && io.phyCtrl.ctrl.dly_sel(idx)
+      cell.INC        := io.phyCtrl.idelay.inc
+      cell.LD         := io.phyCtrl.idelay.ld
+      cell.CNTVALUEIN := io.phyCtrl.idelay.cntvaluein.asBits
+    //   cell.EN_VTC     := io.phyCtrl.delay.en_vtc
+      io.phyCtrl.idelay.cntvalueout(idx) := cell.CNTVALUEOUT.asUInt
       
       // 连接数据通路
-      cell.io.IDATAIN  := cmdPath.cmdSignals(idx)
-      cmdPath.cmdSignals(idx) := cell.io.DATAOUT
+      cell.ODATAIN  := cmdPath.cmdSignals(idx)
+      cmdPath.cmdSignals(idx) := cell.DATAOUT
     }
   }
 
