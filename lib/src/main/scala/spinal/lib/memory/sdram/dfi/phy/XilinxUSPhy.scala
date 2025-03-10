@@ -1,10 +1,10 @@
-package spinal.lib.memory.sdram.dfi
+package spinal.lib.memory.sdram.dfi.phy
 
 import spinal.core._
 import spinal.lib._
 import spinal.lib.bus.misc.BusSlaveFactory
 import spinal.lib.fsm.{StateMachine, State, EntryPoint}
-import spinal.lib.memory.sdram.dfi.interface._
+import spinal.lib.memory.sdram.dfi._
 
 case class PhySettings(
   // 基础时序参数
@@ -62,35 +62,39 @@ class Oserdese3BlackBox extends BlackBox {
   }
 
   mapCurrentClockDomain(io.CLK, io.RST)
+  noIoPrefix()
 }
 
 // IODELAYE3 BlackBox definition
 class IODELAYE3BlackBox(refClkFreq: Double = 200.0) extends BlackBox {
-    val generic = new Generic {
-        val SIM_DEVICE       = "ULTRASCALE"
-        val CASCADE          = "NONE"
-        val UPDATE_MODE      = "ASYNC"
-        val REFCLK_FREQUENCY = refClkFreq
-        val DELAY_FORMAT     = "TIME"
-        val DELAY_TYPE       = "VARIABLE"
-        val DELAY_VALUE      = 0
-        val IS_CLK_INVERTED  = 0
-        val IS_RST_INVERTED  = 0
-        val DELAY_SRC        = "IDATAIN"
-    }
+  val generic = new Generic {
+      val SIM_DEVICE       = "ULTRASCALE"
+      val CASCADE          = "NONE"
+      val UPDATE_MODE      = "ASYNC"
+      val REFCLK_FREQUENCY = refClkFreq
+      val DELAY_FORMAT     = "TIME"
+      val DELAY_TYPE       = "VARIABLE"
+      val DELAY_VALUE      = 0
+      val IS_CLK_INVERTED  = 0
+      val IS_RST_INVERTED  = 0
+      val DELAY_SRC        = "IDATAIN"
+  }
 
-    val io = new Bundle {
-        val CLK         = in Bool()
-        val RST         = in Bool()
-        val EN_VTC      = in Bool()
-        val CE          = in Bool()
-        val INC         = in Bool()
-        val LD          = in Bool()
-        val CNTVALUEIN  = in UInt(9 bits)
-        val IDATAIN     = in Bool()
-        val DATAOUT     = out Bool()
-        val CNTVALUEOUT = out UInt(9 bits)
-    }
+  val io = new Bundle {
+      val CLK         = in Bool()
+      val RST         = in Bool()
+      val EN_VTC      = in Bool()
+      val CE          = in Bool()
+      val INC         = in Bool()
+      val LD          = in Bool()
+      val CNTVALUEIN  = in UInt(9 bits)
+      val IDATAIN     = in Bool()
+      val DATAOUT     = out Bool()
+      val CNTVALUEOUT = out UInt(9 bits)
+  }
+
+  mapCurrentClockDomain(io.CLK, io.RST)
+  noIoPrefix()
 }
 
 case class SdramPads(dfiConfig: DfiConfig) extends Bundle {
