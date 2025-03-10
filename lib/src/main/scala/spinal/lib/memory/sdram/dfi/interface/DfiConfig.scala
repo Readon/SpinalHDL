@@ -206,6 +206,12 @@ object RowBankColumn extends AddrMap
 object BankRowColumn extends AddrMap
 object RowColumnBank extends AddrMap
 
+case class RdimmConfig(
+  rcw: Int = 5,   // Registered CAS Write
+  rcd: Int = 5,   // Registered CAS Delay
+  rp: Int = 5     // Registered Precharge
+)
+
 object DfiConfig {
   implicit def toSignalConfig(that: DfiConfig): DfiSignalConfig = that.signalConfig
 }
@@ -215,7 +221,8 @@ case class DfiConfig(
     dataSlice: Int,
     signalConfig: DfiSignalConfig,
     timeConfig: DfiTimeConfig,
-    sdram: SdramConfig
+    sdram: SdramConfig,
+    rdimmConfig: RdimmConfig = RdimmConfig() // 新增RDIMM配置
 ) {
   val frequencyRatio = timeConfig.frequencyRatio
   val dataRate = sdram.generation.dataRate
