@@ -5,6 +5,7 @@ import spinal.lib._
 import spinal.lib.bus.misc.BusSlaveFactory
 import spinal.lib.fsm.{StateMachine, State, EntryPoint}
 import spinal.lib.memory.sdram.dfi._
+import spinal.lib.blackbox.xilinx.ultrascale._
 
 case class PhySettings(
   // 基础时序参数
@@ -40,29 +41,6 @@ object PhySettings {
     val cwl = (scala.math.ceil((tCK - 0.25) / 0.25).toInt).max(5)
     (clMap.getOrElse(speedGrade, 11), cwl)
   }
-}
-
-class Oserdese3BlackBox extends BlackBox {
-  val generic = new Generic {
-    val SIM_DEVICE = "ULTRASCALE"
-    val DATA_WIDTH = 8
-    val INIT = "FALSE"
-    val IS_RST_INVERTED = 0
-    val IS_CLK_INVERTED = 0
-    val IS_CLKDIV_INVERTED = 0
-  }
-
-  val io = new Bundle {
-    val RST    = in Bool()
-    val CLK    = in Bool()
-    val CLKDIV = in Bool()
-    val D      = in Bits(8 bits)
-    val OQ     = out Bool()
-    val T_OUT  = out Bool()
-  }
-
-  mapCurrentClockDomain(io.CLK, io.RST)
-  noIoPrefix()
 }
 
 // IODELAYE3 BlackBox definition
@@ -320,12 +298,12 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       io.dfi.control.casN.asBools ++
       io.dfi.control.weN.asBools
 
-    val oserdesVec = Seq.fill(cmdSignals.length)(new Oserdese3BlackBox())
+    val oserdesVec = Seq.fill(cmdSignals.length)(new OSERDESE3())
     for((osd,sig) <- oserdesVec.zip(cmdSignals)){
-      osd.io.RST    := io.ctrl.reset
-      osd.io.CLK    := io.pads.clk4x
-      osd.io.CLKDIV := ClockDomain.current.readClockWire
-      osd.io.D      := sig.asBits #* 8
+      osd.RST    := io.ctrl.reset
+      osd.CLK    := io.pads.clk4x
+      osd.CLKDIV := ClockDomain.current.readClockWire
+      osd.D      := sig.asBits #* 8
     }
   }
 
@@ -358,16 +336,16 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val wrDataMask = io.dfi.write.wr(0).wrdataMask
     val wrDataCsN = if(dfiConfig.useWrdataCsN) Some(io.dfi.write.wr(0).wrdataCsN) else None
     
-    val dqOserdes = Seq.fill(dfiConfig.dataWidth)(new Oserdese3BlackBox())
+    val dqOserdes = Seq.fill(dfiConfig.dataWidth)(new OSERDESE3())
     for((osd, data) <- dqOserdes.zip(wrData.asBools)){
-      osd.io.D := data.asBits #* 8
-      osd.io.T_OUT := wrDataCsN.map(_.asBools.head).getOrElse(wrDataMask.asBools.head) // 显式转换为Bool
+      osd.D := data.asBits #* 8
+      osd.T_OUT := wrDataCsN.map(_.asBools.head).getOrElse(wrDataMask.asBools.head) // 显式转换为Bool
     }
 
     // Read path
     val rdData = io.dfi.read.rd(0).rddata
     for((osd, data) <- dqOserdes.zip(rdData.asBools)){
-      data := osd.io.OQ
+      data := osd.OQ
     }
 
     // DQS输出连接
