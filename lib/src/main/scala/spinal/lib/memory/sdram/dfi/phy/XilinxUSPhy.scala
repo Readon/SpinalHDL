@@ -84,6 +84,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       // 系统控制
       val ctrl = new Bundle {
         val wlevel_en    = in Bool()
+        val wlevel_strobe= in Bool()
         val dly_sel      = in Bits(8 bits)
         val cdly_rst     = in Bool()
         val cdly_inc     = in Bool()
@@ -130,79 +131,45 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
   )
 
 
-  def driveFrom(busCtrl : BusSlaveFactory, address : BigInt) : Unit = {
-    // 控制寄存器 (32位对齐)
-    val resetReg = busCtrl.createReadAndWrite(Bool(), 0x00, 0) init(False)  // [0]
-    val enVtcReg = busCtrl.createReadAndWrite(Bool(), 0x04, 0) init(True)   // [1]
-    
-    // 状态寄存器
-    val initDone       = busCtrl.createReadOnly(Bool(), 0x08, 0)            // [2]
-    busCtrl.read(io.phyCtrl.half_sys8x_taps, 0x0C)         // [3:11]
-    
-    // 写电平校准寄存器
-    val wlevelEn = busCtrl.createReadAndWrite(Bool(), 0x10, 0)       // [4] 写电平使能
-    val wlevelStrobe = busCtrl.createWriteOnly(Bool(), 0x14)         // [5] 写电平触发
-    val wlevelDone = busCtrl.createReadOnly(Bool(), 0x6C)            // 校准完成状态 [35]
-    
-    // 命令延迟控制寄存器
-    val cdlyRst = busCtrl.createWriteOnly(Bool(), 0x18)         // [6] 延迟线复位
-    val cdlyInc = busCtrl.createWriteOnly(Bool(), 0x1C)         // [7] 延迟线增量
-    busCtrl.read(io.phyCtrl.ctrl.cdly_value, 0x20)  // [8:16] 当前延迟值（只读）
-    
-    // 延迟选择寄存器（按字节使能）
-    val dlySel = busCtrl.createReadAndWrite(Bits(8 bits), 0x24) init(0)  // [9:16] 字节通道选择
-    
-    // 读延迟控制寄存器
-    val rdlyDqRst = busCtrl.createWriteOnly(Bool(), 0x28)         // [17] 读数据复位
-    val rdlyDqInc = busCtrl.createWriteOnly(Bool(), 0x2C)         // [18] 读延迟增加
-    val rdlyDqBitslipRst = busCtrl.createWriteOnly(Bool(), 0x30)  // [19] 读位滑动复位
-    val rdlyDqBitslip = busCtrl.createWriteOnly(Bool(), 0x34)     // [20] 读位滑动触发
-    
-    // Write Delay Control
-    val wdlyDqRst = busCtrl.createWriteOnly(Bool(), 0x38)
-    val wdlyDqInc = busCtrl.createWriteOnly(Bool(), 0x3C)
-    val wdlyDqsRst = busCtrl.createWriteOnly(Bool(), 0x40)
-    val wdlyDqsInc = busCtrl.createWriteOnly(Bool(), 0x44)
-    busCtrl.read(io.phyCtrl.write.dqs_inc_count, 0x48)
-    
-    // Write Bitslip
-    val wdlyDqBitslipRst = busCtrl.createWriteOnly(Bool(), 0x4C)
-    val wdlyDqBitslip = busCtrl.createWriteOnly(Bool(), 0x50)
-    
-    // Phase Control
-    val rdPhase = busCtrl.createReadAndWrite(UInt(2 bits), 0x54) init(0)
-    val wrPhase = busCtrl.createReadAndWrite(UInt(2 bits), 0x58) init(0)
+  def driveFrom(busCtrl: BusSlaveFactory, address: BigInt): Unit = {
+    // Control register group
+    val ctrlReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x00).init(0)
+    io.ctrl.reset      := ctrlReg(0)       // [0] Global reset
+    io.phyCtrl.en_vtc  := ctrlReg(1)       // [1] Voltage temp compensation enable
+    ctrlReg(8)         := io.ctrl.initDone // [8] Initialization status (RO)
 
-    // Hardware Connections
-    io.ctrl.reset := resetReg
-    io.ctrl.initDone := initDone
+    // Delay control register (0x04)
+    val delayCtrlReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x04).init(0)
+    io.phyCtrl.ctrl.cdly_rst    := delayCtrlReg(0)  // [0] CDLY reset
+    io.phyCtrl.ctrl.cdly_inc    := delayCtrlReg(1)  // [1] CDLY increment 
+    io.phyCtrl.ctrl.wlevel_en   := delayCtrlReg(2)  // [2] Write leveling enable
+    io.phyCtrl.ctrl.wlevel_strobe := delayCtrlReg(3) // [3] Write leveling trigger
+    io.phyCtrl.ctrl.dly_sel     := delayCtrlReg(16 to 23) // [16:23] Byte lane select
 
-    // 系统控制信号连接
-    io.phyCtrl.en_vtc     := enVtcReg
-    io.phyCtrl.ctrl.wlevel_en  := wlevelEn
-    io.phyCtrl.ctrl.cdly_rst   := cdlyRst
-    io.phyCtrl.ctrl.cdly_inc   := cdlyInc
-    
-    // 连接读延迟控制
-    io.phyCtrl.read.dq_rst         := rdlyDqRst
-    io.phyCtrl.read.dq_inc         := rdlyDqInc
-    io.phyCtrl.read.bitslip_rst    := rdlyDqBitslipRst
-    io.phyCtrl.read.bitslip        := rdlyDqBitslip
-    
-    // 连接写路径控制
-    io.phyCtrl.write.dq_rst         := wdlyDqRst
-    io.phyCtrl.write.dq_inc         := wdlyDqInc
-    io.phyCtrl.write.dqs_rst        := wdlyDqsRst
-    io.phyCtrl.write.dqs_inc        := wdlyDqsInc
-    
-    // 连接相位控制
-    io.phyCtrl.phase.rd := rdPhase
-    io.phyCtrl.phase.wr := wrPhase
-    
-    // 连接其他控制信号
-    io.phyCtrl.write.bitslip_rst    := wdlyDqBitslipRst
-    io.phyCtrl.write.bitslip        := wdlyDqBitslip
-    io.phyCtrl.ctrl.dly_sel         := dlySel // 使用ctrl子Bundle
+    // Read delay control (0x08)
+    val readDelayReg = busCtrl.createWriteOnly(Bits(32 bits), 0x08)
+    io.phyCtrl.read.dq_rst      := readDelayReg(0)  // [0] Read DQ reset
+    io.phyCtrl.read.dq_inc      := readDelayReg(1)  // [1] Read DQ increment
+    io.phyCtrl.read.bitslip_rst := readDelayReg(2)  // [2] Bitslip reset
+    io.phyCtrl.read.bitslip     := readDelayReg(3)  // [3] Bitslip trigger
+
+    // Write delay control (0x0C)
+    val writeDelayReg = busCtrl.createWriteOnly(Bits(32 bits), 0x0C)
+    io.phyCtrl.write.dq_rst      := writeDelayReg(0) // [0] Write DQ reset
+    io.phyCtrl.write.dq_inc      := writeDelayReg(1) // [1] Write DQ increment
+    io.phyCtrl.write.dqs_rst     := writeDelayReg(2) // [2] Write DQS reset 
+    io.phyCtrl.write.dqs_inc     := writeDelayReg(3) // [3] Write DQS increment
+    io.phyCtrl.write.bitslip_rst := writeDelayReg(4) // [4] Write bitslip reset
+    io.phyCtrl.write.bitslip     := writeDelayReg(5) // [5] Write bitslip trigger
+
+    // Status registers
+    busCtrl.read(io.phyCtrl.half_sys8x_taps ## io.phyCtrl.ctrl.cdly_value, 0x10) // [0x10] Taps + CDLY value
+    busCtrl.read(io.phyCtrl.write.dqs_inc_count, 0x14) // [0x14] DQS increment count
+
+    // Configuration register (0x18)
+    val configReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x18).init(0)
+    io.phyCtrl.phase.rd     := configReg(13 downto 12).asUInt // [1:0] Read phase
+    io.phyCtrl.phase.wr     := configReg(15 downto 14).asUInt // [3:2] Write phase
   }
 
   // 实例化参数化延迟线组件
