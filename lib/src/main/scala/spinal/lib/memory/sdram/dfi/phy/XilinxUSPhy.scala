@@ -43,22 +43,38 @@ object PhySettings {
   }
 }
 
-case class SdramPads(dfiConfig: DfiConfig) extends Bundle {
-  val clk_p = out(Bool())
-  val clk_n = out(Bool())
-  val clk4x = in(Bool())
-  val a = out(Bits(dfiConfig.addressWidth bits))
-  val ba = out(Bits(dfiConfig.bankWidth bits))
-  val dq = inout(Analog(Bits(dfiConfig.dataWidth bits)))
-  val dqs_p = inout(Analog(Bits(dfiConfig.dataWidth/8 bits)))
-  val dqs_n = inout(Analog(Bits(dfiConfig.dataWidth/8 bits)))
-  val dm = out(Bits(dfiConfig.dataWidth/8 bits))
+case class SdramIO(dfiConfig: DfiConfig) extends Bundle {
+  // Clock signals
+  val clk_p   = out(Bool())
+  val clk_n   = out(Bool())
+  
+  // Command and address
+  val a       = out(Bits(dfiConfig.addressWidth bits))
+  val ba      = out(Bits(dfiConfig.bankWidth bits))
+  val bg      = out(Bits(dfiConfig.bankGroupWidth bits))
+  val ras_n   = out(Bool())  // Row address strobe
+  val cas_n   = out(Bool())  // Column address strobe
+  val we_n    = out(Bool())  // Write enable
+  val cs_n    = out(Bool())  // Chip select
+  val act_n   = out(Bool())  // Activation control
+  
+  // Control signals
+  val cke     = out(Bool())  // Clock enable
+  val odt     = out(Bool())  // On-die termination
+  val reset_n = out(Bool())  // Asynchronous reset
+  
+  // Data interface
+  val dq      = inout(Analog(Bits(dfiConfig.dataWidth bits)))
+  val dqs_p   = inout(Analog(Bits(dfiConfig.dataWidth/8 bits)))
+  val dqs_n   = inout(Analog(Bits(dfiConfig.dataWidth/8 bits)))
+  val dm      = out(Bits(dfiConfig.dataWidth/8 bits))  // Data mask
 }
 
 class USPhy(dfiConfig: DfiConfig) extends Component {
   val io = new Bundle {
     val dfi = slave(Dfi(dfiConfig))
-    val pads = new SdramPads(dfiConfig)
+    val pads = new SdramIO(dfiConfig)
+    val clk4x = in Bool()
     
     // 统一PHY控制接口
     val phyCtrl = new Bundle {
@@ -126,7 +142,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
 
   // Clock domains
   val sys4xDomain = ClockDomain(
-    clock = io.pads.clk4x,
+    clock = io.clk4x,
     reset = ClockDomain.current.reset,
     frequency = FixedFrequency(ClockDomain.current.frequency.getValue*4) // Assuming 4x clock
   )
@@ -269,7 +285,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val oserdesVec = Seq.fill(cmdSignals.length)(new OSERDESE3())
     for((osd,sig) <- oserdesVec.zip(cmdSignals)){
       osd.RST    := io.ctrl.reset
-      osd.CLK    := io.pads.clk4x
+      osd.CLK    := io.clk4x
       osd.CLKDIV := ClockDomain.current.readClockWire
       osd.D      := sig.asBits #* 8
     }
