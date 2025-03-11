@@ -241,7 +241,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     for((cell, idx) <- delayCells.zipWithIndex) {
       cell.CE         := io.phyCtrl.idelay.ce && io.phyCtrl.ctrl.dly_sel(idx)
       cell.INC        := io.phyCtrl.idelay.inc
-      cell.LD         := io.phyCtrl.idelay.ld
+      cell.LOAD         := io.phyCtrl.idelay.ld
       cell.CNTVALUEIN := io.phyCtrl.idelay.cntvaluein.asBits
     //   cell.EN_VTC     := io.phyCtrl.delay.en_vtc
       io.phyCtrl.idelay.cntvalueout(idx) := cell.CNTVALUEOUT.asUInt
