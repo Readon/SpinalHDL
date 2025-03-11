@@ -78,21 +78,8 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     
     // 统一PHY控制接口
     val phyCtrl = new Bundle {
-      // IODELAYE3控制
-      val idelay = new Bundle {
-        val ce          = in Bool()
-        val inc         = in Bool()
-        val ld          = in Bool()
-        val cntvaluein  = in UInt(9 bits)
-        val cntvalueout = out Vec(UInt(9 bits), 8)
-      }
-      
-      // 延迟配置
-      val delay = new Bundle {
-        val resolution = in UInt(3 bits)
-        val max        = in UInt(12 bits)
-        val en_vtc     = in Bool()
-      }
+      val en_vtc     = in Bool()
+      val half_sys8x_taps    = out UInt(9 bits)
       
       // 系统控制
       val ctrl = new Bundle {
@@ -100,6 +87,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
         val dly_sel      = in Bits(8 bits)
         val cdly_rst     = in Bool()
         val cdly_inc     = in Bool()
+        val cdly_value   = out UInt(9 bits)
       }
       
       // 读路径控制
@@ -116,6 +104,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
         val dq_inc         = in Bool()
         val dqs_rst        = in Bool()
         val dqs_inc        = in Bool()
+        val dqs_inc_count  = out UInt(9 bits)
         val bitslip_rst    = in Bool()
         val bitslip        = in Bool()
       }
@@ -124,13 +113,6 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       val phase = new Bundle {
         val rd = in UInt(2 bits)
         val wr = in UInt(2 bits)
-      }
-      
-      // 状态监测
-      val status = new Bundle {
-        val half_sys8x_taps    = out UInt(9 bits)
-        val wdly_dqs_inc_count = out UInt(9 bits)
-        val cdly_value         = out UInt(9 bits)
       }
     }
 
@@ -155,12 +137,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     
     // 状态寄存器
     val initDone       = busCtrl.createReadOnly(Bool(), 0x08, 0)            // [2]
-    val halfSys8xTaps  = busCtrl.createReadOnly(UInt(9 bits), 0x0C)         // [3:11]
-    
-    // 电气特性寄存器组
-    val vccConfig = busCtrl.createReadAndWrite(UInt(4 bits), 0x60) init(0)    // 电压配置 [24:27]
-    val tempComp = busCtrl.createReadAndWrite(UInt(4 bits), 0x64) init(0)     // 温度补偿 [28:31]
-    val driveStrength = busCtrl.createReadAndWrite(UInt(3 bits), 0x68) init(7)// 驱动强度 [32:34]
+    busCtrl.read(io.phyCtrl.half_sys8x_taps, 0x0C)         // [3:11]
     
     // 写电平校准寄存器
     val wlevelEn = busCtrl.createReadAndWrite(Bool(), 0x10, 0)       // [4] 写电平使能
@@ -170,7 +147,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     // 命令延迟控制寄存器
     val cdlyRst = busCtrl.createWriteOnly(Bool(), 0x18)         // [6] 延迟线复位
     val cdlyInc = busCtrl.createWriteOnly(Bool(), 0x1C)         // [7] 延迟线增量
-    val cdlyValue = busCtrl.createReadOnly(UInt(9 bits), 0x20)  // [8:16] 当前延迟值（只读）
+    busCtrl.read(io.phyCtrl.ctrl.cdly_value, 0x20)  // [8:16] 当前延迟值（只读）
     
     // 延迟选择寄存器（按字节使能）
     val dlySel = busCtrl.createReadAndWrite(Bits(8 bits), 0x24) init(0)  // [9:16] 字节通道选择
@@ -186,7 +163,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val wdlyDqInc = busCtrl.createWriteOnly(Bool(), 0x3C)
     val wdlyDqsRst = busCtrl.createWriteOnly(Bool(), 0x40)
     val wdlyDqsInc = busCtrl.createWriteOnly(Bool(), 0x44)
-    val wdlyDqsIncCount = busCtrl.createReadOnly(UInt(9 bits), 0x48)
+    busCtrl.read(io.phyCtrl.write.dqs_inc_count, 0x48)
     
     // Write Bitslip
     val wdlyDqBitslipRst = busCtrl.createWriteOnly(Bool(), 0x4C)
@@ -199,23 +176,9 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     // Hardware Connections
     io.ctrl.reset := resetReg
     io.ctrl.initDone := initDone
-    
-    // 新增IODELAY控制寄存器映射 (地址0x70-0x7C)
-    // IODELAY控制寄存器映射
-    val idelayCeReg    = busCtrl.createReadAndWrite(Bool(), 0x70) init(False)
-    val idelayIncReg   = busCtrl.createReadAndWrite(Bool(), 0x74) init(False)
-    val idelayLdReg    = busCtrl.createReadAndWrite(Bool(), 0x78) init(False)
-    val idelayValueReg = busCtrl.createReadAndWrite(UInt(9 bits), 0x7C) init(0)
-
-    // 连接控制信号到新结构
-    io.phyCtrl.idelay.ce         := idelayCeReg
-    io.phyCtrl.idelay.inc        := idelayIncReg
-    io.phyCtrl.idelay.ld         := idelayLdReg
-    io.phyCtrl.idelay.cntvaluein := idelayValueReg
-    busCtrl.read(io.phyCtrl.idelay.cntvalueout, 0x80, 0)
 
     // 系统控制信号连接
-    io.phyCtrl.delay.en_vtc     := enVtcReg
+    io.phyCtrl.en_vtc     := enVtcReg
     io.phyCtrl.ctrl.wlevel_en  := wlevelEn
     io.phyCtrl.ctrl.cdly_rst   := cdlyRst
     io.phyCtrl.ctrl.cdly_inc   := cdlyInc
@@ -236,17 +199,10 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     io.phyCtrl.phase.rd := rdPhase
     io.phyCtrl.phase.wr := wrPhase
     
-    // 连接状态信号
-    io.phyCtrl.status.half_sys8x_taps    := halfSys8xTaps
-    io.phyCtrl.status.wdly_dqs_inc_count := wdlyDqsIncCount
-    io.phyCtrl.status.cdly_value         := cdlyValue
-    
     // 连接其他控制信号
     io.phyCtrl.write.bitslip_rst    := wdlyDqBitslipRst
     io.phyCtrl.write.bitslip        := wdlyDqBitslip
     io.phyCtrl.ctrl.dly_sel         := dlySel // 使用ctrl子Bundle
-
-    // 删除旧的phy对象引用
   }
 
   // 实例化参数化延迟线组件
@@ -255,12 +211,12 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     
     // 连接控制信号
     for((cell, idx) <- delayCells.zipWithIndex) {
-      cell.CE         := io.phyCtrl.idelay.ce && io.phyCtrl.ctrl.dly_sel(idx)
-      cell.INC        := io.phyCtrl.idelay.inc
-      cell.LOAD         := io.phyCtrl.idelay.ld
-      cell.CNTVALUEIN := io.phyCtrl.idelay.cntvaluein.asBits
+      // cell.CE         := io.phyCtrl.idelay.ce && io.phyCtrl.ctrl.dly_sel(idx)
+      // cell.INC        := io.phyCtrl.idelay.inc
+      // cell.LOAD         := io.phyCtrl.idelay.ld
+      // cell.CNTVALUEIN := io.phyCtrl.idelay.cntvaluein.asBits
     //   cell.EN_VTC     := io.phyCtrl.delay.en_vtc
-      io.phyCtrl.idelay.cntvalueout(idx) := cell.CNTVALUEOUT.asUInt
+      // io.phyCtrl.idelay.cntvalueout(idx) := cell.CNTVALUEOUT.asUInt
       
       // 连接数据通路
       cell.ODATAIN  := cmdPath.cmdSignals(idx)
