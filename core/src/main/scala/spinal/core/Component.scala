@@ -27,6 +27,7 @@ import scala.collection.mutable.ArrayBuffer
 import spinal.core.internals._
 import spinal.idslplugin.PostInitCallback
 import spinal.core.formal.anyseq
+import spinal.idslplugin.Location
 
 
 object Component {
@@ -102,6 +103,10 @@ abstract class Component extends NameableByComponent with ContextUser with Scala
    */
   def makeInputsAnyseq(): Unit = {
     getAllIo.filter(_.isInput).filter(_.dlcIsEmpty).foreach(anyseq)
+  }
+  
+  def assume(assertion: Bool)(implicit loc: Location): Unit = {
+    FormalAssume2AssertLock.currentBehavior(assertion)
   }
 
   var withHierarchyAutoPull = false

@@ -27,6 +27,7 @@ import scala.annotation.elidable._
 import scala.annotation.meta.field
 import scala.collection.immutable.Range
 import scala.collection.mutable.ArrayBuffer
+import java.util.concurrent.atomic.AtomicInteger
 import scala.language.experimental.macros
 import scala.languageFeature._
 import spinal.idslplugin.Location
@@ -557,6 +558,37 @@ package object core extends BaseTypeFactory with BaseTypeCast {
 
   def assert(assertion: Bool, message: String,   severity: AssertNodeSeverity)(implicit loc: Location) = AssertStatementHelper(assertion, message, severity, AssertStatementKind.ASSERT, AssertStatementTrigger.CLOCKED, loc)
   def assert(assertion: Bool, message: Seq[Any], severity: AssertNodeSeverity)(implicit loc: Location) = AssertStatementHelper(assertion, message, severity, AssertStatementKind.ASSERT, AssertStatementTrigger.CLOCKED, loc)
+
+  trait AssumeBehavior { 
+    def apply(assertion: Bool)(implicit loc: Location): Unit 
+  }
+
+  object NormalAssumption extends AssumeBehavior {
+    def apply(assertion: Bool)(implicit loc: Location): Unit = 
+      assume(assertion)
+  }
+
+  object AssertAssumption extends AssumeBehavior { 
+    def apply(assertion: Bool)(implicit loc: Location): Unit = 
+      assert(assertion)
+  }
+
+  object FormalAssume2AssertLock {
+    private val counter = new ThreadLocal[AtomicInteger] {
+      override def initialValue(): AtomicInteger = new AtomicInteger(0)
+    }
+
+    def currentBehavior: AssumeBehavior = 
+      if (counter.get().get() > 0) AssertAssumption else NormalAssumption
+
+    def acquire(): Unit = counter.get().incrementAndGet()
+    
+    def release(): Unit = {
+      val c = counter.get()
+      if (c.decrementAndGet() < 0)
+        throw new IllegalStateException("release() called without acquire()")
+    }
+  }
 
 //  def apply(cond: Bool)(block: => Unit)(implicit loc: Location): WhenContext = {
 //    if(cond.dlcIsEmpty || !cond.head.source.isInstanceOf[Operator.Formal.InitState])
