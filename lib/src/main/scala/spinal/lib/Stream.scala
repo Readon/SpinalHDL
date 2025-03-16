@@ -2256,6 +2256,23 @@ class StreamTransactionCounter(
       when(!io.working) { assert(counter.value === 0) }
       assert(counter.value <= expected)
     }
+
+    def formalIOChecker() = new Composite(this, "iocheck") {
+      import spinal.core.formal._
+
+      val countHist = History(io.count, 2, io.ctrlFire, init = io.count.getZero)
+      when(!io.available) { assume(io.ctrlFire === False) }
+
+      when(pastValidAfterReset & past(io.ctrlFire)) { assert(io.working) }
+      when(pastValidAfterReset & past(io.done & !io.ctrlFire)) { assert(!io.working) }
+
+      when(io.done) { assert(io.value === countHist(1)) }
+      when(io.working) {
+        assert(countHist(1) === expected) // key to sync verification logic and internal logic.
+        when(io.value === countHist(1) & io.targetFire) { assert(io.done) }
+      }
+      assert(io.available === (!io.working | io.done))
+    }
 }
 
 object StreamTransactionExtender {

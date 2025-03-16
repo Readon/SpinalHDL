@@ -31,18 +31,19 @@ class FormalStreamExtender extends SpinalFormalFunSuite {
         inStream.formalAssumesSlave()
         outStream.formalAssumesSlave()
 
-        val countHist = History(count, 2, inStream.fire, init = count.getZero)
-        when(!dut.io.available) { assume(inReady === False) }
+        // val countHist = History(count, 2, inStream.fire, init = count.getZero)
+        // when(!dut.io.available) { assume(inReady === False) }
 
-        when(pastValidAfterReset & past(inStream.fire)) { assert(dut.io.working) }
-        when(pastValidAfterReset & past(dut.io.done & !inStream.fire)) { assert(!dut.io.working) }
+        // when(pastValidAfterReset & past(inStream.fire)) { assert(dut.io.working) }
+        // when(pastValidAfterReset & past(dut.io.done & !inStream.fire)) { assert(!dut.io.working) }
 
-        when(dut.io.done) { assert(dut.counter.value === countHist(1)) }
-        when(dut.io.working) {
-          assert(countHist(1) === dut.expected) // key to sync verification logic and internal logic.
-          when(dut.counter.value === countHist(1) & outStream.fire) { assert(dut.io.done) }
-        }
-        assert(dut.io.available === (!dut.io.working | dut.io.done))
+        // when(dut.io.done) { assert(dut.counter.value === countHist(1)) }
+        // when(dut.io.working) {
+        //   assert(countHist(1) === dut.expected) // key to sync verification logic and internal logic.
+        //   when(dut.counter.value === countHist(1) & outStream.fire) { assert(dut.io.done) }
+        // }
+        // assert(dut.io.available === (!dut.io.working | dut.io.done))
+        dut.formalIOChecker
         val counterHelper = dut.formalAsserts()
 
         for (i <- 1 until 2) {
@@ -131,6 +132,10 @@ class FormalStreamExtender extends SpinalFormalFunSuite {
           assert(dut.io.output.payload === dut.payloadReg)
         }
         dut.formalAsserts()
+
+        FormalAssume2AssertLock.acquire
+        dut.counter.formalIOChecker
+        FormalAssume2AssertLock.release
 
         for (i <- 1 until 2) {
           inStream.formalCovers(i)
