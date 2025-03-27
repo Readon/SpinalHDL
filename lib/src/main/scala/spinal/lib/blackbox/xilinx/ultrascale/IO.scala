@@ -4,52 +4,58 @@ import spinal.core._
 
 /** Enhanced OSERDESE3 with 8-bit data width */
 case class OSERDESE3(
-  DATA_WIDTH       : Int = 8,
-  INIT             : Boolean = false,
-  IS_CLK_INVERTED    : Boolean = false,
-  IS_CLKDIV_INVERTED : Boolean = false,
-  IS_RST_INVERTED    : Boolean = false,
-  SIM_DEVICE       : String = "ULTRASCALE_PLUS"
+  dataWidth: Int = 8,
+  init: Boolean = false,
+  isClkInverted: Boolean = false,
+  isRstInverted: Boolean = false,
+  isClkDivInverted: Boolean = false,
+  simDevice: String = "ULTRASCALE"
 ) extends BlackBox {
-  
-  addGeneric("DATA_WIDTH", DATA_WIDTH)
-  addGeneric("INIT", if(INIT) "1" else "0")  
-  addGeneric("IS_CLK_INVERTED", if(IS_CLK_INVERTED) "1" else "0")
-  addGeneric("IS_CLKDIV_INVERTED", if(IS_CLKDIV_INVERTED) "1" else "0")
-  addGeneric("IS_RST_INVERTED", if(IS_RST_INVERTED) "1" else "0")
-  addGeneric("SIM_DEVICE", SIM_DEVICE)
+  val generic = new Generic {
+    val DATA_WIDTH = dataWidth
+    val INIT = if(init) "1" else "0"
+    val IS_CLK_INVERTED = if(isClkInverted) "1" else "0"
+    val IS_CLKDIV_INVERTED = if(isClkDivInverted) "1" else "0"
+    val IS_RST_INVERTED = if(isRstInverted) "1" else "0"
+    val SIM_DEVICE = simDevice
+  }
 
-  val OQ       = out Bool()
-  val T_OUT    = out Bool()
-  val CLK      = in Bool()
-  val CLKDIV   = in Bool()
-  val D        = in Bits(8 bits)
-  val RST      = in Bool()
-  val T        = in Bool()
+  val io = new Bundle {
+    val CLK = in Bool()
+    val CLKDIV = in Bool()
+    val D = in Bits(dataWidth bits)
+    val OQ = out Bool()
+    val RST = in Bool()
+    val T = in Bool()
+    val T_OUT = out Bool()
+  }
+
+  mapCurrentClockDomain(io.CLK, io.RST)
 }
 
 /** Enhanced ODELAYE3 with 9-bit delay resolution */
 case class ODELAYE3(
-  CASCADE          : String = "NONE",
-  DELAY_FORMAT     : String = "TIME",
-  DELAY_TYPE       : String = "FIXED",
-  DELAY_VALUE      : Int = 0,
-  REFCLK_FREQUENCY : Double = 300.0,
-  IS_CLK_INVERTED  : Boolean = false,
-  IS_RST_INVERTED  : Boolean = false,
-  SIM_DEVICE       : String = "ULTRASCALE_PLUS",
-  UPDATE_MODE      : String = "ASYNC"
+  cascade: String = "NONE",
+  delayFormat: String = "TIME",
+  delayType: String = "FIXED",
+  delayValue: Int = 0,
+  refClkFrequency: Double = 300.0,
+  isClkInverted: Boolean = false,
+  isRstInverted: Boolean = false,
+  simDevice: String = "ULTRASCALE_PLUS",
+  updateMode: String = "ASYNC"
 ) extends BlackBox {
-  
-  addGeneric("CASCADE", CASCADE)
-  addGeneric("DELAY_FORMAT", DELAY_FORMAT)
-  addGeneric("DELAY_TYPE", DELAY_TYPE)
-  addGeneric("DELAY_VALUE", DELAY_VALUE)
-  addGeneric("REFCLK_FREQUENCY", REFCLK_FREQUENCY)
-  addGeneric("IS_CLK_INVERTED", if(IS_CLK_INVERTED) "1" else "0")
-  addGeneric("IS_RST_INVERTED", if(IS_RST_INVERTED) "1" else "0")
-  addGeneric("SIM_DEVICE", SIM_DEVICE)
-  addGeneric("UPDATE_MODE", UPDATE_MODE)
+  val generic = new Generic {
+    val CASCADE = cascade
+    val DELAY_FORMAT = delayFormat
+    val DELAY_TYPE = delayType
+    val DELAY_VALUE = delayValue
+    val REFCLK_FREQUENCY = refClkFrequency
+    val IS_CLK_INVERTED = if(isClkInverted) "1" else "0"
+    val IS_RST_INVERTED = if(isRstInverted) "1" else "0"
+    val SIM_DEVICE = simDevice
+    val UPDATE_MODE = updateMode
+  }
 
   val CASC_OUT      = out Bool()
   val CNTVALUEOUT   = out Bits(9 bits)
@@ -68,26 +74,27 @@ case class ODELAYE3(
 
 /** Enhanced IDELAYE3 with cascading support */
 case class IDELAYE3(
-  CASCADE          : String = "NONE",
-  DELAY_FORMAT     : String = "TIME",
-  DELAY_TYPE       : String = "FIXED",
-  DELAY_VALUE      : Int = 0,
-  REFCLK_FREQUENCY : Double = 300.0,
-  IS_CLK_INVERTED  : Boolean = false,
-  IS_RST_INVERTED  : Boolean = false,
-  SIM_DEVICE       : String = "ULTRASCALE_PLUS",
-  UPDATE_MODE      : String = "ASYNC"
+  cascade: String = "NONE",
+  delayFormat: String = "TIME",
+  delayType: String = "FIXED",
+  delayValue: Int = 0,
+  refClkFrequency: Double = 300.0,
+  isClkInverted: Boolean = false,
+  isRstInverted: Boolean = false,
+  simDevice: String = "ULTRASCALE_PLUS",
+  updateMode: String = "ASYNC"
 ) extends BlackBox {
-  
-  addGeneric("CASCADE", CASCADE)
-  addGeneric("DELAY_FORMAT", DELAY_FORMAT)
-  addGeneric("DELAY_TYPE", DELAY_TYPE)
-  addGeneric("DELAY_VALUE", DELAY_VALUE)
-  addGeneric("REFCLK_FREQUENCY", REFCLK_FREQUENCY)
-  addGeneric("IS_CLK_INVERTED", if(IS_CLK_INVERTED) "1" else "0")
-  addGeneric("IS_RST_INVERTED", if(IS_RST_INVERTED) "1" else "0")
-  addGeneric("SIM_DEVICE", SIM_DEVICE)
-  addGeneric("UPDATE_MODE", UPDATE_MODE)
+  val generic = new Generic {
+    val CASCADE = cascade
+    val DELAY_FORMAT = delayFormat
+    val DELAY_TYPE = delayType
+    val DELAY_VALUE = delayValue
+    val REFCLK_FREQUENCY = refClkFrequency
+    val IS_CLK_INVERTED = if(isClkInverted) "1" else "0"
+    val IS_RST_INVERTED = if(isRstInverted) "1" else "0"
+    val SIM_DEVICE = simDevice
+    val UPDATE_MODE = updateMode
+  }
 
   val CASC_OUT      = out Bool()
   val CNTVALUEOUT   = out Bits(9 bits)
@@ -107,12 +114,13 @@ case class IDELAYE3(
 
 /** Enhanced IOBUF_DCIEN with termination control */
 case class IOBUF_DCIEN(
-  SIM_DEVICE       : String = "ULTRASCALE",
-  USE_IBUFDISABLE  : String = "TRUE"
+  simDevice: String = "ULTRASCALE",
+  useIbufDisable: String = "TRUE"
 ) extends BlackBox {
-  
-  addGeneric("SIM_DEVICE", SIM_DEVICE)
-  addGeneric("USE_IBUFDISABLE", USE_IBUFDISABLE)
+  val generic = new Generic {
+    val SIM_DEVICE = simDevice
+    val USE_IBUFDISABLE = useIbufDisable
+  }
 
   val DCITERMDISABLE = in Bool()
   val IBUFDISABLE    = in Bool()
@@ -146,22 +154,23 @@ case class IOBUF() extends BlackBox {
 
 /** Updated ISERDESE3 with FIFO support */
 case class ISERDESE3(
-  DATA_WIDTH       : Int = 8,
-  FIFO_ENABLE      : String = "FALSE",
-  FIFO_SYNC_MODE   : String = "FALSE",
-  IS_CLK_INVERTED   : Boolean = false,
-  IS_CLK_B_INVERTED : Boolean = false,
-  IS_RST_INVERTED   : Boolean = false,
-  SIM_DEVICE       : String = "ULTRASCALE_PLUS"
+  dataWidth: Int = 8,
+  fifoEnable: String = "FALSE",
+  fifoSyncMode: String = "FALSE",
+  isClkInverted: Boolean = false,
+  isClkBInverted: Boolean = false,
+  isRstInverted: Boolean = false,
+  simDevice: String = "ULTRASCALE_PLUS"
 ) extends BlackBox {
-  
-  addGeneric("DATA_WIDTH", DATA_WIDTH)
-  addGeneric("FIFO_ENABLE", FIFO_ENABLE)
-  addGeneric("FIFO_SYNC_MODE", FIFO_SYNC_MODE)
-  addGeneric("IS_CLK_INVERTED", if(IS_CLK_INVERTED) "1" else "0")
-  addGeneric("IS_CLK_B_INVERTED", if(IS_CLK_B_INVERTED) "1" else "0")
-  addGeneric("IS_RST_INVERTED", if(IS_RST_INVERTED) "1" else "0")
-  addGeneric("SIM_DEVICE", SIM_DEVICE)
+  val generic = new Generic {
+    val DATA_WIDTH = dataWidth
+    val FIFO_ENABLE = fifoEnable
+    val FIFO_SYNC_MODE = fifoSyncMode
+    val IS_CLK_INVERTED = if(isClkInverted) "1" else "0"
+    val IS_CLK_B_INVERTED = if(isClkBInverted) "1" else "0"
+    val IS_RST_INVERTED = if(isRstInverted) "1" else "0"
+    val SIM_DEVICE = simDevice
+  }
 
   val FIFO_EMPTY       = out Bool()
   val INTERNAL_DIVCLK  = out Bool()
