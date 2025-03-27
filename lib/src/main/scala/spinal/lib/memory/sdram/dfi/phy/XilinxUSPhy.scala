@@ -174,20 +174,23 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
 
   // 实例化参数化延迟线组件
   val delayLine = new ClockingArea(sys4xDomain) {
-    val delayCells = Seq.fill(8)(new ODELAYE3(REFCLK_FREQUENCY = 200.0))
+    val delayCells = Seq.fill(8)(new ODELAYE3(refClkFrequency = 200.0))
     
     // 连接控制信号
     for((cell, idx) <- delayCells.zipWithIndex) {
-      // cell.CE         := io.phyCtrl.idelay.ce && io.phyCtrl.ctrl.dly_sel(idx)
-      // cell.INC        := io.phyCtrl.idelay.inc
-      // cell.LOAD         := io.phyCtrl.idelay.ld
-      // cell.CNTVALUEIN := io.phyCtrl.idelay.cntvaluein.asBits
-    //   cell.EN_VTC     := io.phyCtrl.delay.en_vtc
-      // io.phyCtrl.idelay.cntvalueout(idx) := cell.CNTVALUEOUT.asUInt
+      cell.RST := io.ctrl.reset
+      cell.EN_VTC := io.phyCtrl.en_vtc
+      cell.CE := io.phyCtrl.ctrl.cdly_inc && io.phyCtrl.ctrl.dly_sel(idx)
+      cell.INC := True
       
       // 连接数据通路
-      cell.ODATAIN  := cmdPath.cmdSignals(idx)
+      cell.ODATAIN := cmdPath.cmdSignals(idx)
       cmdPath.cmdSignals(idx) := cell.DATAOUT
+      
+      // 连接状态输出
+      when(io.phyCtrl.ctrl.dly_sel(idx)) {
+        io.phyCtrl.ctrl.cdly_value := cell.CNTVALUEOUT
+      }
     }
   }
 
@@ -246,13 +249,19 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val dqOserdes = Seq.fill(dfiConfig.dataWidth)(new OSERDESE3())
     for((osd, data) <- dqOserdes.zip(wrData.asBools)){
       osd.D := data.asBits #* 8
-      osd.T_OUT := wrDataCsN.map(_.asBools.head).getOrElse(wrDataMask.asBools.head) // 显式转换为Bool
+      osd.T := wrDataCsN.map(_.asBools.head).getOrElse(wrDataMask.asBools.head) // 显式转换为Bool
+      osd.CLK := io.clk4x
+      osd.CLKDIV := ClockDomain.current.readClockWire
+      osd.RST := io.ctrl.reset
     }
 
     // Read path
     val rdData = io.dfi.read.rd(0).rddata
     for((osd, data) <- dqOserdes.zip(rdData.asBools)){
       data := osd.OQ
+      osd.CLK := io.clk4x
+      osd.CLKDIV := ClockDomain.current.readClockWire
+      osd.RST := io.ctrl.reset
     }
 
     // DQS输出连接

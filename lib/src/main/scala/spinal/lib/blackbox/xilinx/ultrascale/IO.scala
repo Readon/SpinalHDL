@@ -20,17 +20,15 @@ case class OSERDESE3(
     val SIM_DEVICE = simDevice
   }
 
-  val io = new Bundle {
-    val CLK = in Bool()
-    val CLKDIV = in Bool()
-    val D = in Bits(dataWidth bits)
-    val OQ = out Bool()
-    val RST = in Bool()
-    val T = in Bool()
-    val T_OUT = out Bool()
-  }
+  val CLK = in Bool()
+  val CLKDIV = in Bool()
+  val D = in Bits(dataWidth bits)
+  val OQ = out Bool()
+  val RST = in Bool()
+  val T = in Bool()
+  val T_OUT = out Bool()
 
-  mapCurrentClockDomain(io.CLK, io.RST)
+  mapCurrentClockDomain(CLK, RST)
 }
 
 /** Enhanced ODELAYE3 with 9-bit delay resolution */
@@ -58,13 +56,13 @@ case class ODELAYE3(
   }
 
   val CASC_OUT      = out Bool()
-  val CNTVALUEOUT   = out Bits(9 bits)
+  val CNTVALUEOUT   = out UInt(9 bits)
   val DATAOUT       = out Bool()
   val CASC_IN       = in Bool()
   val CASC_RETURN   = in Bool()
   val CE            = in Bool()
   val CLK           = in Bool()
-  val CNTVALUEIN    = in Bits(9 bits)
+  val CNTVALUEIN    = in UInt(9 bits)
   val ODATAIN       = in Bool()
   val INC           = in Bool()
   val LOAD          = in Bool()
