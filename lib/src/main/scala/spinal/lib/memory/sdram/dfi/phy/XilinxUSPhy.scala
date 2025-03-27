@@ -7,42 +7,6 @@ import spinal.lib.fsm.{StateMachine, State, EntryPoint}
 import spinal.lib.memory.sdram.dfi._
 import spinal.lib.blackbox.xilinx.ultrascale._
 
-case class PhySettings(
-  // 基础时序参数
-  tCK: Double,
-  // RDIMM配置
-  rdimm: Boolean = false,
-  rcw: Int = 5,       // Registered CAS Write
-  rcd: Int = 5,       // Registered CAS Delay
-  rp: Int = 5,        // Registered Precharge
-  // 动态计算参数
-  cl: Int = 5,
-  cwl: Int = 5
-) {
-  // CL/CWL自动计算逻辑
-  def setRdimm(en: Boolean, speedGrade: Int = 1600): PhySettings = {
-    val (calcCL, calcCWL) = PhySettings.calculateTiming(speedGrade, tCK)
-    this.copy(
-      rdimm = en,
-      cl = if(en) calcCL else this.cl,
-      cwl = if(en) calcCWL else this.cwl
-    )
-  }
-}
-
-object PhySettings {
-  // JEDEC标准时序计算（来自usphy.py第523-528行）
-  def calculateTiming(speedGrade: Int, tCK: Double): (Int, Int) = {
-    val clMap = Map(
-      1600 -> 11,
-      1866 -> 13,
-      2133 -> 15
-    )
-    val cwl = (scala.math.ceil((tCK - 0.25) / 0.25).toInt).max(5)
-    (clMap.getOrElse(speedGrade, 11), cwl)
-  }
-}
-
 case class SdramIO(dfiConfig: DfiConfig) extends Bundle {
   // Clock signals
   val clk_p   = out(Bool())
@@ -213,43 +177,71 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       osd.RST    := io.ctrl.reset
       osd.CLK    := io.clk4x
       osd.CLKDIV := ClockDomain.current.readClockWire
-      osd.D      := sig.asBits #* 8
+      osd.D      := B(0, 8 bits).setAllTo(sig)
+      osd.T      := False
     }
+  }
+
+  // DQSPattern module implementation (from usphy.py lines 564-593)
+  class DQSPattern extends Component {
+    val io = new Bundle {
+      val preamble = in Bool()
+      val postamble = in Bool()
+      val wlevel_en = in Bool()
+      val wlevel_strobe = in Bool()
+      val output = out Bits(8 bits)
+    }
+
+    val pattern = Reg(Bits(8 bits)) init(0x55) // 01010101
+    
+    when(io.preamble) {
+      pattern := 0x15 // 00010101
+    }.elsewhen(io.postamble) {
+      pattern := 0x54 // 01010100
+    }.elsewhen(io.wlevel_en) {
+      pattern := 0x00
+      when(io.wlevel_strobe) {
+        pattern := 0x01
+      }
+    }
+
+    io.output := pattern
   }
 
   // Data path
   val dataPath = new Area {
-    // DQS pattern生成模块
-    val dqsPattern = new Area {
-      val dqs = Reg(Bool())
-      val dqs_n = Reg(Bool())
-      val phase = io.phyCtrl.phase.wr
-      
-      // 生成DQS脉冲（4x时钟域）
-      sys4xDomain {
-        when(io.dfi.write.wr(0).wrdataEn) {
-          switch(phase) {
-            is(0) { dqs := True; dqs_n := False }
-            is(1) { dqs := False; dqs_n := True }
-            is(2) { dqs := !dqs; dqs_n := !dqs_n }
-          }
-        } otherwise {
-          dqs := False
-          dqs_n := False
-        }
-      }
-    }
+    // Control signals
+    val dqs_oe = Reg(Bool()) init(False)
+    val dq_oe = Reg(Bool()) init(False)
+    val dqs_preamble = Reg(Bool()) init(False)
+    val dqs_postamble = Reg(Bool()) init(False)
+
+    // DQS pattern generator
+    val dqsPattern = new DQSPattern
+    dqsPattern.io.preamble := dqs_preamble
+    dqsPattern.io.postamble := dqs_postamble
+    dqsPattern.io.wlevel_en := io.phyCtrl.ctrl.wlevel_en
+    dqsPattern.io.wlevel_strobe := io.phyCtrl.ctrl.wlevel_strobe
 
     // Write path
     val wrData = io.dfi.write.wr(0).wrdata
     val wrDataEn = io.dfi.write.wr(0).wrdataEn
     val wrDataMask = io.dfi.write.wr(0).wrdataMask
     val wrDataCsN = if(dfiConfig.useWrdataCsN) Some(io.dfi.write.wr(0).wrdataCsN) else None
-    
+
+    // Write data bitslip
+    val wrBitslip = Seq.fill(dfiConfig.dataWidth)(new BitSlip(8))
+    for((slip, data) <- wrBitslip.zip(wrData.asBools)) {
+      slip.io.input := data.asBits #* 8
+      slip.io.rst := io.phyCtrl.write.bitslip_rst
+      slip.io.slp := io.phyCtrl.write.bitslip
+    }
+
+    // DQ OSERDES
     val dqOserdes = Seq.fill(dfiConfig.dataWidth)(new OSERDESE3())
-    for((osd, data) <- dqOserdes.zip(wrData.asBools)){
-      osd.D := data.asBits #* 8
-      osd.T := wrDataCsN.map(_.asBools.head).getOrElse(wrDataMask.asBools.head) // 显式转换为Bool
+    for((osd, slip) <- dqOserdes.zip(wrBitslip)) {
+      osd.D := slip.io.output
+      osd.T := ~dq_oe
       osd.CLK := io.clk4x
       osd.CLKDIV := ClockDomain.current.readClockWire
       osd.RST := io.ctrl.reset
@@ -257,18 +249,71 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
 
     // Read path
     val rdData = io.dfi.read.rd(0).rddata
-    for((osd, data) <- dqOserdes.zip(rdData.asBools)){
-      data := osd.OQ
-      osd.CLK := io.clk4x
-      osd.CLKDIV := ClockDomain.current.readClockWire
-      osd.RST := io.ctrl.reset
+    val rdBitslip = Seq.fill(dfiConfig.dataWidth)(new BitSlip(8))
+    for((slip, data) <- rdBitslip.zip(rdData.asBools)) {
+      slip.io.input := data.asBits #* 8
+      slip.io.rst := io.phyCtrl.read.bitslip_rst
+      slip.io.slp := io.phyCtrl.read.bitslip
+      data := slip.io.output(0)
     }
 
-    // DQS输出连接
-    io.pads.dqs_p := dqsPattern.dqs.asBits
-    io.pads.dqs_n := dqsPattern.dqs_n.asBits
+    // DQS output
+    val dqsOserdes = new OSERDESE3()
+    dqsOserdes.D := dqsPattern.io.output
+    dqsOserdes.T := ~dqs_oe
+    dqsOserdes.CLK := io.clk4x
+    dqsOserdes.CLKDIV := ClockDomain.current.readClockWire
+    dqsOserdes.RST := io.ctrl.reset
+
+    io.pads.dqs_p := dqsOserdes.OQ.asBits
+    io.pads.dqs_n := ~dqsOserdes.OQ.asBits
+
+    // Control path
+    val writeLatency = dfiConfig.timeConfig.tPhyWrLat - dfiConfig.sdram.ddrWrLat + 2
+    val wrDelay = new TappedDelayLine(1, writeLatency + 2)
+    wrDelay.io.input := wrDataEn
+
+    dq_oe := wrDelay.io.taps(writeLatency)
+    dqs_oe := io.phyCtrl.ctrl.wlevel_en | dq_oe
+    dqs_preamble := wrDelay.io.taps(writeLatency - 1) & ~wrDelay.io.taps(writeLatency)
+    dqs_postamble := wrDelay.io.taps(writeLatency + 1) & ~wrDelay.io.taps(writeLatency)
   }
 
+
+  // BitSlip module implementation (from usphy.py lines 530-551)
+  class BitSlip(width: Int) extends Component {
+    val io = new Bundle {
+      val input = in Bits(width bits)
+      val output = out Bits(width bits)
+      val rst = in Bool()
+      val slp = in Bool()
+    }
+
+    val shiftReg = History(io.input, length=width, init=B(0, width bits), when=io.slp)
+    val ptr = Counter(width, inc=io.slp)
+
+    when(io.rst) {
+      ptr.clear()
+      shiftReg.foreach(_ := B(0, width bits))
+    }
+
+    io.output := shiftReg(ptr.value)
+  }
+
+  // TappedDelayLine module implementation (from usphy.py lines 554-561)
+  class TappedDelayLine(width: Int, ntaps: Int) extends Component {
+    val io = new Bundle {
+      val input = in Bool()
+      val taps = out Vec(Bool(), ntaps)
+    }
+
+    val delayLine = Vec(Reg(Bool()) init(False), ntaps)
+    delayLine(0) := io.input
+    for(i <- 1 until ntaps) {
+      delayLine(i) := delayLine(i-1)
+    }
+    io.taps := delayLine
+  }
 
   // Training FSM
   val trainingFSM = new Area {
@@ -326,39 +371,10 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       }
 
       val stateReady = new State {
-        onEntry(io.ctrl.initDone := True)
+        onEntry {
+          io.ctrl.initDone := True
+        }
       }
-      
-    // 新增BitSlip模块（第530-551行Python代码转写）
-    class BitSlip(width: Int) extends Component {
-      val io = new Bundle {
-        val input = in Bits(width bits)
-        val slip = in Bool()
-        val output = out Bits(width bits)
-        val rst = in Bool()
-      }
-    
-      val buffer = RegNextWhen(io.input, io.slip) init(0)
-      when(io.rst) {
-        buffer := 0
-      }
-      io.output := buffer
-    }
-    
-    // 新增TappedDelayLine模块（第554-561行Python代码转写）
-    class TappedDelayLine(width: Int, taps: Int) extends Component {
-      val io = new Bundle {
-        val input = in Bool()
-        val outputs = out Vec(Bool(), taps)
-      }
-    
-      val delayLine = Vec(Reg(Bool())).addAttribute("async_reg")
-      delayLine(0) := io.input
-      for(i <- 1 until taps) {
-        delayLine(i) := delayLine(i-1)
-      }
-      io.outputs := delayLine
-    }
     }
   }
 }
