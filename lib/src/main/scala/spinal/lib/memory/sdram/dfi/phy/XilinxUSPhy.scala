@@ -40,12 +40,12 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val pads = new SdramIO(dfiConfig)
     val clk4x = in Bool()
     
-    // 统一PHY控制接口
+    // Unified PHY control interface
     val phyCtrl = new Bundle {
       val en_vtc     = in Bool()
       val half_sys8x_taps    = out UInt(9 bits)
       
-      // 系统控制
+      // System control
       val ctrl = new Bundle {
         val wlevel_en    = in Bool()
         val wlevel_strobe= in Bool()
@@ -55,7 +55,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
         val cdly_value   = out UInt(9 bits)
       }
       
-      // 读路径控制
+      // Read path control
       val read = new Bundle {
         val dq_rst         = in Bool()
         val dq_inc         = in Bool()
@@ -63,7 +63,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
         val bitslip        = in Bool()
       }
       
-      // 写路径控制
+      // Write path control
       val write = new Bundle {
         val dq_rst         = in Bool()
         val dq_inc         = in Bool()
@@ -74,7 +74,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
         val bitslip        = in Bool()
       }
       
-      // 相位控制
+      // Phase control
       val phase = new Bundle {
         val rd = in UInt(2 bits)
         val wr = in UInt(2 bits)
@@ -136,22 +136,22 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     io.phyCtrl.phase.wr     := configReg(15 downto 14).asUInt // [3:2] Write phase
   }
 
-  // 实例化参数化延迟线组件
+  // Instantiate parameterized delay line component
   val delayLine = new ClockingArea(sys4xDomain) {
     val delayCells = Seq.fill(8)(new ODELAYE3(refClkFrequency = 200.0))
     
-    // 连接控制信号
+    // Connect control signals
     for((cell, idx) <- delayCells.zipWithIndex) {
       cell.RST := io.ctrl.reset
       cell.EN_VTC := io.phyCtrl.en_vtc
       cell.CE := io.phyCtrl.ctrl.cdly_inc && io.phyCtrl.ctrl.dly_sel(idx)
       cell.INC := True
       
-      // 连接数据通路
+      // Connect data path
       cell.ODATAIN := cmdPath.cmdSignals(idx)
       cmdPath.cmdSignals(idx) := cell.DATAOUT
       
-      // 连接状态输出
+      // Connect status output
       when(io.phyCtrl.ctrl.dly_sel(idx)) {
         io.phyCtrl.ctrl.cdly_value := cell.CNTVALUEOUT
       }
@@ -160,12 +160,12 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
 
   // Command path
   val cmdPath = new Area {
-    // 命令信号同步寄存器
+    // Command signal synchronization registers
     val syncedAddress = RegNextWhen(io.dfi.control.address, io.dfi.control.cke.asBool)
     val syncedBank = RegNextWhen(io.dfi.control.bank, io.dfi.control.cke.asBool)
     
-    // 组合命令信号并展开为Bool向量
-    val cmdSignals: Seq[Bool] = 
+    // Combine command signals and expand to Bool vector
+    val cmdSignals: Seq[Bool] =
       syncedAddress.asBools ++
       syncedBank.asBools ++
       io.dfi.control.rasN.asBools ++
@@ -182,7 +182,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     }
   }
 
-  // DQSPattern module implementation (from usphy.py lines 564-593)
+  // DQSPattern module implementation
   class DQSPattern extends Component {
     val io = new Bundle {
       val preamble = in Bool()
@@ -192,23 +192,23 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       val output = out Bits(8 bits)
     }
 
-    // 组合逻辑生成模式
+    // Combinational logic for pattern generation
     val pattern = Bits(8 bits)
     val wlevel_strobe_rise = io.wlevel_strobe.rise(False)
     
-    pattern := 0x55 // 默认模式 01010101
+    pattern := 0x55
     when(io.preamble) {
-      pattern := 0x15 // 00010101
+      pattern := 0x15
     }.elsewhen(io.postamble) {
-      pattern := 0x54 // 01010100
+      pattern := 0x54
     }.elsewhen(io.wlevel_en) {
       pattern := 0x00
       when(wlevel_strobe_rise) {
-        pattern := 0x01 // 仅在上沿产生单周期脉冲
+        pattern := 0x01
       }
     }
 
-    // 添加bitslip处理
+    // Add bitslip processing
     val bitslip = new BitSlip(8)
     bitslip.io.input := pattern
     bitslip.io.rst := False
@@ -225,7 +225,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val dqs_preamble = Reg(Bool()) init(False)
     val dqs_postamble = Reg(Bool()) init(False)
 
-    // DQS pattern generator (已适配新DQSPattern实现)
+    // DQS pattern generator
     val dqsPattern = new DQSPattern
     dqsPattern.io.preamble := dqs_preamble
     dqsPattern.io.postamble := dqs_postamble
@@ -277,12 +277,12 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     io.pads.dqs_p := dqsOserdes.OQ.asBits
     io.pads.dqs_n := ~dqsOserdes.OQ.asBits
 
-    // Write latency计算公式说明（依据Xilinx UG571文档）：
-    // tPhyWrLat = PHY物理层延迟（包含ODELAY tap值和PCB走线延迟）
-    // ddrWrLat  = 控制器级写延迟（对应JEDEC CWL参数）
-    // +2周期补偿：
-    //   1周期用于4x到1x时钟域转换（UG571 Figure 3-14）
-    //   1周期用于OSERDESE3固有延迟（UG571 Table 3-1）
+    // Write latency calculation formula (based on Xilinx UG571 document):
+    // tPhyWrLat = PHY layer latency (includes ODELAY tap value and PCB trace delay)
+    // ddrWrLat  = Controller level write latency (corresponds to JEDEC CWL parameter)
+    // +2 cycle compensation:
+    //   1 cycle for 4x to 1x clock domain crossing (UG571 Figure 3-14)
+    //   1 cycle for OSERDESE3 intrinsic latency (UG571 Table 3-1)
     val writeLatency = dfiConfig.timeConfig.tPhyWrLat - dfiConfig.sdram.ddrWrLat + 2
     val wrDelay = new TappedDelayLine(1, writeLatency + 2)
     wrDelay.io.input := wrDataEn
@@ -294,7 +294,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
   }
 
 
-  // BitSlip module implementation (from usphy.py lines 530-551)
+  // BitSlip module implementation
   class BitSlip(width: Int) extends Component {
     val io = new Bundle {
       val input = in Bits(width bits)
@@ -314,7 +314,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     io.output := shiftReg(ptr.value)
   }
 
-  // TappedDelayLine module implementation (from usphy.py lines 554-561)
+  // TappedDelayLine module implementation
   class TappedDelayLine(width: Int, ntaps: Int) extends Component {
     val io = new Bundle {
       val input = in Bool()
@@ -364,7 +364,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       val stateReadGateTraining = new State {
         onEntry(readGateDone := False)
         whenIsActive {
-          // 添加读门训练逻辑
+          // Add read gate training logic
           readGateDone := True
           goto(stateReadEyeTraining)
         }
@@ -373,7 +373,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       val stateReadEyeTraining = new State {
         onEntry(readEyeDone := False)
         whenIsActive {
-          // 添加读眼训练逻辑
+          // Add read eye training logic
           readEyeDone := True
           goto(stateCalibrationDone)
         }

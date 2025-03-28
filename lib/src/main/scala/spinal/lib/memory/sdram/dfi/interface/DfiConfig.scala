@@ -222,7 +222,7 @@ case class DfiConfig(
     signalConfig: DfiSignalConfig,
     timeConfig: DfiTimeConfig,
     sdram: SdramConfig,
-    rdimmConfig: RdimmConfig = RdimmConfig() // 新增RDIMM配置
+    rdimmConfig: RdimmConfig = RdimmConfig()
 ) {
   val frequencyRatio = timeConfig.frequencyRatio
   val dataRate = sdram.generation.dataRate
