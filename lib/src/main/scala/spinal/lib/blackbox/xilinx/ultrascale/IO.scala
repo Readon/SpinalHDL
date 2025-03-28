@@ -4,14 +4,15 @@ import spinal.core._
 
 /** Enhanced OSERDESE3 with 8-bit data width */
 case class OSERDESE3(
-   dataWidth: Int = 8,
-   init: Boolean = false,
-   isClkInverted: Boolean = false,
-   isRstInverted: Boolean = false,
-   isClkDivInverted: Boolean = false,
-   simDevice: String = "ULTRASCALE",
-   hasTristate: Boolean = false
+  dataWidth: Int = 8,
+  init: Boolean = false,
+  isClkInverted: Boolean = false,
+  isRstInverted: Boolean = false,
+  isClkDivInverted: Boolean = false,
+  simDevice: String = "ULTRASCALE",
+  hasTristate: Boolean = false
 ) extends BlackBox {
+  require(Set(4,8).contains(dataWidth), "dataWidth must be 4 or 8")
   val generic = new Generic {
     val DATA_WIDTH = dataWidth
     val INIT = if(init) "1" else "0"
@@ -45,9 +46,13 @@ case class ODELAYE3(
   refClkFrequency: Double = 300.0,
   isClkInverted: Boolean = false,
   isRstInverted: Boolean = false,
-  simDevice: String = "ULTRASCALE_PLUS",
+  simDevice: String = "ULTRASCALE",
   updateMode: String = "ASYNC"
 ) extends BlackBox {
+  require(Set("NONE", "MASTER", "SLAVE").contains(cascade), "Invalid cascade mode (must be NONE, MASTER or SLAVE)")
+  require(Set("TIME", "COUNT").contains(delayFormat), "delayFormat must be TIME or COUNT")
+  require(Set("FIXED", "VARIABLE", "VAR_LOAD").contains(delayType), "delayType must be FIXED, VARIABLE or VAR_LOAD")
+  require(Set("ASYNC", "SYNC").contains(updateMode), "updateMode must be ASYNC or SYNC")
   val generic = new Generic {
     val CASCADE = cascade
     val DELAY_FORMAT = delayFormat
@@ -59,8 +64,6 @@ case class ODELAYE3(
     val SIM_DEVICE = simDevice
     val UPDATE_MODE = updateMode
   }
-
-  require(Set("NONE", "MASTER", "SLAVE").contains(cascade), "Invalid cascade mode (must be NONE, MASTER or SLAVE)")
   
   // Required ports
   val CNTVALUEOUT   = out UInt(9 bits)
@@ -89,9 +92,13 @@ case class IDELAYE3(
   refClkFrequency: Double = 300.0,
   isClkInverted: Boolean = false,
   isRstInverted: Boolean = false,
-  simDevice: String = "ULTRASCALE_PLUS",
+  simDevice: String = "ULTRASCALE",
   updateMode: String = "ASYNC"
 ) extends BlackBox {
+  require(Set("NONE", "MASTER", "SLAVE").contains(cascade), "Invalid cascade mode (must be NONE, MASTER or SLAVE)")
+  require(Set("TIME", "COUNT").contains(delayFormat), "delayFormat must be TIME or COUNT")
+  require(Set("FIXED", "VARIABLE", "VAR_LOAD").contains(delayType), "delayType must be FIXED, VARIABLE or VAR_LOAD")
+  require(Set("ASYNC", "SYNC").contains(updateMode), "updateMode must be ASYNC or SYNC")
   val generic = new Generic {
     val CASCADE = cascade
     val DELAY_FORMAT = delayFormat
@@ -103,8 +110,6 @@ case class IDELAYE3(
     val SIM_DEVICE = simDevice
     val UPDATE_MODE = updateMode
   }
-
-  require(Set("NONE", "MASTER", "SLAVE").contains(cascade), "Invalid cascade mode (must be NONE, MASTER or SLAVE)")
   
   val CNTVALUEOUT   = out UInt(9 bits)
   val DATAOUT       = out Bool()
@@ -171,8 +176,9 @@ case class ISERDESE3(
    isClkInverted: Boolean = false,
    isClkBInverted: Boolean = false,
    isRstInverted: Boolean = false,
-   simDevice: String = "ULTRASCALE_PLUS"
+   simDevice: String = "ULTRASCALE"
 ) extends BlackBox {
+  require(Set(4,8).contains(dataWidth), "dataWidth must be 4 or 8")
    val generic = new Generic {
      val DATA_WIDTH = dataWidth
      val FIFO_ENABLE = if(fifoEnable) "TRUE" else "FALSE"
@@ -183,15 +189,18 @@ case class ISERDESE3(
      val SIM_DEVICE = simDevice
    }
 
+   // FIFO related ports
    val FIFO_EMPTY       = fifoEnable generate out Bool()
+   val FIFO_RD_CLK      = fifoEnable generate in Bool()
+   val FIFO_RD_EN       = fifoEnable generate in Bool()
+
+   // Main ports
    val INTERNAL_DIVCLK  = out Bool()
    val Q                = out Bits(8 bits)
    val CLK              = in Bool()
    val CLK_B            = in Bool()
    val CLKDIV           = in Bool()
    val D                = in Bool()
-   val FIFO_RD_CLK      = fifoEnable generate in Bool()
-   val FIFO_RD_EN       = fifoEnable generate in Bool()
    val RST              = in Bool()
 }
 
