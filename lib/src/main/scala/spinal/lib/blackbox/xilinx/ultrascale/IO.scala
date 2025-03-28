@@ -22,15 +22,20 @@ case class OSERDESE3(
     val SIM_DEVICE = simDevice
   }
 
+  // Clock signals
   val CLK = in Bool()
   val CLKDIV = in Bool()
+  
+  // Data signals
   val D = in Bits(dataWidth bits)
   val OQ = out Bool()
+  
+  // Control signals
   val RST = in Bool()
+  
+  // Tristate signals (generated when hasTristate = true)
   val T = hasTristate generate in Bool()
   val T_OUT = hasTristate generate out Bool()
-
-  mapCurrentClockDomain(CLK, RST)
 }
 
 /**
@@ -64,23 +69,29 @@ case class ODELAYE3(
     val SIM_DEVICE = simDevice
     val UPDATE_MODE = updateMode
   }
+
+  // Clock signals
+  val CLK           = in Bool()
   
-  // Required ports
-  val CNTVALUEOUT   = out UInt(9 bits)
+  // Data signals
+  val ODATAIN       = in Bool()
   val DATAOUT       = out Bool()
+  
+  // Control signals
+  val CE            = in Bool()
+  val RST           = in Bool()
   
   // Conditionally generated cascaded ports
   val CASC_OUT      = (cascade != "NONE") generate out Bool()
   val CASC_IN       = (cascade != "NONE") generate in Bool()
   val CASC_RETURN   = (cascade != "NONE") generate in Bool()
-  val CE            = in Bool()
-  val CLK           = in Bool()
-  val CNTVALUEIN    = in UInt(9 bits)
-  val ODATAIN       = in Bool()
-  val INC           = in Bool()
-  val LOAD          = in Bool()
-  val EN_VTC        = in Bool()
-  val RST           = in Bool()
+  
+  // Delay control (conditionally generated)
+  val CNTVALUEOUT   = (delayType != "FIXED") generate out UInt(9 bits)
+  val CNTVALUEIN    = (delayType != "FIXED") generate in UInt(9 bits)
+  val INC           = (delayType != "FIXED") generate in Bool()
+  val LOAD          = (delayType == "VAR_LOAD") generate in Bool()
+  val EN_VTC        = (delayType == "FIXED") generate in Bool()
 }
 
 /** Enhanced IDELAYE3 with cascading support */
@@ -110,22 +121,30 @@ case class IDELAYE3(
     val SIM_DEVICE = simDevice
     val UPDATE_MODE = updateMode
   }
-  
-  val CNTVALUEOUT   = out UInt(9 bits)
-  val DATAOUT       = out Bool()
 
+  // Clock signals
+  val CLK           = in Bool()
+  
+  // Data signals
+  val DATAOUT       = out Bool()
+  val DATAIN        = in Bool()
+  val IDATAIN       = in Bool()
+
+  // Control signals
+  val CE            = in Bool()
+  val RST           = in Bool()
+
+  // Delay control (conditionally generated)
+  val CNTVALUEOUT   = (delayType != "FIXED") generate out UInt(9 bits)
+  val CNTVALUEIN    = (delayType != "FIXED") generate in UInt(9 bits)
+  val INC           = (delayType != "FIXED") generate in Bool()
+  val LOAD          = (delayType == "VAR_LOAD") generate in Bool()
+  val EN_VTC        = (delayType == "FIXED") generate in Bool()
+
+  // Cascade signals (generated when cascade != "NONE")
   val CASC_OUT      = (cascade != "NONE") generate out Bool()
   val CASC_IN       = (cascade != "NONE") generate in Bool()
   val CASC_RETURN   = (cascade != "NONE") generate in Bool()
-  val CE            = in Bool()
-  val CLK           = in Bool()
-  val CNTVALUEIN    = in UInt(9 bits)
-  val DATAIN        = in Bool()
-  val IDATAIN       = in Bool()
-  val INC           = in Bool()
-  val LOAD          = in Bool()
-  val EN_VTC        = in Bool()
-  val RST           = in Bool()
 }
 
 /** Enhanced IOBUF_DCIEN with termination control */
@@ -193,15 +212,17 @@ case class ISERDESE3(
    val FIFO_EMPTY       = fifoEnable generate out Bool()
    val FIFO_RD_CLK      = fifoEnable generate in Bool()
    val FIFO_RD_EN       = fifoEnable generate in Bool()
-
-   // Main ports
-   val INTERNAL_DIVCLK  = out Bool()
-   val Q                = out Bits(8 bits)
+   
+   // Clock signals
    val CLK              = in Bool()
    val CLK_B            = in Bool()
    val CLKDIV           = in Bool()
-   val D                = in Bool()
+   val INTERNAL_DIVCLK  = out Bool()
    val RST              = in Bool()
+
+   // Data signals
+   val Q                = out Bits(8 bits)
+   val D                = in Bool()
 }
 
 /** IDELAYCTRL for UltraScale (enhanced calibration control) */
