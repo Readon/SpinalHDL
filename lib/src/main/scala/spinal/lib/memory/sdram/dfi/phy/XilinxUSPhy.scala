@@ -192,20 +192,29 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       val output = out Bits(8 bits)
     }
 
-    val pattern = Reg(Bits(8 bits)) init(0x55) // 01010101
+    // 组合逻辑生成模式
+    val pattern = Bits(8 bits)
+    val wlevel_strobe_rise = io.wlevel_strobe.rise(False)
     
+    pattern := 0x55 // 默认模式 01010101
     when(io.preamble) {
       pattern := 0x15 // 00010101
     }.elsewhen(io.postamble) {
       pattern := 0x54 // 01010100
     }.elsewhen(io.wlevel_en) {
       pattern := 0x00
-      when(io.wlevel_strobe) {
-        pattern := 0x01
+      when(wlevel_strobe_rise) {
+        pattern := 0x01 // 仅在上沿产生单周期脉冲
       }
     }
 
-    io.output := pattern
+    // 添加bitslip处理
+    val bitslip = new BitSlip(8)
+    bitslip.io.input := pattern
+    bitslip.io.rst := False
+    bitslip.io.slp := False
+    
+    io.output := bitslip.io.output
   }
 
   // Data path
@@ -216,7 +225,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val dqs_preamble = Reg(Bool()) init(False)
     val dqs_postamble = Reg(Bool()) init(False)
 
-    // DQS pattern generator
+    // DQS pattern generator (已适配新DQSPattern实现)
     val dqsPattern = new DQSPattern
     dqsPattern.io.preamble := dqs_preamble
     dqsPattern.io.postamble := dqs_postamble
@@ -268,7 +277,12 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     io.pads.dqs_p := dqsOserdes.OQ.asBits
     io.pads.dqs_n := ~dqsOserdes.OQ.asBits
 
-    // Control path
+    // Write latency计算公式说明（依据Xilinx UG571文档）：
+    // tPhyWrLat = PHY物理层延迟（包含ODELAY tap值和PCB走线延迟）
+    // ddrWrLat  = 控制器级写延迟（对应JEDEC CWL参数）
+    // +2周期补偿：
+    //   1周期用于4x到1x时钟域转换（UG571 Figure 3-14）
+    //   1周期用于OSERDESE3固有延迟（UG571 Table 3-1）
     val writeLatency = dfiConfig.timeConfig.tPhyWrLat - dfiConfig.sdram.ddrWrLat + 2
     val wrDelay = new TappedDelayLine(1, writeLatency + 2)
     wrDelay.io.input := wrDataEn
