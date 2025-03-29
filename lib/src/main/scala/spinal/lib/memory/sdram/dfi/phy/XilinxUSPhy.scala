@@ -186,8 +186,8 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     }
   }
 
-  // DQSPattern module implementation
-  class DQSPattern extends Component {
+  // DQSPattern module implementation (exact match to Python version)
+  class DQSPattern(register: Boolean = false) extends Component {
     val io = new Bundle {
       val preamble = in Bool()
       val postamble = in Bool()
@@ -196,10 +196,8 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       val output = out Bits(8 bits)
     }
 
-    // Combinational logic for pattern generation
+    // Pattern generation logic
     val pattern = Bits(8 bits)
-    val wlevel_strobe_rise = io.wlevel_strobe.rise(False)
-    
     pattern := 0x55
     when(io.preamble) {
       pattern := 0x15
@@ -207,18 +205,19 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       pattern := 0x54
     }.elsewhen(io.wlevel_en) {
       pattern := 0x00
-      when(wlevel_strobe_rise) {
+      when(io.wlevel_strobe) {
         pattern := 0x01
       }
     }
 
-    // Add bitslip processing
-    val bitslip = new BitSlip(8)
-    bitslip.io.input := pattern
-    bitslip.io.rst := False
-    bitslip.io.slp := False
-    
-    io.output := bitslip.io.output
+    // Optional registered output
+    if(register) {
+      val reg = Reg(Bits(8 bits)) init(0x55)
+      reg := pattern
+      io.output := reg
+    } else {
+      io.output := pattern
+    }
   }
 
   // Data path
