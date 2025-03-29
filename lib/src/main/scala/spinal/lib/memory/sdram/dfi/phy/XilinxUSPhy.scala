@@ -157,10 +157,8 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       cell.ODATAIN := cmdPath.cmdSignals(idx)
       cmdPath.cmdSignals(idx) := cell.DATAOUT
       
-      // Connect status output
-      when(io.phyCtrl.ctrl.dly_sel(idx)) {
-        io.phyCtrl.ctrl.cdly_value := cell.CNTVALUEOUT
-      }
+      // Delay line control
+      cell.CE := io.phyCtrl.ctrl.cdly_inc && io.phyCtrl.ctrl.dly_sel(idx)
     }
   }
 
@@ -465,21 +463,9 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       val stateReady = new State {
         onEntry {
           io.ctrl.initDone := True
-          // Maintain final delay values
           io.phyCtrl.en_vtc := True
-          // Mirror Python's continuous calibration monitoring
-          calibTimeout := 0
         }
-        whenIsActive {
-          // Periodic calibration check with reasonable interval
-          calibTimeout := calibTimeout + 1
-          when(calibTimeout === 0xFFFF) {  // ~65k cycles at 4x clock
-            // Clean up before recalibration
-            io.phyCtrl.en_vtc := False
-            calibDoneReg := False
-            goto(stateInit)
-          }
-        }
+        whenIsActive(goto(stateIdle))
       }
     }
 
