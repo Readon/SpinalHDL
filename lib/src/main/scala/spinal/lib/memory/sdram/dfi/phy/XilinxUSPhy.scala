@@ -96,19 +96,23 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
 
 
   def driveFrom(busCtrl: BusSlaveFactory, address: BigInt): Unit = {
-    // Control register group
+    // Control register group (0x00)
     val ctrlReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x00).init(0)
-    io.ctrl.reset      := ctrlReg(0)       // [0] Global reset
-    io.phyCtrl.en_vtc  := ctrlReg(1)       // [1] Voltage temp compensation enable
-    ctrlReg(8)         := io.ctrl.initDone // [8] Initialization status (RO)
+    io.ctrl.reset             := ctrlReg(0)       // [0] Global reset
+    io.phyCtrl.en_vtc         := ctrlReg(1)       // [1] Voltage temp compensation enable
+    ctrlReg(8)                := io.ctrl.initDone // [8] Initialization status (RO)
+    ctrlReg(9)                := trainingFSM.writeLevelDone // [9] Write leveling done
+    ctrlReg(10)               := trainingFSM.readGateDone   // [10] Read gate training done
+    ctrlReg(11)               := trainingFSM.readEyeDone    // [11] Read eye training done
 
     // Delay control register (0x04)
     val delayCtrlReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x04).init(0)
-    io.phyCtrl.ctrl.cdly_rst    := delayCtrlReg(0)  // [0] CDLY reset
-    io.phyCtrl.ctrl.cdly_inc    := delayCtrlReg(1)  // [1] CDLY increment 
-    io.phyCtrl.ctrl.wlevel_en   := delayCtrlReg(2)  // [2] Write leveling enable
-    io.phyCtrl.ctrl.wlevel_strobe := delayCtrlReg(3) // [3] Write leveling trigger
-    io.phyCtrl.ctrl.dly_sel     := delayCtrlReg(16 to 23) // [16:23] Byte lane select
+    io.phyCtrl.ctrl.cdly_rst     := delayCtrlReg(0)  // [0] CDLY reset
+    io.phyCtrl.ctrl.cdly_inc     := delayCtrlReg(1)  // [1] CDLY increment
+    io.phyCtrl.ctrl.wlevel_en    := delayCtrlReg(2)  // [2] Write leveling enable
+    io.phyCtrl.ctrl.wlevel_strobe:= delayCtrlReg(3)  // [3] Write leveling trigger
+    io.phyCtrl.ctrl.dly_sel      := delayCtrlReg(16 to 23) // [16:23] Byte lane select
+    delayCtrlReg(24 to 31)       := trainingFSM.wlevelCounter.asBits.resize(8) // [24:31] Wlevel counter
 
     // Read delay control (0x08)
     val readDelayReg = busCtrl.createWriteOnly(Bits(32 bits), 0x08)
@@ -129,11 +133,13 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     // Status registers
     busCtrl.read(io.phyCtrl.half_sys8x_taps ## io.phyCtrl.ctrl.cdly_value, 0x10) // [0x10] Taps + CDLY value
     busCtrl.read(io.phyCtrl.write.dqs_inc_count, 0x14) // [0x14] DQS increment count
+    busCtrl.read(trainingFSM.readCalibShift.asBits.resize(16), 0x16) // [0x16-0x17] Read calibration shift
 
     // Configuration register (0x18)
     val configReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x18).init(0)
     io.phyCtrl.phase.rd     := configReg(13 downto 12).asUInt // [1:0] Read phase
     io.phyCtrl.phase.wr     := configReg(15 downto 14).asUInt // [3:2] Write phase
+    configReg(16)           := trainingFSM.calibDoneReg      // [16] Calibration done status
   }
 
   // Instantiate parameterized delay line component
@@ -329,66 +335,155 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     io.taps := delayLine
   }
 
-  // Training FSM
+  // Enhanced Training FSM with PHY control integration
   val trainingFSM = new Area {
     val initDoneReg = RegInit(False)
     val calibDoneReg = RegInit(False)
     val writeLevelDone = RegInit(False)
     val readGateDone = RegInit(False)
     val readEyeDone = RegInit(False)
+    
+    // Training control signals
+    val wlevelCounter = Reg(UInt(9 bits)) init(0)
+    val readCalibShift = Reg(UInt(4 bits)) init(0)
+    val eyeScanPhase   = Reg(UInt(2 bits)) init(0)
+    val calibTimeout    = Reg(UInt(16 bits)) init(0)
 
     val fsm = new StateMachine {
-      val stateIdle = new State with EntryPoint {
+      val stateInit = new State with EntryPoint {
+        onEntry {
+          initDoneReg := False
+          wlevelCounter := 0
+          readCalibShift := 0
+        }
+        whenIsActive(goto(stateWriteLeveling))
+      }
+      
+      val stateIdle: State = new State {
         whenIsActive {
           when(io.ctrl.reset) {
             goto(stateInit)
           }
+          // Mirror Python's auto-recalibration feature
+          calibTimeout := 0
+          eyeScanPhase := 0
         }
       }
 
-      val stateInit = new State {
-        onEntry(initDoneReg := False)
-        whenIsNext(stateWriteLeveling)
-      }
-
-      val stateWriteLeveling = new State {
-        onEntry(writeLevelDone := False)
+      val stateWriteLeveling: State = new State {
+        onEntry {
+          writeLevelDone := False
+          io.phyCtrl.ctrl.wlevel_en := True
+        }
         whenIsActive {
-          when(io.phyCtrl.ctrl.wlevel_en) {
-            writeLevelDone := True
-            goto(stateReadGateTraining)
+          // Coordinate with delay line control
+          when(io.phyCtrl.ctrl.wlevel_strobe) {
+            wlevelCounter := wlevelCounter + 1
+            
+            // Check delay line status (mirror Python's tap counting)
+            when(wlevelCounter >= io.phyCtrl.half_sys8x_taps) {
+              writeLevelDone := True
+              io.phyCtrl.ctrl.wlevel_en := False
+              goto(stateReadGateTraining)
+            }
           }
         }
       }
 
       val stateReadGateTraining = new State {
-        onEntry(readGateDone := False)
+        onEntry {
+          readGateDone := False
+          // Activate read path calibration
+          io.phyCtrl.read.dq_rst := True
+          io.phyCtrl.read.bitslip_rst := True
+        }
         whenIsActive {
-          // Add read gate training logic
-          readGateDone := True
-          goto(stateReadEyeTraining)
+          // Perform DQ bitslip calibration
+          io.phyCtrl.read.dq_inc := True
+          io.phyCtrl.read.bitslip := True
+
+          // Check calibration completion with valid shift range
+          when(readCalibShift === 7) {  // After testing all 8 possible shift positions
+            readGateDone := True
+            io.phyCtrl.read.dq_inc := False  // Clean up control signals
+            io.phyCtrl.read.bitslip := False
+            goto(stateReadEyeTraining)
+          }.otherwise {
+            readCalibShift := readCalibShift + 1
+            io.phyCtrl.read.dq_inc := True
+            when(readCalibShift(0)) {  // Alternate between DQ inc and bitslip
+              io.phyCtrl.read.bitslip := True
+            }
+          }
         }
       }
 
       val stateReadEyeTraining = new State {
-        onEntry(readEyeDone := False)
+        onEntry {
+          readEyeDone := False
+          calibTimeout := 0
+          eyeScanPhase := 0
+          io.phyCtrl.phase.rd := 0
+        }
         whenIsActive {
-          // Add read eye training logic
-          readEyeDone := True
-          goto(stateCalibrationDone)
+          // Perform phase scanning similar to Python's eye training
+          calibTimeout := calibTimeout + 1
+          
+          // Enhanced phase scanning with boundary check
+          when(calibTimeout(3 downto 0) === 0xF) {
+            eyeScanPhase := eyeScanPhase + 1
+            io.phyCtrl.phase.rd := eyeScanPhase
+            
+            // Check phase boundaries and find optimal eye center
+            when(eyeScanPhase === 3) {  // After scanning all 4 phases
+              readEyeDone := True
+              io.phyCtrl.phase.rd := 1  // Set to middle phase as default
+              goto(stateCalibrationDone)
+            }.elsewhen(eyeScanPhase >= 3) {
+              eyeScanPhase := 0  // Wrap around phase scanning
+            }
+          }
+          
+          // Timeout handling
+          when(calibTimeout.andR) {
+            // Trigger recalibration on timeout
+            goto(stateInit)
+          }
         }
       }
 
       val stateCalibrationDone = new State {
-        onEntry(calibDoneReg := False)
-        whenIsNext(stateReady)
+        onEntry {
+          calibDoneReg := True
+          // Finalize all control signals
+          io.phyCtrl.ctrl.cdly_rst := False
+          io.phyCtrl.read.dq_inc := False
+        }
+        whenIsActive(goto(stateReady))
       }
 
       val stateReady = new State {
         onEntry {
           io.ctrl.initDone := True
+          // Maintain final delay values
+          io.phyCtrl.en_vtc := True
+          // Mirror Python's continuous calibration monitoring
+          calibTimeout := 0
+        }
+        whenIsActive {
+          // Periodic calibration check with reasonable interval
+          calibTimeout := calibTimeout + 1
+          when(calibTimeout === 0xFFFF) {  // ~65k cycles at 4x clock
+            // Clean up before recalibration
+            io.phyCtrl.en_vtc := False
+            calibDoneReg := False
+            goto(stateInit)
+          }
         }
       }
     }
+
+    // Connect calibration status to PHY control
+    io.phyCtrl.half_sys8x_taps := wlevelCounter
   }
 }
