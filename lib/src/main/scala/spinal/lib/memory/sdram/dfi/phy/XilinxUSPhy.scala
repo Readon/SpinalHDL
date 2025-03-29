@@ -8,30 +8,34 @@ import spinal.lib.memory.sdram.dfi._
 import spinal.lib.blackbox.xilinx.ultrascale._
 
 case class SdramIO(dfiConfig: DfiConfig) extends Bundle {
-  // Clock signals
+  // Clock signals (always present)
   val clk_p   = out(Bool())
   val clk_n   = out(Bool())
   
-  // Command and address
+  // Command and address (always present)
   val a       = out(Bits(dfiConfig.addressWidth bits))
   val ba      = out(Bits(dfiConfig.bankWidth bits))
-  val bg      = out(Bits(dfiConfig.bankGroupWidth bits))
-  val ras_n   = out(Bool())  // Row address strobe
-  val cas_n   = out(Bool())  // Column address strobe
-  val we_n    = out(Bool())  // Write enable
-  val cs_n    = out(Bool())  // Chip select
-  val act_n   = out(Bool())  // Activation control
   
+  // Protocol-specific signals
+  val bg      = if(dfiConfig.signalConfig.useBg) out(Bits(dfiConfig.bankGroupWidth bits)) else null
+  val ras_n   = if(dfiConfig.signalConfig.useRasN) out(Bool()) else null
+  val cas_n   = if(dfiConfig.signalConfig.useCasN) out(Bool()) else null
+  val we_n    = if(dfiConfig.signalConfig.useWeN) out(Bool()) else null
+  val cs_n    = out(Bool()) // Always present
+  val act_n   = if(dfiConfig.signalConfig.useRasN) out(Bool()) else null
+
   // Control signals
-  val cke     = out(Bool())  // Clock enable
-  val odt     = out(Bool())  // On-die termination
-  val reset_n = out(Bool())  // Asynchronous reset
+  val cke     = out(Bool()) // Always present
+  val odt     = if(dfiConfig.signalConfig.useOdt) out(Bool()) else null
+  val reset_n = if(dfiConfig.signalConfig.useResetN) out(Bool()) else null
   
-  // Data interface
+  // Data interface (always present)
   val dq      = inout(Analog(Bits(dfiConfig.dataWidth bits)))
-  val dqs_p   = inout(Analog(Bits(dfiConfig.dataWidth/8 bits)))
-  val dqs_n   = inout(Analog(Bits(dfiConfig.dataWidth/8 bits)))
-  val dm      = out(Bits(dfiConfig.dataWidth/8 bits))  // Data mask
+  val dm      = out(Bits(dfiConfig.dataWidth/8 bits))
+  
+  // DQS signals - differential based on dataRate
+  val dqs_p   = (dfiConfig.sdram.generation.dataRate > 1) generate inout(Analog(Bits(dfiConfig.dataWidth/8 bits)))
+  val dqs_n   = (dfiConfig.sdram.generation.dataRate > 1) generate inout(Analog(Bits(dfiConfig.dataWidth/8 bits)))
 }
 
 class USPhy(dfiConfig: DfiConfig) extends Component {
