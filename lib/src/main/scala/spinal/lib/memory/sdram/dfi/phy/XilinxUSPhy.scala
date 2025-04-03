@@ -193,6 +193,8 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       delay.CE      := io.phyCtrl.ctrl.cdly_inc
       delay.INC     := True
       delay.ODATAIN := serdes.OQ
+
+      cmdSignals(i) := delay.DATAOUT
     }
   }
 
@@ -227,6 +229,53 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       io.output := reg
     } else {
       io.output := pattern
+    }
+  }
+
+  val dq_oe = Bool()
+  val dqsPath = new Area {
+    val dqs_preamble = Reg(Bool()) init(False)
+    val dqs_postamble = Reg(Bool()) init(False)
+    val dqs_oe = CombInit(dq_oe)
+    when(io.phyCtrl.ctrl.wlevel_en) {dqs_oe := True}
+    val delayLine = new TappedDelayLine(1, 1)
+    delayLine.io.input := dqs_preamble | dqs_postamble | dqs_oe
+
+    // DQS pattern generator
+    val pattern = new DQSPattern
+    pattern.io.preamble := dqs_preamble
+    pattern.io.postamble := dqs_postamble
+    pattern.io.wlevel_en := io.phyCtrl.ctrl.wlevel_en
+    pattern.io.wlevel_strobe := io.phyCtrl.ctrl.wlevel_strobe
+
+    val bitslip = new BitSlip(8)
+    bitslip.io.input := pattern.io.output
+    bitslip.io.rst := io.phyCtrl.write.bitslip_rst | sysRst
+    bitslip.io.slp := io.phyCtrl.write.bitslip
+
+    val dqsWidth = io.pads.dqs_p.getWidth
+    val oserdesVec = Seq.fill(dqsWidth)(new OSERDESE3())
+    val odelayVec = Seq.fill(dqsWidth)(new ODELAYE3(delayType="VARIABLE", refClkFrequency = 200))
+    for(((serdes, delay), i) <- oserdesVec.zip(odelayVec).zipWithIndex){
+      serdes.RST    := io.ctrl.reset | sysRst
+      serdes.CLK    := io.clk4x
+      serdes.CLKDIV := sysClk
+      serdes.D      := bitslip.io.output
+      serdes.T      := ~delayLine.io.output
+
+      delay.RST     := sysRst
+      delay.CLK     := sysClk
+      delay.EN_VTC  := io.phyCtrl.en_vtc
+      delay.CE      := io.phyCtrl.write.dqs_inc & io.phyCtrl.ctrl.dly_sel(i)
+      delay.INC     := True
+      delay.ODATAIN := serdes.OQ
+
+      val buf = new IOBUFDSE3()
+      buf.I := delay.DATAOUT
+      buf.T := serdes.T_OUT
+
+      io.pads.dqs_p(i) := buf.IO
+      io.pads.dqs_n(i) := buf.IOB
     }
   }
 
@@ -352,6 +401,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val io = new Bundle {
       val input = in Bool()
       val taps = out Vec(Bool(), ntaps)
+      val output = out Bool()
     }
 
     val delayLine = Vec(Reg(Bool()) init(False), ntaps)
@@ -360,6 +410,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       delayLine(i) := delayLine(i-1)
     }
     io.taps := delayLine
+    io.output := io.taps(ntaps - 1)
   }
 
   // Enhanced Training FSM with PHY control integration

@@ -179,6 +179,20 @@ case class IOBUFDS() extends BlackBox {
   val IOB = inout(Analog(Bool()))
 }
 
+case class IOBUFDSE3(
+    simDevice: String = "ULTRASCALE"
+) extends BlackBox {
+  val generic = new Generic {
+    val SIM_DEVICE = simDevice
+  }
+
+  val I  = in  Bool()
+  val T  = in  Bool()
+  val O  = out Bool()
+  val IO = inout(Analog(Bool()))
+  val IOB = inout(Analog(Bool()))
+}
+
 case class IOBUF() extends BlackBox {
   val I = in Bool ()
   val T = in Bool ()
