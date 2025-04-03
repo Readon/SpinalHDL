@@ -142,24 +142,27 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     configReg(16)           := trainingFSM.calibDoneReg      // [16] Calibration done status
   }
 
-  // Instantiate parameterized delay line component
-  val delayLine = new Area {
-    val delayCells = Seq.fill(8)(new ODELAYE3(refClkFrequency = ClockDomain.current.frequency.getValue.toDouble))
+  // Instantiate clock generation by serdes and delay.
+  val clockGen = new Area {
+    val serdes = new OSERDESE3()
+    serdes.RST := sysRst | io.ctrl.reset
+    serdes.CLK := io.clk4x
+    serdes.CLKDIV := sysClk
+    serdes.D := B"1010_1010"
     
-    // Connect control signals
-    for((cell, idx) <- delayCells.zipWithIndex) {
-      cell.RST := io.ctrl.reset | sysRst
-      cell.EN_VTC := io.phyCtrl.en_vtc
-      cell.CLK := io.clk4x
-      cell.INC := True
-      
-      // Connect data path
-      cell.ODATAIN := cmdPath.cmdSignals(idx)
-      cmdPath.cmdSignals(idx) := cell.DATAOUT
-      
-      // Delay line control
-      cell.CE := io.phyCtrl.ctrl.cdly_inc && io.phyCtrl.ctrl.dly_sel(idx)
-    }
+    val delay = new ODELAYE3(delayType = "VARIABLE")
+    delay.RST := sysRst | io.ctrl.reset | io.phyCtrl.ctrl.cdly_rst
+    delay.CLK := sysClk
+    delay.EN_VTC := io.phyCtrl.en_vtc
+    delay.CE := io.phyCtrl.ctrl.cdly_inc
+    delay.INC := True
+    delay.ODATAIN := serdes.OQ
+
+    val buf = new OBUFDS()
+    buf.I := delay.DATAOUT
+
+    io.pads.clk_p := buf.O
+    io.pads.clk_n := buf.OB
   }
 
   // Command path
