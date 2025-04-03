@@ -39,10 +39,14 @@ case class SdramIO(dfiConfig: DfiConfig) extends Bundle {
 }
 
 class USPhy(dfiConfig: DfiConfig) extends Component {
+  val sysClk = CombInit(ClockDomain.current.readClockWire)
+  val sysRst = CombInit(ClockDomain.current.readResetWire)
+
   val io = new Bundle {
     val dfi = slave(Dfi(dfiConfig))
     val pads = new SdramIO(dfiConfig)
     val clk4x = in Bool()
+    val clk4xN = in Bool()
     
     // Unified PHY control interface
     val phyCtrl = new Bundle {
@@ -90,14 +94,6 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       val initDone = out Bool()
     }
   }
-
-  // Clock domains
-  val sys4xDomain = ClockDomain(
-    clock = io.clk4x,
-    reset = ClockDomain.current.reset,
-    frequency = FixedFrequency(ClockDomain.current.frequency.getValue*4) // Assuming 4x clock
-  )
-
 
   def driveFrom(busCtrl: BusSlaveFactory, address: BigInt): Unit = {
     // Control register group (0x00)
@@ -147,14 +143,14 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
   }
 
   // Instantiate parameterized delay line component
-  val delayLine = new ClockingArea(sys4xDomain) {
-    val delayCells = Seq.fill(8)(new ODELAYE3(refClkFrequency = 200.0))
+  val delayLine = new Area {
+    val delayCells = Seq.fill(8)(new ODELAYE3(refClkFrequency = ClockDomain.current.frequency.getValue.toDouble))
     
     // Connect control signals
     for((cell, idx) <- delayCells.zipWithIndex) {
-      cell.RST := io.ctrl.reset
+      cell.RST := io.ctrl.reset | sysRst
       cell.EN_VTC := io.phyCtrl.en_vtc
-      cell.CE := io.phyCtrl.ctrl.cdly_inc && io.phyCtrl.ctrl.dly_sel(idx)
+      cell.CLK := io.clk4x
       cell.INC := True
       
       // Connect data path
@@ -182,9 +178,9 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
 
     val oserdesVec = Seq.fill(cmdSignals.length)(new OSERDESE3())
     for((osd,sig) <- oserdesVec.zip(cmdSignals)){
-      osd.RST    := io.ctrl.reset
+      osd.RST    := io.ctrl.reset | sysRst
       osd.CLK    := io.clk4x
-      osd.CLKDIV := ClockDomain.current.readClockWire
+      osd.CLKDIV := sysClk
       osd.D      := B(0, 8 bits).setAllTo(sig)
       osd.T      := False
     }
@@ -249,7 +245,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val wrBitslip = Seq.fill(dfiConfig.dataWidth)(new BitSlip(8))
     for((slip, data) <- wrBitslip.zip(wrData.asBools)) {
       slip.io.input := data.asBits #* 8
-      slip.io.rst := io.phyCtrl.write.bitslip_rst
+      slip.io.rst := io.phyCtrl.write.bitslip_rst | sysRst
       slip.io.slp := io.phyCtrl.write.bitslip
     }
 
@@ -259,8 +255,8 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       osd.D := slip.io.output
       osd.T := ~dq_oe
       osd.CLK := io.clk4x
-      osd.CLKDIV := ClockDomain.current.readClockWire
-      osd.RST := io.ctrl.reset
+      osd.CLKDIV := sysClk
+      osd.RST := io.ctrl.reset | sysRst
     }
 
     // Read path
@@ -268,7 +264,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val rdBitslip = Seq.fill(dfiConfig.dataWidth)(new BitSlip(8))
     for((slip, data) <- rdBitslip.zip(rdData.asBools)) {
       slip.io.input := data.asBits #* 8
-      slip.io.rst := io.phyCtrl.read.bitslip_rst
+      slip.io.rst := io.phyCtrl.read.bitslip_rst | sysRst
       slip.io.slp := io.phyCtrl.read.bitslip
       data := slip.io.output(0)
     }
@@ -278,8 +274,8 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     dqsOserdes.D := dqsPattern.io.output
     dqsOserdes.T := ~dqs_oe
     dqsOserdes.CLK := io.clk4x
-    dqsOserdes.CLKDIV := ClockDomain.current.readClockWire
-    dqsOserdes.RST := io.ctrl.reset
+    dqsOserdes.CLKDIV := sysClk
+    dqsOserdes.RST := io.ctrl.reset | sysRst
 
     io.pads.dqs_p := dqsOserdes.OQ.asBits
     io.pads.dqs_n := ~dqsOserdes.OQ.asBits
