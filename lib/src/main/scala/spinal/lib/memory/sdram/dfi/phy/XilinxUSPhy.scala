@@ -7,6 +7,49 @@ import spinal.lib.fsm.{StateMachine, State, EntryPoint}
 import spinal.lib.memory.sdram.dfi._
 import spinal.lib.blackbox.xilinx.ultrascale._
 
+// ISERDESE3 Blackbox Definition
+class ISERDESE3 extends BlackBox {
+  val generic = new Generic {
+    val SIM_DEVICE = "ULTRASCALE"
+    val DATA_WIDTH = 8
+    val IS_CLK_INVERTED = 0
+    val IS_CLK_B_INVERTED = 1
+    val FIFO_ENABLE = "FALSE"
+  }
+  
+  val io = new Bundle {
+    val CLK = in Bool()
+    val CLK_B = in Bool()
+    val CLKDIV = in Bool()
+    val RST = in Bool()
+    val D = in Bool()
+    val FIFO_RD_EN = in Bool()
+    val Q = out Bits(8 bits)
+  }
+  
+  mapClockDomain(clock=io.CLK, reset=io.RST)
+}
+
+// IDELAYE3 Blackbox Definition
+class IDELAYE3(refClkFrequency: Double) extends BlackBox {
+  val generic = new Generic {
+    val SIM_DEVICE = "ULTRASCALE"
+    val REFCLK_FREQUENCY = refClkFrequency/1e6
+    val DELAY_FORMAT = "TIME"
+    val DELAY_TYPE = "VARIABLE"
+    val DELAY_VALUE = 0
+  }
+
+  val io = new Bundle {
+    val CLK = in Bool()
+    val EN_VTC = in Bool()
+    val CE = in Bool()
+    val INC = in Bool()
+    val IDATAIN = in Bool()
+    val DATAOUT = out Bool()
+  }
+}
+
 case class SdramIO(dfiConfig: DfiConfig) extends Bundle {
   // Clock signals (always present)
   val clk_p   = out(Bool())
@@ -259,13 +302,33 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       osd.RST := io.ctrl.reset | sysRst
     }
 
-    // Read path
+    // Read path with ISERDESE3 and IDELAYE3
     val rdData = io.dfi.read.rd(0).rddata
     val rdBitslip = Seq.fill(dfiConfig.dataWidth)(new BitSlip(8))
+    val rdIserdes = Seq.fill(dfiConfig.dataWidth)(new ISERDESE3())
+    val rdDelay = Seq.fill(dfiConfig.dataWidth)(new IDELAYE3(ClockDomain.current.frequency.getValue.toDouble))
+    
+    for((isd, i) <- rdIserdes.zipWithIndex) {
+      // Configure delay line
+      rdDelay(i).io.CLK := sysClk
+      rdDelay(i).io.EN_VTC := io.phyCtrl.en_vtc
+      rdDelay(i).io.CE := io.phyCtrl.read.dq_inc && io.phyCtrl.ctrl.dly_sel(i/8)
+      rdDelay(i).io.INC := True
+      rdDelay(i).io.IDATAIN := io.pads.dq(i)
+      
+      // Configure ISERDESE3
+      isd.io.CLK := io.clk4x
+      isd.io.CLK_B := io.clk4xN
+      isd.io.CLKDIV := sysClk
+      isd.io.RST := io.ctrl.reset | sysRst
+      isd.io.D := rdDelay(i).io.DATAOUT
+      
+      // Connect to bitslip
+      rdBitslip(i).io.input := isd.io.Q
+    }
+
+    // Connect output
     for((slip, data) <- rdBitslip.zip(rdData.asBools)) {
-      slip.io.input := data.asBits #* 8
-      slip.io.rst := io.phyCtrl.read.bitslip_rst | sysRst
-      slip.io.slp := io.phyCtrl.read.bitslip
       data := slip.io.output(0)
     }
 
