@@ -177,12 +177,19 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       io.dfi.control.weN.asBools
 
     val oserdesVec = Seq.fill(cmdSignals.length)(new OSERDESE3())
-    for((osd,sig) <- oserdesVec.zip(cmdSignals)){
-      osd.RST    := io.ctrl.reset | sysRst
-      osd.CLK    := io.clk4x
-      osd.CLKDIV := sysClk
-      osd.D      := B(0, 8 bits).setAllTo(sig)
-      osd.T      := False
+    val odelayVec = Seq.fill(cmdSignals.length)(new ODELAYE3(delayType="VARIABLE", refClkFrequency = 200))
+    for(((serdes, delay), i) <- oserdesVec.zip(odelayVec).zipWithIndex){
+      serdes.RST    := io.ctrl.reset | sysRst
+      serdes.CLK    := io.clk4x
+      serdes.CLKDIV := sysClk
+      serdes.D      := B(0, 8 bits)
+
+      delay.RST     := io.ctrl.reset | io.phyCtrl.ctrl.cdly_rst | sysRst
+      delay.CLK     := sysClk
+      delay.EN_VTC  := io.phyCtrl.en_vtc
+      delay.CE      := io.phyCtrl.ctrl.cdly_inc
+      delay.INC     := True
+      delay.ODATAIN := serdes.OQ
     }
   }
 
