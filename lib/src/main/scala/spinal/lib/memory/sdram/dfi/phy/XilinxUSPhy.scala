@@ -165,38 +165,87 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     io.pads.clk_n := buf.OB
   }
 
-  // Command path
-  val cmdPath = new Area {
-    // Command signal synchronization registers
+  // Helper class to manage command/address/bank signals and their output connections
+  class CmdSignalHandler {
+    // Synchronize inputs first
     val syncedAddress = RegNextWhen(io.dfi.control.address, io.dfi.control.cke.asBool)
     val syncedBank = RegNextWhen(io.dfi.control.bank, io.dfi.control.cke.asBool)
-    
-    // Combine command signals and expand to Bool vector
-    val cmdSignals: Seq[Bool] =
+
+    // Determine the sequence of signals based on config
+    val signals: Seq[Bool] =
       syncedAddress.asBools ++
       syncedBank.asBools ++
-      io.dfi.control.rasN.asBools ++
-      io.dfi.control.casN.asBools ++
-      io.dfi.control.weN.asBools
+      (if(dfiConfig.signalConfig.useRasN) io.dfi.control.rasN.asBools else Nil) ++
+      (if(dfiConfig.signalConfig.useCasN) io.dfi.control.casN.asBools else Nil) ++
+      (if(dfiConfig.signalConfig.useWeN) io.dfi.control.weN.asBools else Nil) ++
+      io.dfi.control.csN.asBools // cs_n is always present
 
-    val oserdesVec = Seq.fill(cmdSignals.length)(new OSERDESE3())
-    val odelayVec = Seq.fill(cmdSignals.length)(new ODELAYE3(delayType="VARIABLE", refClkFrequency = 200))
+    // Pre-calculate indices for connectOutput
+    private val addrWidth = dfiConfig.addressWidth
+    private val bankWidth = dfiConfig.bankWidth
+    private val useRasN = dfiConfig.signalConfig.useRasN
+    private val useCasN = dfiConfig.signalConfig.useCasN
+    private val useWeN = dfiConfig.signalConfig.useWeN
+
+    private val bankStartIndex = addrWidth
+    private val cmdStartIndex = bankStartIndex + bankWidth
+    // Calculate absolute indices in the 'signals' sequence
+    private val rasNIndexOpt = if(useRasN) Some(cmdStartIndex) else None
+    private val casNIndexOpt = if(useCasN) Some(cmdStartIndex + (if(useRasN) 1 else 0)) else None
+    private val weNIndexOpt  = if(useWeN)  Some(cmdStartIndex + (if(useRasN) 1 else 0) + (if(useCasN) 1 else 0)) else None
+    private val csNIndex     = cmdStartIndex + (if(useRasN) 1 else 0) + (if(useCasN) 1 else 0) + (if(useWeN) 1 else 0)
+
+    // Method to connect the processed output based on the signal's index in the sequence
+    def connectOutput(index: Int, dataOut: Bool): Unit = {
+      if(index < addrWidth) {
+        // Address bits - index directly maps to pad index
+        io.pads.a(index) := dataOut
+      } else if(index < cmdStartIndex) {
+        // Bank bits - index needs offset to map to pad index
+        io.pads.ba(index - bankStartIndex) := dataOut
+      } else {
+        // Command bits - check against calculated absolute indices
+        if(rasNIndexOpt.isDefined && index == rasNIndexOpt.get) {
+          io.pads.ras_n := dataOut
+        } else if(casNIndexOpt.isDefined && index == casNIndexOpt.get) {
+          io.pads.cas_n := dataOut
+        } else if(weNIndexOpt.isDefined && index == weNIndexOpt.get) {
+          io.pads.we_n := dataOut
+        } else if(index == csNIndex) {
+          io.pads.cs_n := dataOut
+        }
+        // No 'else' needed, if index doesn't match, it means the signal was disabled in config
+      }
+    }
+  } // End of CmdSignalHandler class definition
+
+  // Command path - Refactored to use CmdSignalHandler
+  val cmdPath = new Area {
+    val handler = new CmdSignalHandler() // Instantiate the handler
+
+    // Create OSERDES and ODELAY for each signal identified by the handler
+    val oserdesVec = Seq.fill(handler.signals.length)(new OSERDESE3())
+    val odelayVec = Seq.fill(handler.signals.length)(new ODELAYE3(delayType="VARIABLE", refClkFrequency = 200))
+
+    // Process each signal through OSERDES and ODELAY
     for(((serdes, delay), i) <- oserdesVec.zip(odelayVec).zipWithIndex){
       serdes.RST    := io.ctrl.reset | sysRst
       serdes.CLK    := io.clk4x
       serdes.CLKDIV := sysClk
-      serdes.D      := B(0, 8 bits)
+      // Get the input signal from the handler's sequence
+      serdes.D      := handler.signals(i).asBits.resized #* 8
 
       delay.RST     := io.ctrl.reset | io.phyCtrl.ctrl.cdly_rst | sysRst
       delay.CLK     := sysClk
       delay.EN_VTC  := io.phyCtrl.en_vtc
-      delay.CE      := io.phyCtrl.ctrl.cdly_inc
+      delay.CE      := io.phyCtrl.ctrl.cdly_inc // Use the common command delay increment
       delay.INC     := True
       delay.ODATAIN := serdes.OQ
 
-      cmdSignals(i) := delay.DATAOUT
+      // Use the handler to connect the final delayed output to the correct pad
+      handler.connectOutput(i, delay.DATAOUT)
     }
-  }
+  } // End of refactored cmdPath Area
 
   // DQSPattern module implementation (exact match to Python version)
   class DQSPattern(register: Boolean = false) extends Component {
