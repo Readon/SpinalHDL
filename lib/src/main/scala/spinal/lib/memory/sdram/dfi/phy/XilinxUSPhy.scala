@@ -11,11 +11,11 @@ case class SdramIO(dfiConfig: DfiConfig) extends Bundle {
   // Clock signals (always present)
   val clk_p   = out(Bool())
   val clk_n   = out(Bool())
-  
+
   // Command and address (always present)
   val a       = out(Bits(dfiConfig.addressWidth bits))
   val ba      = out(Bits(dfiConfig.bankWidth bits))
-  
+
   // Protocol-specific signals
   val bg      = if(dfiConfig.signalConfig.useBg) out(Bits(dfiConfig.bankGroupWidth bits)) else null
   val ras_n   = if(dfiConfig.signalConfig.useRasN) out(Bool()) else null
@@ -28,11 +28,11 @@ case class SdramIO(dfiConfig: DfiConfig) extends Bundle {
   val cke     = out(Bool()) // Always present
   val odt     = if(dfiConfig.signalConfig.useOdt) out(Bool()) else null
   val reset_n = if(dfiConfig.signalConfig.useResetN) out(Bool()) else null
-  
+
   // Data interface (always present)
   val dq      = inout(Analog(Bits(dfiConfig.dataWidth bits)))
   val dm      = out(Bits(dfiConfig.dataWidth/8 bits))
-  
+
   // DQS signals - differential based on dataRate
   val dqs_p   = (dfiConfig.sdram.generation.dataRate > 1) generate inout(Analog(Bits(dfiConfig.dataWidth/8 bits)))
   val dqs_n   = (dfiConfig.sdram.generation.dataRate > 1) generate inout(Analog(Bits(dfiConfig.dataWidth/8 bits)))
@@ -47,12 +47,12 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val pads = new SdramIO(dfiConfig)
     val clk4x = in Bool()
     val clk4xN = in Bool()
-    
+
     // Unified PHY control interface
     val phyCtrl = new Bundle {
       val en_vtc     = in Bool()
       val half_sys8x_taps    = out UInt(9 bits)
-      
+
       // System control
       val ctrl = new Bundle {
         val wlevel_en    = in Bool()
@@ -62,7 +62,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
         val cdly_inc     = in Bool()
         val cdly_value   = out UInt(9 bits)
       }
-      
+
       // Read path control
       val read = new Bundle {
         val dq_rst         = in Bool()
@@ -70,7 +70,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
         val bitslip_rst    = in Bool()
         val bitslip        = in Bool()
       }
-      
+
       // Write path control
       val write = new Bundle {
         val dq_rst         = in Bool()
@@ -81,7 +81,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
         val bitslip_rst    = in Bool()
         val bitslip        = in Bool()
       }
-      
+
       // Phase control
       val phase = new Bundle {
         val rd = in UInt(2 bits)
@@ -125,7 +125,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val writeDelayReg = busCtrl.createWriteOnly(Bits(32 bits), 0x0C)
     io.phyCtrl.write.dq_rst      := writeDelayReg(0) // [0] Write DQ reset
     io.phyCtrl.write.dq_inc      := writeDelayReg(1) // [1] Write DQ increment
-    io.phyCtrl.write.dqs_rst     := writeDelayReg(2) // [2] Write DQS reset 
+    io.phyCtrl.write.dqs_rst     := writeDelayReg(2) // [2] Write DQS reset
     io.phyCtrl.write.dqs_inc     := writeDelayReg(3) // [3] Write DQS increment
     io.phyCtrl.write.bitslip_rst := writeDelayReg(4) // [4] Write bitslip reset
     io.phyCtrl.write.bitslip     := writeDelayReg(5) // [5] Write bitslip trigger
@@ -149,7 +149,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     serdes.CLK := io.clk4x
     serdes.CLKDIV := sysClk
     serdes.D := B"1010_1010"
-    
+
     val delay = new ODELAYE3(delayType = "VARIABLE")
     delay.RST := sysRst | io.ctrl.reset | io.phyCtrl.ctrl.cdly_rst
     delay.CLK := sysClk
@@ -281,37 +281,74 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     }
   }
 
-  val dq_oe = Bool()
   val dqsPath = new Area {
+    //==========================================================================
+    // DQS Timing Control
+    //==========================================================================
+    // Control signals
     val dqs_preamble = Reg(Bool()) init(False)
     val dqs_postamble = Reg(Bool()) init(False)
-    val dqs_oe = CombInit(dq_oe)
-    when(io.phyCtrl.ctrl.wlevel_en) {dqs_oe := True}
+    val dqs_oe = Reg(Bool()) init(False)
+    val dq_oe = Reg(Bool()) init(False)  // Output enable for DQ signals
+
+    // Write data enable from DFI interface - connected from dataPath
+    val wrDataEn = Reg(Bool()) init(False)
+
+    //==========================================================================
+    // Write Latency and Timing Generation
+    //==========================================================================
+    // Write latency calculation with configurable compensation
+    val writeCompensation = dfiConfig.timeConfig.tPhyWrLatCompensation
+    val writeLatency = dfiConfig.timeConfig.tPhyWrLat - dfiConfig.sdram.ddrWrLat + writeCompensation
+
+    // Delay line for timing generation
+    val wrDelay = new TappedDelayLine(1, writeLatency + 2)
+    wrDelay.io.input := wrDataEn
+
+    // Generate timing signals from delay taps
+    dq_oe := RegNext(RegNext(wrDelay.io.taps(writeLatency))) init(False)
+    dqs_oe := io.phyCtrl.ctrl.wlevel_en | dq_oe
+    dqs_preamble := wrDelay.io.taps(writeLatency - 1) & ~wrDelay.io.taps(writeLatency)
+    dqs_postamble := wrDelay.io.taps(writeLatency + 1) & ~wrDelay.io.taps(writeLatency)
+
+    // Delay line for output enable
     val delayLine = new TappedDelayLine(1, 1)
     delayLine.io.input := dqs_preamble | dqs_postamble | dqs_oe
 
-    // DQS pattern generator
+    //==========================================================================
+    // DQS Pattern Generation
+    //==========================================================================
+    // DQS pattern generator for serialization
     val pattern = new DQSPattern
     pattern.io.preamble := dqs_preamble
     pattern.io.postamble := dqs_postamble
     pattern.io.wlevel_en := io.phyCtrl.ctrl.wlevel_en
     pattern.io.wlevel_strobe := io.phyCtrl.ctrl.wlevel_strobe
 
+    // BitSlip for pattern alignment
     val bitslip = new BitSlip(8)
     bitslip.io.input := pattern.io.output
     bitslip.io.rst := io.phyCtrl.write.bitslip_rst | sysRst
     bitslip.io.slp := io.phyCtrl.write.bitslip
 
+    //==========================================================================
+    // DQS Output Path - Byte Lanes
+    //==========================================================================
+    // DQS OSERDES for byte lanes with delay
     val dqsWidth = io.pads.dqs_p.getWidth
     val oserdesVec = Seq.fill(dqsWidth)(new OSERDESE3())
     val odelayVec = Seq.fill(dqsWidth)(new ODELAYE3(delayType="VARIABLE", refClkFrequency = 200))
+
+    // Configure and connect DQS OSERDES for each byte lane
     for(((serdes, delay), i) <- oserdesVec.zip(odelayVec).zipWithIndex){
+      // Configure OSERDES
       serdes.RST    := io.ctrl.reset | sysRst
       serdes.CLK    := io.clk4x
       serdes.CLKDIV := sysClk
       serdes.D      := bitslip.io.output
       serdes.T      := ~delayLine.io.output
 
+      // Configure delay line
       delay.RST     := sysRst
       delay.CLK     := sysClk
       delay.EN_VTC  := io.phyCtrl.en_vtc
@@ -319,10 +356,12 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       delay.INC     := True
       delay.ODATAIN := serdes.OQ
 
+      // Connect to differential buffer
       val buf = new IOBUFDSE3()
       buf.I := delay.DATAOUT
       buf.T := serdes.T_OUT
 
+      // Connect to pads
       io.pads.dqs_p(i) := buf.IO
       io.pads.dqs_n(i) := buf.IOB
     }
@@ -330,49 +369,60 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
 
   // Data path
   val dataPath = new Area {
-    // Control signals
-    val dqs_oe = Reg(Bool()) init(False)
-    val dq_oe = Reg(Bool()) init(False)
-    val dqs_preamble = Reg(Bool()) init(False)
-    val dqs_postamble = Reg(Bool()) init(False)
-
-    // DQS pattern generator
-    val dqsPattern = new DQSPattern
-    dqsPattern.io.preamble := dqs_preamble
-    dqsPattern.io.postamble := dqs_postamble
-    dqsPattern.io.wlevel_en := io.phyCtrl.ctrl.wlevel_en
-    dqsPattern.io.wlevel_strobe := io.phyCtrl.ctrl.wlevel_strobe
-
-    // Write path
+    //==========================================================================
+    // DFI Interface Signals
+    //==========================================================================
+    // Write path signals from DFI interface
     val wrData = io.dfi.write.wr(0).wrdata
     val wrDataEn = io.dfi.write.wr(0).wrdataEn
     val wrDataMask = io.dfi.write.wr(0).wrdataMask
     val wrDataCsN = if(dfiConfig.useWrdataCsN) Some(io.dfi.write.wr(0).wrdataCsN) else None
 
-    // Write data bitslip
+    // Read path signals to DFI interface
+    val rdData = io.dfi.read.rd(0).rddata
+
+    // Connect write data enable to dqsPath for DQS timing generation
+    dqsPath.wrDataEn := wrDataEn
+
+    //==========================================================================
+    // Write Path (DQ)
+    //==========================================================================
+    // Write data serialization components
     val wrBitslip = Seq.fill(dfiConfig.dataWidth)(new BitSlip(8))
+    val dqOserdes = Seq.fill(dfiConfig.dataWidth)(new OSERDESE3())
+
+    // Configure BitSlip for write data
     for((slip, data) <- wrBitslip.zip(wrData.asBools)) {
       slip.io.input := data.asBits #* 8
       slip.io.rst := io.phyCtrl.write.bitslip_rst | sysRst
       slip.io.slp := io.phyCtrl.write.bitslip
     }
 
-    // DQ OSERDES
-    val dqOserdes = Seq.fill(dfiConfig.dataWidth)(new OSERDESE3())
-    for((osd, slip) <- dqOserdes.zip(wrBitslip)) {
+    // Configure and connect DQ OSERDES to pads
+    for(((osd, slip), i) <- dqOserdes.zip(wrBitslip).zipWithIndex) {
+      // Configure OSERDES
       osd.D := slip.io.output
-      osd.T := ~dq_oe
       osd.CLK := io.clk4x
       osd.CLKDIV := sysClk
       osd.RST := io.ctrl.reset | sysRst
+      osd.T := ~dqsPath.dq_oe  // Use dqsPath's dq_oe for output enable
+
+      // Connect to IO buffer
+      val buf = new IOBUF()
+      buf.I := osd.OQ
+      buf.T := osd.T_OUT
+      io.pads.dq(i) := buf.IO
     }
 
-    // Read path with ISERDESE3 and IDELAYE3
-    val rdData = io.dfi.read.rd(0).rddata
+    //==========================================================================
+    // Read Path (DQ)
+    //==========================================================================
+    // Read data deserialization components
     val rdBitslip = Seq.fill(dfiConfig.dataWidth)(new BitSlip(8))
     val rdIserdes = Seq.fill(dfiConfig.dataWidth)(new ISERDESE3())
     val rdDelay = Seq.fill(dfiConfig.dataWidth)(new IDELAYE3(refClkFrequency = 200))
-    
+
+    // Configure read path components
     for(((serdes, delay), i) <- rdIserdes.zip(rdDelay).zipWithIndex) {
       // Configure delay line
       delay.CLK := sysClk
@@ -380,48 +430,22 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       delay.CE := io.phyCtrl.read.dq_inc && io.phyCtrl.ctrl.dly_sel(i/8)
       delay.INC := True
       delay.IDATAIN := io.pads.dq(i)
-      
+
       // Configure ISERDESE3
       serdes.CLK := io.clk4x
       serdes.CLK_B := io.clk4xN
       serdes.CLKDIV := sysClk
       serdes.RST := io.ctrl.reset | sysRst
       serdes.D := delay.DATAOUT
-      
+
       // Connect to bitslip
       rdBitslip(i).io.input := serdes.Q
     }
 
-    // Connect output
+    // Connect read data to DFI interface
     for((slip, data) <- rdBitslip.zip(rdData.asBools)) {
       data := slip.io.output(0)
     }
-
-    // DQS output
-    val dqsOserdes = new OSERDESE3()
-    dqsOserdes.D := dqsPattern.io.output
-    dqsOserdes.T := ~dqs_oe
-    dqsOserdes.CLK := io.clk4x
-    dqsOserdes.CLKDIV := sysClk
-    dqsOserdes.RST := io.ctrl.reset | sysRst
-
-    io.pads.dqs_p := dqsOserdes.OQ.asBits
-    io.pads.dqs_n := ~dqsOserdes.OQ.asBits
-
-    // Write latency calculation formula (based on Xilinx UG571 document):
-    // tPhyWrLat = PHY layer latency (includes ODELAY tap value and PCB trace delay)
-    // ddrWrLat  = Controller level write latency (corresponds to JEDEC CWL parameter)
-    // +2 cycle compensation:
-    //   1 cycle for 4x to 1x clock domain crossing (UG571 Figure 3-14)
-    //   1 cycle for OSERDESE3 intrinsic latency (UG571 Table 3-1)
-    val writeLatency = dfiConfig.timeConfig.tPhyWrLat - dfiConfig.sdram.ddrWrLat + 2
-    val wrDelay = new TappedDelayLine(1, writeLatency + 2)
-    wrDelay.io.input := wrDataEn
-
-    dq_oe := wrDelay.io.taps(writeLatency)
-    dqs_oe := io.phyCtrl.ctrl.wlevel_en | dq_oe
-    dqs_preamble := wrDelay.io.taps(writeLatency - 1) & ~wrDelay.io.taps(writeLatency)
-    dqs_postamble := wrDelay.io.taps(writeLatency + 1) & ~wrDelay.io.taps(writeLatency)
   }
 
 
@@ -469,7 +493,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val writeLevelDone = RegInit(False)
     val readGateDone = RegInit(False)
     val readEyeDone = RegInit(False)
-    
+
     // Training control signals
     val wlevelCounter = Reg(UInt(9 bits)) init(0)
     val readCalibShift = Reg(UInt(4 bits)) init(0)
@@ -485,7 +509,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
         }
         whenIsActive(goto(stateWriteLeveling))
       }
-      
+
       val stateIdle: State = new State {
         whenIsActive {
           when(io.ctrl.reset) {
@@ -506,7 +530,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
           // Coordinate with delay line control
           when(io.phyCtrl.ctrl.wlevel_strobe) {
             wlevelCounter := wlevelCounter + 1
-            
+
             // Check delay line status (mirror Python's tap counting)
             when(wlevelCounter >= io.phyCtrl.half_sys8x_taps) {
               writeLevelDone := True
@@ -555,12 +579,12 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
         whenIsActive {
           // Perform phase scanning similar to Python's eye training
           calibTimeout := calibTimeout + 1
-          
+
           // Enhanced phase scanning with boundary check
           when(calibTimeout(3 downto 0) === 0xF) {
             eyeScanPhase := eyeScanPhase + 1
             io.phyCtrl.phase.rd := eyeScanPhase
-            
+
             // Check phase boundaries and find optimal eye center
             when(eyeScanPhase === 3) {  // After scanning all 4 phases
               readEyeDone := True
@@ -570,7 +594,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
               eyeScanPhase := 0  // Wrap around phase scanning
             }
           }
-          
+
           // Timeout handling
           when(calibTimeout.andR) {
             // Trigger recalibration on timeout
