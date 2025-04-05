@@ -124,7 +124,7 @@ case class DfiCATrainingInterface(config: DfiConfig) extends Bundle with IMaster
   }
 }
 
-case class DfiLevelingTraingInterface(config: DfiConfig) extends Bundle with IMasterSlave {
+case class DfiLevelingTrainingInterface(config: DfiConfig) extends Bundle with IMasterSlave {
   val lvlPattern = config.useLvlPattern generate Bits(4 * config.readTrainingPhyIFWidth bits)
   val lvlPeriodic = config.useLvlPeriodic generate Bits(config.levelingPhyIFWidth bits)
   override def asMaster(): Unit = {
@@ -165,12 +165,12 @@ case class Dfi(config: DfiConfig) extends Bundle with IMasterSlave {
   val control = DfiControlInterface(config)
   val write = DfiWriteInterface(config)
   val read = DfiReadInterface(config)
-  val updata = DfiUpdateInterface(config)
+  val update = DfiUpdateInterface(config)
   val status = DfiStatusInterface(config)
   val rdTraining = DfiReadTrainingInterface(config)
   val wrTraining = DfiWriteTrainingInterface(config)
   val caTraining = DfiCATrainingInterface(config)
-  val levelingTraing = DfiLevelingTraingInterface(config)
+  val levelingTraining = DfiLevelingTrainingInterface(config)
   val phyRequesetedTraining = DfiPhyRequesetedTrainingInterface(config)
   val lowPowerControl = DfiLowPowerControlInterface(config)
   val error = DfiErrorInterface(config)
@@ -180,11 +180,11 @@ case class Dfi(config: DfiConfig) extends Bundle with IMasterSlave {
       read,
       status,
       write,
-      updata,
+      update,
       rdTraining,
       wrTraining,
       caTraining,
-      levelingTraing,
+      levelingTraining,
       phyRequesetedTraining,
       lowPowerControl,
       error
