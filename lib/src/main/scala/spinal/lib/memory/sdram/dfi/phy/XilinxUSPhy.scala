@@ -167,70 +167,79 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
 
   // Helper class to manage command/address/bank signals and their output connections
   class CmdSignalHandler {
-    // Synchronize inputs first
-    val syncedAddress = RegNextWhen(io.dfi.control.address, io.dfi.control.cke.asBool)
-    val syncedBank = RegNextWhen(io.dfi.control.bank, io.dfi.control.cke.asBool)
-
-    // Determine the sequence of signals based on config
-    val signals: Seq[Bool] =
-      syncedAddress.asBools ++
-      syncedBank.asBools ++
-      (if(dfiConfig.signalConfig.useRasN) io.dfi.control.rasN.asBools else Nil) ++
-      (if(dfiConfig.signalConfig.useCasN) io.dfi.control.casN.asBools else Nil) ++
-      (if(dfiConfig.signalConfig.useWeN) io.dfi.control.weN.asBools else Nil) ++
-      io.dfi.control.csN.asBools ++ // cs_n is always present
-      (if(dfiConfig.signalConfig.useAckN) io.dfi.control.actN.asBools else Nil) // act_n if used
-
-    // Pre-calculate indices for connectOutput
-    private val addrWidth = dfiConfig.addressWidth
-    private val bankWidth = dfiConfig.bankWidth
-    private val useRasN = dfiConfig.signalConfig.useRasN
-    private val useCasN = dfiConfig.signalConfig.useCasN
-    private val useWeN = dfiConfig.signalConfig.useWeN
-    private val useActN = dfiConfig.signalConfig.useAckN
-    private val controlWidth = dfiConfig.controlWidth
-    private val freqRatio = dfiConfig.frequencyRatio
-
-    private val bankStartIndex = addrWidth
-    private val cmdStartIndex = bankStartIndex + bankWidth
-    // Calculate absolute indices in the 'signals' sequence
-    private val rasNIndexOpt = if(useRasN) Some(cmdStartIndex) else None
-    private val casNIndexOpt = if(useCasN) Some(cmdStartIndex + (if(useRasN) controlWidth else 0)) else None
-    private val weNIndexOpt  = if(useWeN)  Some(cmdStartIndex + (if(useRasN) controlWidth else 0) + (if(useCasN) controlWidth else 0)) else None
-    private val csNIndex     = cmdStartIndex + (if(useRasN) controlWidth else 0) + (if(useCasN) controlWidth else 0) + (if(useWeN) controlWidth else 0)
-    private val actNIndexOpt = if(useActN) Some(csNIndex + dfiConfig.chipSelectNumber * dfiConfig.frequencyRatio) else None
-
-    // Method to connect the processed output based on the signal's index in the sequence
-    def connectOutput(index: Int, dataOut: Bool): Unit = {
-      if(index < addrWidth) {
-        // Address bits - index directly maps to pad index
-        io.pads.a(index) := dataOut
-      } else if(index < cmdStartIndex) {
-        // Bank bits - index needs offset to map to pad index
-        io.pads.ba(index - bankStartIndex) := dataOut
-      } else {
-        // Command bits - check against calculated absolute indices
-        if(rasNIndexOpt.isDefined && index >= rasNIndexOpt.get && index < rasNIndexOpt.get + dfiConfig.controlWidth) {
-          // Handle multi-bit ras_n signal
-          val rasIndex = index - rasNIndexOpt.get
-          io.pads.ras_n(rasIndex) := dataOut
-        } else if(casNIndexOpt.isDefined && index >= casNIndexOpt.get && index < casNIndexOpt.get + dfiConfig.controlWidth) {
-          // Handle multi-bit cas_n signal
-          val casIndex = index - casNIndexOpt.get
-          io.pads.cas_n(casIndex) := dataOut
-        } else if(weNIndexOpt.isDefined && index >= weNIndexOpt.get && index < weNIndexOpt.get + dfiConfig.controlWidth) {
-          // Handle multi-bit we_n signal
-          val weIndex = index - weNIndexOpt.get
-          io.pads.we_n(weIndex) := dataOut
-        } else if(index >= csNIndex && index < csNIndex + dfiConfig.chipSelectNumber * dfiConfig.frequencyRatio) {
-          // Handle multi-bit cs_n signal
-          val csIndex = index - csNIndex
-          io.pads.cs_n(csIndex) := dataOut
-        } else if(actNIndexOpt.isDefined && index >= actNIndexOpt.get && index < actNIndexOpt.get + freqRatio) {
-          io.pads.act_n := dataOut
-        }
-        // No 'else' needed, if index doesn't match, it means the signal was disabled in config
+    def regroupSignals(input: Bits, width: Int): Vec[Bits] = {
+      val slices = input.subdivideIn(width bits)
+      Vec.tabulate(width) { i =>
+        Cat(slices.map(_(i)))
       }
+    }
+
+    // Synchronize DFI inputs for better timing
+    val syncedAddress = regroupSignals(RegNextWhen(io.dfi.control.address, io.dfi.control.cke.asBool), dfiConfig.addressWidth)
+    val syncedBank = regroupSignals(RegNextWhen(io.dfi.control.bank, io.dfi.control.cke.asBool), dfiConfig.bankWidth)
+
+    // Define signal mappings based on pads structure
+    case class SignalMapping(padSignal: Bool, dfiSource: Bits)
+
+    // Create mappings for each pad signal
+    val signalMappings = new scala.collection.mutable.ArrayBuffer[SignalMapping]()
+
+    // Address signals - always present
+    for (i <- 0 until dfiConfig.addressWidth) {
+      signalMappings += SignalMapping(io.pads.a(i), syncedAddress(i))
+    }
+
+    // Bank signals - if used
+    if (dfiConfig.signalConfig.useBank) {
+      for (i <- 0 until dfiConfig.bankWidth) {
+        signalMappings += SignalMapping(io.pads.ba(i), syncedBank(i))
+      }
+    }
+
+    // RAS_N signals - if used
+    if (dfiConfig.signalConfig.useRasN) {      
+      val rasN = regroupSignals(io.dfi.control.rasN, dfiConfig.controlWidth)
+      for (i <- 0 until dfiConfig.controlWidth) {
+        signalMappings += SignalMapping(io.pads.ras_n(i), rasN(i))
+      }
+    }
+
+    // CAS_N signals - if used
+    if (dfiConfig.signalConfig.useCasN) {
+      val casN = regroupSignals(io.dfi.control.casN, dfiConfig.controlWidth)
+      for (i <- 0 until dfiConfig.controlWidth) {
+        signalMappings += SignalMapping(io.pads.cas_n(i), casN(i))
+      }
+    }
+
+    // WE_N signals - if used
+    if (dfiConfig.signalConfig.useWeN) {
+      val weN = regroupSignals(io.dfi.control.weN, dfiConfig.controlWidth)
+      for (i <- 0 until dfiConfig.controlWidth) {
+        signalMappings += SignalMapping(io.pads.we_n(i), weN(i))
+      }
+    }
+
+    // CS_N signals - always present
+    val csN = regroupSignals(io.dfi.control.csN, dfiConfig.chipSelectNumber)    
+    for (i <- 0 until dfiConfig.chipSelectNumber) {
+      signalMappings += SignalMapping(io.pads.cs_n(i), csN(i))
+    }
+
+    // ACT_N signal - if used
+    if (dfiConfig.signalConfig.useAckN) {
+      signalMappings += SignalMapping(io.pads.act_n, io.dfi.control.actN)
+    }
+
+    // Extract all DFI source signals for serialization
+    val signals: Seq[Bool] = signalMappings.map(_.padSignal)
+
+    // Method to connect the processed output to the correct pad
+    def connectOutput(index: Int, dataOut: Bool): Unit = {
+      if (index < signalMappings.length) {
+        signalMappings(index).padSignal := dataOut
+      }
+      // No 'else' needed, if index is out of range, it means the signal was disabled in config
     }
   } // End of CmdSignalHandler class definition
 
@@ -248,7 +257,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       serdes.CLK    := io.clk4x
       serdes.CLKDIV := sysClk
       // Get the input signal from the handler's sequence
-      serdes.D      := handler.signals(i).asBits.resized #* 8
+      serdes.D      := handler.signalMappings(i).dfiSource
 
       delay.RST     := io.ctrl.reset | io.phyCtrl.ctrl.cdly_rst | sysRst
       delay.CLK     := sysClk
