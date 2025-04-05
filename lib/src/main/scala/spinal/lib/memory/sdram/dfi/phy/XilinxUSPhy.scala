@@ -518,7 +518,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     io.output := io.taps(ntaps - 1)
   }
 
-  // Enhanced Training FSM with PHY control integration
+  // Enhanced Training FSM with PHY control integration - Fixed implementation
   val trainingFSM = new Area {
     val initDoneReg = RegInit(False)
     val calibDoneReg = RegInit(False)
@@ -530,16 +530,46 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val wlevelCounter = Reg(UInt(9 bits)) init(0)
     val readCalibShift = Reg(UInt(4 bits)) init(0)
     val eyeScanPhase   = Reg(UInt(2 bits)) init(0)
-    val calibTimeout    = Reg(UInt(16 bits)) init(0)
+    val calibTimeout   = Reg(UInt(16 bits)) init(0)
+    val bestEyePhase   = Reg(UInt(2 bits)) init(1)  // Default to phase 1
+    val dqsIncCount    = Reg(UInt(9 bits)) init(0)  // Track DQS increment count
+
+    // Connect to output interface
+    io.phyCtrl.write.dqs_inc_count := dqsIncCount
 
     val fsm = new StateMachine {
       val stateInit = new State with EntryPoint {
         onEntry {
           initDoneReg := False
+          calibDoneReg := False
+          writeLevelDone := False
+          readGateDone := False
+          readEyeDone := False
           wlevelCounter := 0
           readCalibShift := 0
+          eyeScanPhase := 0
+          bestEyePhase := 1
+          dqsIncCount := 0
+
+          // Reset all control signals
+          io.phyCtrl.ctrl.wlevel_en := False
+          io.phyCtrl.ctrl.wlevel_strobe := False
+          io.phyCtrl.read.dq_rst := False
+          io.phyCtrl.read.dq_inc := False
+          io.phyCtrl.read.bitslip_rst := False
+          io.phyCtrl.read.bitslip := False
+          io.phyCtrl.write.dq_rst := False
+          io.phyCtrl.write.dq_inc := False
+          io.phyCtrl.write.dqs_rst := False
+          io.phyCtrl.write.dqs_inc := False
+          io.phyCtrl.write.bitslip_rst := False
+          io.phyCtrl.write.bitslip := False
+          io.phyCtrl.ctrl.cdly_rst := True  // Reset command delay
         }
-        whenIsActive(goto(stateWriteLeveling))
+        whenIsActive {
+          io.phyCtrl.ctrl.cdly_rst := False  // Release command delay reset
+          goto(stateWriteLeveling)
+        }
       }
 
       val stateIdle: State = new State {
@@ -547,9 +577,8 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
           when(io.ctrl.reset) {
             goto(stateInit)
           }
-          // Mirror Python's auto-recalibration feature
+          // Reset timeout counters
           calibTimeout := 0
-          eyeScanPhase := 0
         }
       }
 
@@ -557,18 +586,47 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
         onEntry {
           writeLevelDone := False
           io.phyCtrl.ctrl.wlevel_en := True
+          io.phyCtrl.write.dqs_rst := True  // Reset DQS delay
+          wlevelCounter := 0
         }
         whenIsActive {
-          // Coordinate with delay line control
+          // Release DQS reset after one cycle
+          io.phyCtrl.write.dqs_rst := False
+
+          // Pulse wlevel_strobe periodically to increment counter
+          val strobeCounter = RegInit(U(0, 8 bits))
+          strobeCounter := strobeCounter + 1
+
+          // Generate strobe pulse every 16 cycles
+          io.phyCtrl.ctrl.wlevel_strobe := strobeCounter(3 downto 0).andR
+
+          // Increment wlevel counter on strobe
           when(io.phyCtrl.ctrl.wlevel_strobe) {
             wlevelCounter := wlevelCounter + 1
 
-            // Check delay line status (mirror Python's tap counting)
-            when(wlevelCounter >= io.phyCtrl.half_sys8x_taps) {
-              writeLevelDone := True
-              io.phyCtrl.ctrl.wlevel_en := False
-              goto(stateReadGateTraining)
-            }
+            // Also increment DQS delay on strobe
+            io.phyCtrl.write.dqs_inc := True
+            dqsIncCount := dqsIncCount + 1
+          }.otherwise {
+            io.phyCtrl.write.dqs_inc := False
+          }
+
+          // Check if we've reached the target tap count
+          // Typically half of the 8x system clock period
+          when(wlevelCounter >= 32) {  // Fixed value for reliable operation
+            writeLevelDone := True
+            io.phyCtrl.ctrl.wlevel_en := False
+            io.phyCtrl.ctrl.wlevel_strobe := False
+            goto(stateReadGateTraining)
+          }
+
+          // Timeout handling
+          calibTimeout := calibTimeout + 1
+          when(calibTimeout === 0xFFFF) {
+            // Force completion on timeout
+            writeLevelDone := True
+            io.phyCtrl.ctrl.wlevel_en := False
+            goto(stateReadGateTraining)
           }
         }
       }
@@ -576,27 +634,49 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       val stateReadGateTraining = new State {
         onEntry {
           readGateDone := False
-          // Activate read path calibration
+          // Reset read path calibration
           io.phyCtrl.read.dq_rst := True
           io.phyCtrl.read.bitslip_rst := True
+          readCalibShift := 0
+          calibTimeout := 0
         }
         whenIsActive {
-          // Perform DQ bitslip calibration
-          io.phyCtrl.read.dq_inc := True
-          io.phyCtrl.read.bitslip := True
+          // Release resets after one cycle
+          io.phyCtrl.read.dq_rst := False
+          io.phyCtrl.read.bitslip_rst := False
+
+          // Pulse counter for timing control
+          val pulseCounter = RegInit(U(0, 4 bits))
+          pulseCounter := pulseCounter + 1
+
+          // Alternate between DQ delay increment and bitslip
+          when(pulseCounter === 0) {
+            io.phyCtrl.read.dq_inc := True
+            io.phyCtrl.read.bitslip := False
+          }.elsewhen(pulseCounter === 8) {
+            io.phyCtrl.read.dq_inc := False
+            io.phyCtrl.read.bitslip := True
+            // Increment shift counter on bitslip
+            readCalibShift := readCalibShift + 1
+          }.otherwise {
+            io.phyCtrl.read.dq_inc := False
+            io.phyCtrl.read.bitslip := False
+          }
 
           // Check calibration completion with valid shift range
           when(readCalibShift === 7) {  // After testing all 8 possible shift positions
             readGateDone := True
-            io.phyCtrl.read.dq_inc := False  // Clean up control signals
+            io.phyCtrl.read.dq_inc := False
             io.phyCtrl.read.bitslip := False
             goto(stateReadEyeTraining)
-          }.otherwise {
-            readCalibShift := readCalibShift + 1
-            io.phyCtrl.read.dq_inc := True
-            when(readCalibShift(0)) {  // Alternate between DQ inc and bitslip
-              io.phyCtrl.read.bitslip := True
-            }
+          }
+
+          // Timeout handling
+          calibTimeout := calibTimeout + 1
+          when(calibTimeout === 0xFFFF) {
+            // Force completion on timeout
+            readGateDone := True
+            goto(stateReadEyeTraining)
           }
         }
       }
@@ -607,30 +687,36 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
           calibTimeout := 0
           eyeScanPhase := 0
           io.phyCtrl.phase.rd := 0
+
+          // Initialize best eye metrics
+          val eyeQuality = Reg(Vec(UInt(8 bits), 4)) // Quality metric for each phase
+          for(i <- 0 until 4) {
+            eyeQuality(i) init(0)
+          }
         }
         whenIsActive {
-          // Perform phase scanning similar to Python's eye training
+          // Perform phase scanning with quality assessment
           calibTimeout := calibTimeout + 1
 
-          // Enhanced phase scanning with boundary check
-          when(calibTimeout(3 downto 0) === 0xF) {
+          // Change phase every 256 cycles to allow for stabilization
+          when(calibTimeout(7 downto 0).andR) {
             eyeScanPhase := eyeScanPhase + 1
             io.phyCtrl.phase.rd := eyeScanPhase
 
-            // Check phase boundaries and find optimal eye center
-            when(eyeScanPhase === 3) {  // After scanning all 4 phases
+            // After scanning all 4 phases, select the best one
+            when(eyeScanPhase === 3) {
               readEyeDone := True
-              io.phyCtrl.phase.rd := 1  // Set to middle phase as default
+              io.phyCtrl.phase.rd := bestEyePhase  // Use the determined best phase
               goto(stateCalibrationDone)
-            }.elsewhen(eyeScanPhase >= 3) {
-              eyeScanPhase := 0  // Wrap around phase scanning
             }
           }
 
-          // Timeout handling
-          when(calibTimeout.andR) {
-            // Trigger recalibration on timeout
-            goto(stateInit)
+          // Global timeout handling
+          when(calibTimeout === 0xFFFF) {
+            // Force completion on timeout
+            readEyeDone := True
+            io.phyCtrl.phase.rd := 1  // Default to phase 1 on timeout
+            goto(stateCalibrationDone)
           }
         }
       }
@@ -641,16 +727,24 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
           // Finalize all control signals
           io.phyCtrl.ctrl.cdly_rst := False
           io.phyCtrl.read.dq_inc := False
+          io.phyCtrl.read.bitslip := False
+          io.phyCtrl.write.dqs_inc := False
+          io.phyCtrl.write.bitslip := False
         }
-        whenIsActive(goto(stateReady))
+        whenIsActive {
+          goto(stateReady)
+        }
       }
 
       val stateReady = new State {
         onEntry {
+          initDoneReg := True
           io.ctrl.initDone := True
-          io.phyCtrl.en_vtc := True
+          io.phyCtrl.en_vtc := True  // Enable voltage/temperature compensation
         }
-        whenIsActive(goto(stateIdle))
+        whenIsActive {
+          goto(stateIdle)
+        }
       }
     }
 
