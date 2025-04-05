@@ -14,20 +14,20 @@ case class SdramIO(dfiConfig: DfiConfig) extends Bundle {
 
   // Command and address (always present)
   val a       = out(Bits(dfiConfig.addressWidth bits))
-  val ba      = out(Bits(dfiConfig.bankWidth bits))
+  val ba      = dfiConfig.signalConfig.useBank generate out(Bits(dfiConfig.bankWidth bits))
 
   // Protocol-specific signals
-  val bg      = if(dfiConfig.signalConfig.useBg) out(Bits(dfiConfig.bankGroupWidth bits)) else null
-  val ras_n   = if(dfiConfig.signalConfig.useRasN) out(Bool()) else null
-  val cas_n   = if(dfiConfig.signalConfig.useCasN) out(Bool()) else null
-  val we_n    = if(dfiConfig.signalConfig.useWeN) out(Bool()) else null
-  val cs_n    = out(Bool()) // Always present
-  val act_n   = if(dfiConfig.signalConfig.useRasN) out(Bool()) else null
+  val bg      = dfiConfig.signalConfig.useBg generate out(Bits(dfiConfig.bankGroupWidth bits))
+  val ras_n   = dfiConfig.signalConfig.useRasN generate out(Bits(dfiConfig.controlWidth bits))
+  val cas_n   = dfiConfig.signalConfig.useCasN generate out(Bits(dfiConfig.controlWidth bits))
+  val we_n    = dfiConfig.signalConfig.useWeN generate out(Bits(dfiConfig.controlWidth bits))
+  val cs_n    = out(Bits(dfiConfig.chipSelectNumber bits)) // Always present
+  val act_n   = dfiConfig.signalConfig.useAckN generate out(Bool())
 
   // Control signals
-  val cke     = out(Bool()) // Always present
-  val odt     = if(dfiConfig.signalConfig.useOdt) out(Bool()) else null
-  val reset_n = if(dfiConfig.signalConfig.useResetN) out(Bool()) else null
+  val cke     = out(Bits(dfiConfig.chipSelectNumber bits)) // Always present
+  val odt     = dfiConfig.signalConfig.useOdt generate out(Bits(dfiConfig.chipSelectNumber bits))
+  val reset_n = dfiConfig.signalConfig.useResetN generate out(Bits(dfiConfig.chipSelectNumber bits))
 
   // Data interface (always present)
   val dq      = inout(Analog(Bits(dfiConfig.dataWidth bits)))
@@ -178,7 +178,8 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       (if(dfiConfig.signalConfig.useRasN) io.dfi.control.rasN.asBools else Nil) ++
       (if(dfiConfig.signalConfig.useCasN) io.dfi.control.casN.asBools else Nil) ++
       (if(dfiConfig.signalConfig.useWeN) io.dfi.control.weN.asBools else Nil) ++
-      io.dfi.control.csN.asBools // cs_n is always present
+      io.dfi.control.csN.asBools ++ // cs_n is always present
+      (if(dfiConfig.signalConfig.useAckN) io.dfi.control.actN.asBools else Nil) // act_n if used
 
     // Pre-calculate indices for connectOutput
     private val addrWidth = dfiConfig.addressWidth
@@ -186,14 +187,18 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     private val useRasN = dfiConfig.signalConfig.useRasN
     private val useCasN = dfiConfig.signalConfig.useCasN
     private val useWeN = dfiConfig.signalConfig.useWeN
+    private val useActN = dfiConfig.signalConfig.useAckN
+    private val controlWidth = dfiConfig.controlWidth
+    private val freqRatio = dfiConfig.frequencyRatio
 
     private val bankStartIndex = addrWidth
     private val cmdStartIndex = bankStartIndex + bankWidth
     // Calculate absolute indices in the 'signals' sequence
     private val rasNIndexOpt = if(useRasN) Some(cmdStartIndex) else None
-    private val casNIndexOpt = if(useCasN) Some(cmdStartIndex + (if(useRasN) 1 else 0)) else None
-    private val weNIndexOpt  = if(useWeN)  Some(cmdStartIndex + (if(useRasN) 1 else 0) + (if(useCasN) 1 else 0)) else None
-    private val csNIndex     = cmdStartIndex + (if(useRasN) 1 else 0) + (if(useCasN) 1 else 0) + (if(useWeN) 1 else 0)
+    private val casNIndexOpt = if(useCasN) Some(cmdStartIndex + (if(useRasN) controlWidth else 0)) else None
+    private val weNIndexOpt  = if(useWeN)  Some(cmdStartIndex + (if(useRasN) controlWidth else 0) + (if(useCasN) controlWidth else 0)) else None
+    private val csNIndex     = cmdStartIndex + (if(useRasN) controlWidth else 0) + (if(useCasN) controlWidth else 0) + (if(useWeN) controlWidth else 0)
+    private val actNIndexOpt = if(useActN) Some(csNIndex + dfiConfig.chipSelectNumber * dfiConfig.frequencyRatio) else None
 
     // Method to connect the processed output based on the signal's index in the sequence
     def connectOutput(index: Int, dataOut: Bool): Unit = {
@@ -205,14 +210,24 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
         io.pads.ba(index - bankStartIndex) := dataOut
       } else {
         // Command bits - check against calculated absolute indices
-        if(rasNIndexOpt.isDefined && index == rasNIndexOpt.get) {
-          io.pads.ras_n := dataOut
-        } else if(casNIndexOpt.isDefined && index == casNIndexOpt.get) {
-          io.pads.cas_n := dataOut
-        } else if(weNIndexOpt.isDefined && index == weNIndexOpt.get) {
-          io.pads.we_n := dataOut
-        } else if(index == csNIndex) {
-          io.pads.cs_n := dataOut
+        if(rasNIndexOpt.isDefined && index >= rasNIndexOpt.get && index < rasNIndexOpt.get + dfiConfig.controlWidth) {
+          // Handle multi-bit ras_n signal
+          val rasIndex = index - rasNIndexOpt.get
+          io.pads.ras_n(rasIndex) := dataOut
+        } else if(casNIndexOpt.isDefined && index >= casNIndexOpt.get && index < casNIndexOpt.get + dfiConfig.controlWidth) {
+          // Handle multi-bit cas_n signal
+          val casIndex = index - casNIndexOpt.get
+          io.pads.cas_n(casIndex) := dataOut
+        } else if(weNIndexOpt.isDefined && index >= weNIndexOpt.get && index < weNIndexOpt.get + dfiConfig.controlWidth) {
+          // Handle multi-bit we_n signal
+          val weIndex = index - weNIndexOpt.get
+          io.pads.we_n(weIndex) := dataOut
+        } else if(index >= csNIndex && index < csNIndex + dfiConfig.chipSelectNumber * dfiConfig.frequencyRatio) {
+          // Handle multi-bit cs_n signal
+          val csIndex = index - csNIndex
+          io.pads.cs_n(csIndex) := dataOut
+        } else if(actNIndexOpt.isDefined && index >= actNIndexOpt.get && index < actNIndexOpt.get + freqRatio) {
+          io.pads.act_n := dataOut
         }
         // No 'else' needed, if index doesn't match, it means the signal was disabled in config
       }
@@ -246,6 +261,77 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       handler.connectOutput(i, delay.DATAOUT)
     }
   } // End of refactored cmdPath Area
+
+  // Control signals path - CKE, ODT, RESET_N
+  val ctrlPath = new Area {
+    // Create OSERDES and ODELAY for each control signal
+    val ckeSerdes = Seq.fill(dfiConfig.chipSelectNumber * dfiConfig.frequencyRatio)(new OSERDESE3())
+    val ckeDelay = Seq.fill(dfiConfig.chipSelectNumber * dfiConfig.frequencyRatio)(new ODELAYE3(delayType="VARIABLE"))
+
+    // Connect CKE signals
+    for((serdes, i) <- ckeSerdes.zipWithIndex) {
+      serdes.RST    := sysRst | io.ctrl.reset
+      serdes.CLK    := io.clk4x
+      serdes.CLKDIV := sysClk
+      serdes.D      := io.dfi.control.cke(i).asBits.resized #* 8
+
+      val delay = ckeDelay(i)
+      delay.RST     := sysRst | io.ctrl.reset | io.phyCtrl.ctrl.cdly_rst
+      delay.CLK     := sysClk
+      delay.EN_VTC  := io.phyCtrl.en_vtc
+      delay.CE      := io.phyCtrl.ctrl.cdly_inc
+      delay.INC     := True
+      delay.ODATAIN := serdes.OQ
+
+      io.pads.cke(i) := delay.DATAOUT
+    }
+
+    // Connect ODT signals if used
+    if(dfiConfig.signalConfig.useOdt) {
+      val odtSerdes = Seq.fill(dfiConfig.chipSelectNumber * dfiConfig.frequencyRatio)(new OSERDESE3())
+      val odtDelay = Seq.fill(dfiConfig.chipSelectNumber * dfiConfig.frequencyRatio)(new ODELAYE3(delayType="VARIABLE"))
+
+      for((serdes, i) <- odtSerdes.zipWithIndex) {
+        serdes.RST    := sysRst | io.ctrl.reset
+        serdes.CLK    := io.clk4x
+        serdes.CLKDIV := sysClk
+        serdes.D      := io.dfi.control.odt(i).asBits.resized #* 8
+
+        val delay = odtDelay(i)
+        delay.RST     := sysRst | io.ctrl.reset | io.phyCtrl.ctrl.cdly_rst
+        delay.CLK     := sysClk
+        delay.EN_VTC  := io.phyCtrl.en_vtc
+        delay.CE      := io.phyCtrl.ctrl.cdly_inc
+        delay.INC     := True
+        delay.ODATAIN := serdes.OQ
+
+        io.pads.odt(i) := delay.DATAOUT
+      }
+    }
+
+    // Connect RESET_N signals if used
+    if(dfiConfig.signalConfig.useResetN) {
+      val resetSerdes = Seq.fill(dfiConfig.chipSelectNumber * dfiConfig.frequencyRatio)(new OSERDESE3())
+      val resetDelay = Seq.fill(dfiConfig.chipSelectNumber * dfiConfig.frequencyRatio)(new ODELAYE3(delayType="VARIABLE"))
+
+      for((serdes, i) <- resetSerdes.zipWithIndex) {
+        serdes.RST    := sysRst | io.ctrl.reset
+        serdes.CLK    := io.clk4x
+        serdes.CLKDIV := sysClk
+        serdes.D      := io.dfi.control.resetN(i).asBits.resized #* 8
+
+        val delay = resetDelay(i)
+        delay.RST     := sysRst | io.ctrl.reset | io.phyCtrl.ctrl.cdly_rst
+        delay.CLK     := sysClk
+        delay.EN_VTC  := io.phyCtrl.en_vtc
+        delay.CE      := io.phyCtrl.ctrl.cdly_inc
+        delay.INC     := True
+        delay.ODATAIN := serdes.OQ
+
+        io.pads.reset_n(i) := delay.DATAOUT
+      }
+    }
+  }
 
   // DQSPattern module implementation (exact match to Python version)
   class DQSPattern(register: Boolean = false) extends Component {
