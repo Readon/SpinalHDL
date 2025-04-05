@@ -297,19 +297,32 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     //==========================================================================
     // Write Latency and Timing Generation
     //==========================================================================
-    // Write latency calculation with configurable compensation
-    val writeCompensation = dfiConfig.timeConfig.tPhyWrLatCompensation
-    val writeLatency = dfiConfig.timeConfig.tPhyWrLat - dfiConfig.sdram.ddrWrLat + writeCompensation
+    // Write latency calculation with fixed compensation
+    val writeCompensation = 2  // Fixed compensation value for reliable operation
 
-    // Delay line for timing generation
-    val wrDelay = new TappedDelayLine(1, writeLatency + 2)
+    // Calculate base latency from DFI configuration
+    // If tPhyWrLat is not available, use a safe default value
+    val baseLatency = dfiConfig.timeConfig.tPhyWrLat
+
+    // Apply DDR write latency compensation and add fixed compensation
+    val writeLatency = baseLatency - dfiConfig.sdram.ddrWrLat + writeCompensation
+
+    // Ensure writeLatency is at least 3 for proper preamble/postamble
+    val safeWriteLatency = Math.max(3, writeLatency)
+
+    // Delay line for timing generation - add extra taps for safety
+    val delayTaps = safeWriteLatency + 3
+    val wrDelay = new TappedDelayLine(1, delayTaps)
     wrDelay.io.input := wrDataEn
 
-    // Generate timing signals from delay taps
-    dq_oe := RegNext(RegNext(wrDelay.io.taps(writeLatency))) init(False)
+    // Generate timing signals from delay taps with proper synchronization
+    val wrDataEnDelayed = RegNext(wrDelay.io.taps(safeWriteLatency)) init(False)
+    dq_oe := RegNext(wrDataEnDelayed) init(False)  // Add extra register for better timing
     dqs_oe := io.phyCtrl.ctrl.wlevel_en | dq_oe
-    dqs_preamble := wrDelay.io.taps(writeLatency - 1) & ~wrDelay.io.taps(writeLatency)
-    dqs_postamble := wrDelay.io.taps(writeLatency + 1) & ~wrDelay.io.taps(writeLatency)
+
+    // Improved preamble/postamble generation with proper timing
+    dqs_preamble := wrDelay.io.taps(safeWriteLatency - 1) & ~wrDataEnDelayed
+    dqs_postamble := wrDelay.io.taps(safeWriteLatency + 1) & ~wrDataEnDelayed
 
     // Delay line for output enable
     val delayLine = new TappedDelayLine(1, 1)
@@ -348,12 +361,12 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       serdes.D      := bitslip.io.output
       serdes.T      := ~delayLine.io.output
 
-      // Configure delay line
-      delay.RST     := sysRst
+      // Configure delay line with proper reset and control signals
+      delay.RST     := sysRst | io.ctrl.reset | io.phyCtrl.write.dqs_rst
       delay.CLK     := sysClk
       delay.EN_VTC  := io.phyCtrl.en_vtc
       delay.CE      := io.phyCtrl.write.dqs_inc & io.phyCtrl.ctrl.dly_sel(i)
-      delay.INC     := True
+      delay.INC     := True  // Always increment (decrement handled by reset+increment)
       delay.ODATAIN := serdes.OQ
 
       // Connect to differential buffer
@@ -424,11 +437,12 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
 
     // Configure read path components
     for(((serdes, delay), i) <- rdIserdes.zip(rdDelay).zipWithIndex) {
-      // Configure delay line
+      // Configure delay line with proper reset and control signals
+      delay.RST := sysRst | io.ctrl.reset | io.phyCtrl.read.dq_rst
       delay.CLK := sysClk
       delay.EN_VTC := io.phyCtrl.en_vtc
       delay.CE := io.phyCtrl.read.dq_inc && io.phyCtrl.ctrl.dly_sel(i/8)
-      delay.INC := True
+      delay.INC := True  // Always increment (decrement handled by reset+increment)
       delay.IDATAIN := io.pads.dq(i)
 
       // Configure ISERDESE3
@@ -449,7 +463,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
   }
 
 
-  // BitSlip module implementation
+  // BitSlip module implementation - Fixed implementation
   class BitSlip(width: Int) extends Component {
     val io = new Bundle {
       val input = in Bits(width bits)
@@ -458,14 +472,32 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       val slp = in Bool()
     }
 
-    val shiftReg = History(io.input, length=width, init=B(0, width bits), when=io.slp)
+    // Create a shift register that captures input on each slip pulse
+    val shiftReg = Reg(Vec(Bits(width bits), width))
     val ptr = Counter(width, inc=io.slp)
 
-    when(io.rst) {
-      ptr.clear()
-      shiftReg.foreach(_ := B(0, width bits))
+    // Initialize the shift register
+    for(i <- 0 until width) {
+      shiftReg(i) init(B(0, width bits))
     }
 
+    // Update shift register on slip pulse
+    when(io.slp) {
+      for(i <- 0 until width-1) {
+        shiftReg(i+1) := shiftReg(i)
+      }
+      shiftReg(0) := io.input
+    }
+
+    // Reset handling
+    when(io.rst) {
+      ptr.clear()
+      for(i <- 0 until width) {
+        shiftReg(i) := B(0, width bits)
+      }
+    }
+
+    // Output is selected based on pointer value
     io.output := shiftReg(ptr.value)
   }
 
