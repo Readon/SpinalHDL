@@ -197,7 +197,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     }
 
     // RAS_N signals - if used
-    if (dfiConfig.signalConfig.useRasN) {      
+    if (dfiConfig.signalConfig.useRasN) {
       val rasN = regroupSignals(io.dfi.control.rasN, dfiConfig.controlWidth)
       for (i <- 0 until dfiConfig.controlWidth) {
         signalMappings += SignalMapping(io.pads.ras_n(i), rasN(i))
@@ -221,9 +221,31 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     }
 
     // CS_N signals - always present
-    val csN = regroupSignals(io.dfi.control.csN, dfiConfig.chipSelectNumber)    
+    val csN = regroupSignals(io.dfi.control.csN, dfiConfig.chipSelectNumber)
     for (i <- 0 until dfiConfig.chipSelectNumber) {
       signalMappings += SignalMapping(io.pads.cs_n(i), csN(i))
+    }
+
+    // CKE signals - always present
+    val ckeGroup = regroupSignals(io.dfi.control.cke, dfiConfig.chipSelectNumber)
+    for (i <- 0 until dfiConfig.chipSelectNumber) {
+      signalMappings += SignalMapping(io.pads.cke(i), ckeGroup(i))
+    }
+
+    // ODT signals - always present
+    if (dfiConfig.signalConfig.useOdt) {
+      val odt = regroupSignals(io.dfi.control.odt, dfiConfig.chipSelectNumber)
+      for (i <- 0 until dfiConfig.chipSelectNumber) {
+        signalMappings += SignalMapping(io.pads.odt(i), odt(i))
+      }
+    }
+
+    // ResetN signals - always present
+    if (dfiConfig.signalConfig.useResetN) {
+      val resetN = regroupSignals(io.dfi.control.resetN, dfiConfig.chipSelectNumber)
+      for (i <- 0 until dfiConfig.chipSelectNumber) {
+        signalMappings += SignalMapping(io.pads.reset_n(i), resetN(i))
+      }
     }
 
     // ACT_N signal - if used
@@ -243,8 +265,9 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     }
   } // End of CmdSignalHandler class definition
 
-  // Command path - Refactored to use CmdSignalHandler
+  // Command and Control signals path
   val cmdPath = new Area {
+    // Command signals handling
     val handler = new CmdSignalHandler() // Instantiate the handler
 
     // Create OSERDES and ODELAY for each signal identified by the handler
@@ -268,77 +291,6 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
 
       // Use the handler to connect the final delayed output to the correct pad
       handler.connectOutput(i, delay.DATAOUT)
-    }
-  } // End of refactored cmdPath Area
-
-  // Control signals path - CKE, ODT, RESET_N
-  val ctrlPath = new Area {
-    // Create OSERDES and ODELAY for each control signal
-    val ckeSerdes = Seq.fill(dfiConfig.chipSelectNumber * dfiConfig.frequencyRatio)(new OSERDESE3())
-    val ckeDelay = Seq.fill(dfiConfig.chipSelectNumber * dfiConfig.frequencyRatio)(new ODELAYE3(delayType="VARIABLE"))
-
-    // Connect CKE signals
-    for((serdes, i) <- ckeSerdes.zipWithIndex) {
-      serdes.RST    := sysRst | io.ctrl.reset
-      serdes.CLK    := io.clk4x
-      serdes.CLKDIV := sysClk
-      serdes.D      := io.dfi.control.cke(i).asBits.resized #* 8
-
-      val delay = ckeDelay(i)
-      delay.RST     := sysRst | io.ctrl.reset | io.phyCtrl.ctrl.cdly_rst
-      delay.CLK     := sysClk
-      delay.EN_VTC  := io.phyCtrl.en_vtc
-      delay.CE      := io.phyCtrl.ctrl.cdly_inc
-      delay.INC     := True
-      delay.ODATAIN := serdes.OQ
-
-      io.pads.cke(i) := delay.DATAOUT
-    }
-
-    // Connect ODT signals if used
-    if(dfiConfig.signalConfig.useOdt) {
-      val odtSerdes = Seq.fill(dfiConfig.chipSelectNumber * dfiConfig.frequencyRatio)(new OSERDESE3())
-      val odtDelay = Seq.fill(dfiConfig.chipSelectNumber * dfiConfig.frequencyRatio)(new ODELAYE3(delayType="VARIABLE"))
-
-      for((serdes, i) <- odtSerdes.zipWithIndex) {
-        serdes.RST    := sysRst | io.ctrl.reset
-        serdes.CLK    := io.clk4x
-        serdes.CLKDIV := sysClk
-        serdes.D      := io.dfi.control.odt(i).asBits.resized #* 8
-
-        val delay = odtDelay(i)
-        delay.RST     := sysRst | io.ctrl.reset | io.phyCtrl.ctrl.cdly_rst
-        delay.CLK     := sysClk
-        delay.EN_VTC  := io.phyCtrl.en_vtc
-        delay.CE      := io.phyCtrl.ctrl.cdly_inc
-        delay.INC     := True
-        delay.ODATAIN := serdes.OQ
-
-        io.pads.odt(i) := delay.DATAOUT
-      }
-    }
-
-    // Connect RESET_N signals if used
-    if(dfiConfig.signalConfig.useResetN) {
-      val resetSerdes = Seq.fill(dfiConfig.chipSelectNumber * dfiConfig.frequencyRatio)(new OSERDESE3())
-      val resetDelay = Seq.fill(dfiConfig.chipSelectNumber * dfiConfig.frequencyRatio)(new ODELAYE3(delayType="VARIABLE"))
-
-      for((serdes, i) <- resetSerdes.zipWithIndex) {
-        serdes.RST    := sysRst | io.ctrl.reset
-        serdes.CLK    := io.clk4x
-        serdes.CLKDIV := sysClk
-        serdes.D      := io.dfi.control.resetN(i).asBits.resized #* 8
-
-        val delay = resetDelay(i)
-        delay.RST     := sysRst | io.ctrl.reset | io.phyCtrl.ctrl.cdly_rst
-        delay.CLK     := sysClk
-        delay.EN_VTC  := io.phyCtrl.en_vtc
-        delay.CE      := io.phyCtrl.ctrl.cdly_inc
-        delay.INC     := True
-        delay.ODATAIN := serdes.OQ
-
-        io.pads.reset_n(i) := delay.DATAOUT
-      }
     }
   }
 
