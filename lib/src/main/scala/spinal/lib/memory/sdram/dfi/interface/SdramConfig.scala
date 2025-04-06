@@ -2,6 +2,10 @@ package spinal.lib.memory.sdram.dfi
 
 import spinal.core._
 
+object DqsType extends SpinalEnum {
+  val SingleEnded, Differential = newElement()
+}
+
 class SdramGeneration(
     val RESETn: Boolean,
     val ODT: Boolean,
@@ -9,7 +13,8 @@ class SdramGeneration(
     val FAW: Boolean,
     val CCD: Int,
     val burstLength: Int,
-    val dataRate: Int
+    val dataRate: Int,
+    val dqsType: DqsType.C
 )
 
 object SdramGeneration {
@@ -20,7 +25,8 @@ object SdramGeneration {
     FAW = false,
     CCD = 1,
     burstLength = 1,
-    dataRate = 1
+    dataRate = 1,
+    dqsType = DqsType.SingleEnded
   )
   val DDR2 = new SdramGeneration(
     RESETn = false,
@@ -29,7 +35,8 @@ object SdramGeneration {
     FAW = true,
     CCD = 2,
     burstLength = 4,
-    dataRate = 2
+    dataRate = 2,
+    dqsType = DqsType.SingleEnded
   )
   val DDR3 = new SdramGeneration(
     RESETn = true,
@@ -38,7 +45,18 @@ object SdramGeneration {
     FAW = true,
     CCD = 4,
     burstLength = 8,
-    dataRate = 2
+    dataRate = 2,
+    dqsType = DqsType.SingleEnded
+  )
+  val DDR4 = new SdramGeneration(
+    RESETn = true,
+    ODT = true,
+    DQS = true,
+    FAW = true,
+    CCD = 4,
+    burstLength = 8,
+    dataRate = 2,
+    dqsType = DqsType.Differential
   )
   val MYDDR = new SdramGeneration(
     RESETn = true,
@@ -47,7 +65,8 @@ object SdramGeneration {
     FAW = true,
     CCD = 4,
     burstLength = 8,
-    dataRate = 2
+    dataRate = 2,
+    dqsType = DqsType.SingleEnded
   )
 }
 

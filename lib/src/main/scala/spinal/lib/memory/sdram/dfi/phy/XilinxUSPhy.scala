@@ -33,8 +33,8 @@ case class SdramIO(dfiConfig: DfiConfig) extends Bundle {
   val dm      = out(Bits(dfiConfig.dataWidth/8 bits))
 
   // DQS signals - differential based on dataRate
-  val dqs_p   = (dfiConfig.sdram.generation.dataRate > 1) generate inout(Analog(Bits(dfiConfig.dataWidth/8 bits)))
-  val dqs_n   = (dfiConfig.sdram.generation.dataRate > 1) generate inout(Analog(Bits(dfiConfig.dataWidth/8 bits)))
+  val dqs_p = (dfiConfig.sdram.generation.dataRate > 1) generate inout(Analog(Bits(dfiConfig.dataWidth/8 bits)))  
+  val dqs_n = (dfiConfig.sdram.generation.dqsType == DqsType.Differential && dfiConfig.sdram.generation.dataRate > 1) generate inout(Analog(Bits(dfiConfig.dataWidth/8 bits)))
 }
 
 class USPhy(dfiConfig: DfiConfig) extends Component {
@@ -395,14 +395,20 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       delay.INC     := True  // Always increment (decrement handled by reset+increment)
       delay.ODATAIN := serdes.OQ
 
-      // Connect to differential buffer
-      val buf = new IOBUFDSE3()
-      buf.I := delay.DATAOUT
-      buf.T := serdes.T_OUT
+      // Connect differential or single-ended buffer based on dqsType and dataRate
+      if(dfiConfig.sdram.generation.dataRate > 1) {
+        if(dfiConfig.sdram.generation.dqsType == DqsType.Differential) {
+          val buf = new IOBUFDSE3()
+          buf.I := delay.DATAOUT
+          buf.T := serdes.T_OUT
 
-      // Connect to pads
-      io.pads.dqs_p(i) := buf.IO
-      io.pads.dqs_n(i) := buf.IOB
+          // Connect to pads
+          io.pads.dqs_p(i) := buf.IO
+          io.pads.dqs_n(i) := buf.IOB
+        } else {
+          io.pads.dqs_p(i) := delay.DATAOUT
+        }
+      }
     }
   }
 
