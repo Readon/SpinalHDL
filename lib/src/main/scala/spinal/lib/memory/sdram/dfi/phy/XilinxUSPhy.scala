@@ -1,10 +1,9 @@
-package spinal.lib.memory.sdram.dfi.phy
+package spinal.lib.memory.sdram.dfi
 
 import spinal.core._
 import spinal.lib._
 import spinal.lib.bus.misc.BusSlaveFactory
 import spinal.lib.fsm.{StateMachine, State, EntryPoint}
-import spinal.lib.memory.sdram.dfi._
 import spinal.lib.blackbox.xilinx.ultrascale._
 
 case class SdramIO(dfiConfig: DfiConfig) extends Bundle {
@@ -48,45 +47,27 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val clk4x = in Bool()
     val clk4xN = in Bool()
 
-    // Unified PHY control interface
+    // PHY control interface
     val phyCtrl = new Bundle {
-      val en_vtc     = in Bool()
-      val half_sys8x_taps    = out UInt(9 bits)
-
-      // System control
-      val ctrl = new Bundle {
-        val wlevel_en    = in Bool()
-        val wlevel_strobe= in Bool()
-        val dly_sel      = in Bits(8 bits)
-        val cdly_rst     = in Bool()
-        val cdly_inc     = in Bool()
-        val cdly_value   = out UInt(9 bits)
-      }
-
-      // Read path control
-      val read = new Bundle {
-        val dq_rst         = in Bool()
-        val dq_inc         = in Bool()
-        val bitslip_rst    = in Bool()
-        val bitslip        = in Bool()
-      }
-
-      // Write path control
-      val write = new Bundle {
-        val dq_rst         = in Bool()
-        val dq_inc         = in Bool()
-        val dqs_rst        = in Bool()
-        val dqs_inc        = in Bool()
-        val dqs_inc_count  = out UInt(9 bits)
-        val bitslip_rst    = in Bool()
-        val bitslip        = in Bool()
-      }
-
+      // Training status
+      val half_sys8x_taps = out UInt(9 bits)
+      val dqs_inc_count   = out UInt(9 bits)
+      
+      // Control signals
+      val dly_sel      = in Bits(8 bits)  // Byte lane select
+      val cdly_rst     = in Bool()        // Command delay reset
+      val cdly_inc     = in Bool()        // Command delay increment
+      val cdly_value   = out UInt(9 bits) // Current command delay
+      
+      // Data path control
+      val dq_rst      = in Bool()  // DQ delay reset
+      val dq_inc      = in Bool()  // DQ delay increment
+      val bitslip_rst = in Bool()  // Bitslip reset
+      val bitslip     = in Bool()  // Bitslip trigger
+      
       // Phase control
-      val phase = new Bundle {
-        val rd = in UInt(2 bits)
-        val wr = in UInt(2 bits)
-      }
+      val rd_phase = in UInt(2 bits)  // Read phase
+      val wr_phase = in UInt(2 bits)  // Write phase
     }
 
     val ctrl = new Bundle {
@@ -99,7 +80,6 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     // Control register group (0x00)
     val ctrlReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x00).init(0)
     io.ctrl.reset             := ctrlReg(0)       // [0] Global reset
-    io.phyCtrl.en_vtc         := ctrlReg(1)       // [1] Voltage temp compensation enable
     ctrlReg(8)                := io.ctrl.initDone // [8] Initialization status (RO)
     ctrlReg(9)                := trainingFSM.writeLevelDone // [9] Write leveling done
     ctrlReg(10)               := trainingFSM.readGateDone   // [10] Read gate training done
@@ -107,39 +87,28 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
 
     // Delay control register (0x04)
     val delayCtrlReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x04).init(0)
-    io.phyCtrl.ctrl.cdly_rst     := delayCtrlReg(0)  // [0] CDLY reset
-    io.phyCtrl.ctrl.cdly_inc     := delayCtrlReg(1)  // [1] CDLY increment
-    io.phyCtrl.ctrl.wlevel_en    := delayCtrlReg(2)  // [2] Write leveling enable
-    io.phyCtrl.ctrl.wlevel_strobe:= delayCtrlReg(3)  // [3] Write leveling trigger
-    io.phyCtrl.ctrl.dly_sel      := delayCtrlReg(16 to 23) // [16:23] Byte lane select
-    delayCtrlReg(24 to 31)       := trainingFSM.wlevelCounter.asBits.resize(8) // [24:31] Wlevel counter
+    io.phyCtrl.dly_sel      := delayCtrlReg(16 to 23) // [16:23] Byte lane select
+    io.phyCtrl.cdly_rst     := delayCtrlReg(0)  // [0] CDLY reset
+    io.phyCtrl.cdly_inc     := delayCtrlReg(1)  // [1] CDLY increment
+    delayCtrlReg(24 to 31)  := trainingFSM.wlevelCounter.asBits.resize(8) // [24:31] Wlevel counter
 
-    // Read delay control (0x08)
-    val readDelayReg = busCtrl.createWriteOnly(Bits(32 bits), 0x08)
-    io.phyCtrl.read.dq_rst      := readDelayReg(0)  // [0] Read DQ reset
-    io.phyCtrl.read.dq_inc      := readDelayReg(1)  // [1] Read DQ increment
-    io.phyCtrl.read.bitslip_rst := readDelayReg(2)  // [2] Bitslip reset
-    io.phyCtrl.read.bitslip     := readDelayReg(3)  // [3] Bitslip trigger
-
-    // Write delay control (0x0C)
-    val writeDelayReg = busCtrl.createWriteOnly(Bits(32 bits), 0x0C)
-    io.phyCtrl.write.dq_rst      := writeDelayReg(0) // [0] Write DQ reset
-    io.phyCtrl.write.dq_inc      := writeDelayReg(1) // [1] Write DQ increment
-    io.phyCtrl.write.dqs_rst     := writeDelayReg(2) // [2] Write DQS reset
-    io.phyCtrl.write.dqs_inc     := writeDelayReg(3) // [3] Write DQS increment
-    io.phyCtrl.write.bitslip_rst := writeDelayReg(4) // [4] Write bitslip reset
-    io.phyCtrl.write.bitslip     := writeDelayReg(5) // [5] Write bitslip trigger
+    // Data path control register (0x08)
+    val dataCtrlReg = busCtrl.createWriteOnly(Bits(32 bits), 0x08)
+    io.phyCtrl.dq_rst      := dataCtrlReg(0)  // [0] DQ reset
+    io.phyCtrl.dq_inc      := dataCtrlReg(1)  // [1] DQ increment
+    io.phyCtrl.bitslip_rst := dataCtrlReg(2)  // [2] Bitslip reset
+    io.phyCtrl.bitslip     := dataCtrlReg(3)  // [3] Bitslip trigger
 
     // Status registers
-    busCtrl.read(io.phyCtrl.half_sys8x_taps ## io.phyCtrl.ctrl.cdly_value, 0x10) // [0x10] Taps + CDLY value
-    busCtrl.read(io.phyCtrl.write.dqs_inc_count, 0x14) // [0x14] DQS increment count
+    busCtrl.read(io.phyCtrl.half_sys8x_taps ## io.phyCtrl.cdly_value, 0x10) // [0x10] Taps + CDLY value
+    busCtrl.read(io.phyCtrl.dqs_inc_count, 0x14) // [0x14] DQS increment count
     busCtrl.read(trainingFSM.readCalibShift.asBits.resize(16), 0x16) // [0x16-0x17] Read calibration shift
 
     // Configuration register (0x18)
     val configReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x18).init(0)
-    io.phyCtrl.phase.rd     := configReg(13 downto 12).asUInt // [1:0] Read phase
-    io.phyCtrl.phase.wr     := configReg(15 downto 14).asUInt // [3:2] Write phase
-    configReg(16)           := trainingFSM.calibDoneReg      // [16] Calibration done status
+    io.phyCtrl.rd_phase    := configReg(13 downto 12).asUInt // [1:0] Read phase
+    io.phyCtrl.wr_phase    := configReg(15 downto 14).asUInt // [3:2] Write phase
+    configReg(16)          := trainingFSM.calibDoneReg      // [16] Calibration done status
   }
 
   // Instantiate clock generation by serdes and delay.
@@ -151,10 +120,16 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     serdes.D := B"1010_1010"
 
     val delay = new ODELAYE3(delayType = "VARIABLE")
-    delay.RST := sysRst | io.ctrl.reset | io.phyCtrl.ctrl.cdly_rst
+    delay.RST := sysRst | io.ctrl.reset | io.phyCtrl.cdly_rst
     delay.CLK := sysClk
-    delay.EN_VTC := io.phyCtrl.en_vtc
-    delay.CE := io.phyCtrl.ctrl.cdly_inc
+    // EN_VTC now controlled by DFI interface:
+    // - Disabled during training phases
+    // - Enabled after calibration complete
+    delay.EN_VTC := io.dfi.update.ctrlupdAck &&
+      !(io.dfi.wrTraining.wrlvlEn.orR ||
+        io.dfi.rdTraining.rdlvlEn.orR ||
+        io.dfi.rdTraining.rdlvlGateEn.orR)
+    delay.CE := io.phyCtrl.cdly_inc
     delay.INC := True
     delay.ODATAIN := serdes.OQ
 
@@ -282,10 +257,10 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       // Get the input signal from the handler's sequence
       serdes.D      := handler.signalMappings(i).dfiSource
 
-      delay.RST     := io.ctrl.reset | io.phyCtrl.ctrl.cdly_rst | sysRst
+      delay.RST     := io.ctrl.reset | sysRst | io.phyCtrl.cdly_rst
       delay.CLK     := sysClk
-      delay.EN_VTC  := io.phyCtrl.en_vtc
-      delay.CE      := io.phyCtrl.ctrl.cdly_inc // Use the common command delay increment
+      delay.EN_VTC  := True // Always enabled after training
+      delay.CE      := io.phyCtrl.cdly_inc
       delay.INC     := True
       delay.ODATAIN := serdes.OQ
 
@@ -365,7 +340,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     // Generate timing signals from delay taps with proper synchronization
     val wrDataEnDelayed = RegNext(wrDelay.io.taps(safeWriteLatency)) init(False)
     dq_oe := RegNext(wrDataEnDelayed) init(False)  // Add extra register for better timing
-    dqs_oe := io.phyCtrl.ctrl.wlevel_en | dq_oe
+    dqs_oe := dq_oe // Simplified - DQS always follows DQ
 
     // Improved preamble/postamble generation with proper timing
     dqs_preamble := wrDelay.io.taps(safeWriteLatency - 1) & ~wrDataEnDelayed
@@ -382,14 +357,14 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val pattern = new DQSPattern
     pattern.io.preamble := dqs_preamble
     pattern.io.postamble := dqs_postamble
-    pattern.io.wlevel_en := io.phyCtrl.ctrl.wlevel_en
-    pattern.io.wlevel_strobe := io.phyCtrl.ctrl.wlevel_strobe
+    pattern.io.wlevel_en := io.dfi.wrTraining.wrlvlEn.orR
+    pattern.io.wlevel_strobe := io.dfi.wrTraining.wrlvlStrobe.orR
 
     // BitSlip for pattern alignment
     val bitslip = new BitSlip(8)
     bitslip.io.input := pattern.io.output
-    bitslip.io.rst := io.phyCtrl.write.bitslip_rst | sysRst
-    bitslip.io.slp := io.phyCtrl.write.bitslip
+    bitslip.io.rst := io.phyCtrl.bitslip_rst | sysRst
+    bitslip.io.slp := io.phyCtrl.bitslip
 
     //==========================================================================
     // DQS Output Path - Byte Lanes
@@ -409,10 +384,14 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       serdes.T      := ~delayLine.io.output
 
       // Configure delay line with proper reset and control signals
-      delay.RST     := sysRst | io.ctrl.reset | io.phyCtrl.write.dqs_rst
+      delay.RST     := sysRst | io.ctrl.reset
       delay.CLK     := sysClk
-      delay.EN_VTC  := io.phyCtrl.en_vtc
-      delay.CE      := io.phyCtrl.write.dqs_inc & io.phyCtrl.ctrl.dly_sel(i)
+      // EN_VTC follows same control logic as clockGen delay
+      delay.EN_VTC := io.dfi.update.ctrlupdAck &&
+        !(io.dfi.wrTraining.wrlvlEn.orR ||
+          io.dfi.rdTraining.rdlvlEn.orR ||
+          io.dfi.rdTraining.rdlvlGateEn.orR)
+      delay.CE      := io.phyCtrl.dq_inc & io.phyCtrl.dly_sel(i/8) // Proper flattened phyCtrl signals
       delay.INC     := True  // Always increment (decrement handled by reset+increment)
       delay.ODATAIN := serdes.OQ
 
@@ -454,8 +433,8 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     // Configure BitSlip for write data
     for((slip, data) <- wrBitslip.zip(wrData.asBools)) {
       slip.io.input := data.asBits #* 8
-      slip.io.rst := io.phyCtrl.write.bitslip_rst | sysRst
-      slip.io.slp := io.phyCtrl.write.bitslip
+      slip.io.rst := io.phyCtrl.bitslip_rst | sysRst
+      slip.io.slp := io.phyCtrl.bitslip
     }
 
     // Configure and connect DQ OSERDES to pads
@@ -485,10 +464,10 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     // Configure read path components
     for(((serdes, delay), i) <- rdIserdes.zip(rdDelay).zipWithIndex) {
       // Configure delay line with proper reset and control signals
-      delay.RST := sysRst | io.ctrl.reset | io.phyCtrl.read.dq_rst
+      delay.RST := sysRst | io.ctrl.reset | io.phyCtrl.dq_rst
       delay.CLK := sysClk
-      delay.EN_VTC := io.phyCtrl.en_vtc
-      delay.CE := io.phyCtrl.read.dq_inc && io.phyCtrl.ctrl.dly_sel(i/8)
+      delay.EN_VTC := True // Always enable VTC after calibration
+      delay.CE      := io.phyCtrl.dq_inc && io.phyCtrl.dly_sel(i/8)
       delay.INC := True  // Always increment (decrement handled by reset+increment)
       delay.IDATAIN := io.pads.dq(i)
 
@@ -565,7 +544,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     io.output := io.taps(ntaps - 1)
   }
 
-  // Enhanced Training FSM with PHY control integration - Fixed implementation
+  // Training FSM using flattened phyCtrl interface
   val trainingFSM = new Area {
     val initDoneReg = RegInit(False)
     val calibDoneReg = RegInit(False)
@@ -578,11 +557,15 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val readCalibShift = Reg(UInt(4 bits)) init(0)
     val eyeScanPhase   = Reg(UInt(2 bits)) init(0)
     val calibTimeout   = Reg(UInt(16 bits)) init(0)
-    val bestEyePhase   = Reg(UInt(2 bits)) init(1)  // Default to phase 1
-    val dqsIncCount    = Reg(UInt(9 bits)) init(0)  // Track DQS increment count
+    val bestEyePhase   = Reg(UInt(2 bits)) init(1)
+    val dqsIncCount    = Reg(UInt(9 bits)) init(0)
 
     // Connect to output interface
-    io.phyCtrl.write.dqs_inc_count := dqsIncCount
+    io.phyCtrl.dqs_inc_count := dqsIncCount
+
+    // Training control registers
+    val bitslipActive = RegInit(False)
+    val dqDelayInc = RegInit(False)
 
     val fsm = new StateMachine {
       val stateInit = new State with EntryPoint {
@@ -597,24 +580,14 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
           eyeScanPhase := 0
           bestEyePhase := 1
           dqsIncCount := 0
-
+          
           // Reset all control signals
-          io.phyCtrl.ctrl.wlevel_en := False
-          io.phyCtrl.ctrl.wlevel_strobe := False
-          io.phyCtrl.read.dq_rst := False
-          io.phyCtrl.read.dq_inc := False
-          io.phyCtrl.read.bitslip_rst := False
-          io.phyCtrl.read.bitslip := False
-          io.phyCtrl.write.dq_rst := False
-          io.phyCtrl.write.dq_inc := False
-          io.phyCtrl.write.dqs_rst := False
-          io.phyCtrl.write.dqs_inc := False
-          io.phyCtrl.write.bitslip_rst := False
-          io.phyCtrl.write.bitslip := False
-          io.phyCtrl.ctrl.cdly_rst := True  // Reset command delay
+          io.phyCtrl.cdly_rst := True
+          io.phyCtrl.dq_rst := True
+          io.phyCtrl.bitslip_rst := True
         }
         whenIsActive {
-          io.phyCtrl.ctrl.cdly_rst := False  // Release command delay reset
+          io.phyCtrl.cdly_rst := False  // Release command delay reset
           goto(stateWriteLeveling)
         }
       }
@@ -632,47 +605,31 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       val stateWriteLeveling: State = new State {
         onEntry {
           writeLevelDone := False
-          io.phyCtrl.ctrl.wlevel_en := True
-          io.phyCtrl.write.dqs_rst := True  // Reset DQS delay
+          // Write leveling control now managed directly
           wlevelCounter := 0
+          // Use DFI interface for write leveling
+          // Write data enable now managed internally
         }
         whenIsActive {
-          // Release DQS reset after one cycle
-          io.phyCtrl.write.dqs_rst := False
-
-          // Pulse wlevel_strobe periodically to increment counter
-          val strobeCounter = RegInit(U(0, 8 bits))
-          strobeCounter := strobeCounter + 1
-
-          // Generate strobe pulse every 16 cycles
-          io.phyCtrl.ctrl.wlevel_strobe := strobeCounter(3 downto 0).andR
-
-          // Increment wlevel counter on strobe
-          when(io.phyCtrl.ctrl.wlevel_strobe) {
+          // Use DFI wrdata_mask for leveling strobe
+          when(io.dfi.write.wr(0).wrdataMask(0)) {
             wlevelCounter := wlevelCounter + 1
-
-            // Also increment DQS delay on strobe
-            io.phyCtrl.write.dqs_inc := True
             dqsIncCount := dqsIncCount + 1
-          }.otherwise {
-            io.phyCtrl.write.dqs_inc := False
           }
 
-          // Check if we've reached the target tap count
-          // Typically half of the 8x system clock period
-          when(wlevelCounter >= 32) {  // Fixed value for reliable operation
+          when(wlevelCounter >= 32) {
             writeLevelDone := True
-            io.phyCtrl.ctrl.wlevel_en := False
-            io.phyCtrl.ctrl.wlevel_strobe := False
+            io.dfi.wrTraining.wrlvlEn := 0
+            io.dfi.write.wr(0).wrdataEn := False
             goto(stateReadGateTraining)
           }
 
           // Timeout handling
           calibTimeout := calibTimeout + 1
           when(calibTimeout === 0xFFFF) {
-            // Force completion on timeout
             writeLevelDone := True
-            io.phyCtrl.ctrl.wlevel_en := False
+            io.dfi.wrTraining.wrlvlEn := 0
+            io.dfi.write.wr(0).wrdataEn := False
             goto(stateReadGateTraining)
           }
         }
@@ -682,15 +639,15 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
         onEntry {
           readGateDone := False
           // Reset read path calibration
-          io.phyCtrl.read.dq_rst := True
-          io.phyCtrl.read.bitslip_rst := True
+          io.phyCtrl.dq_rst := True
+          io.phyCtrl.bitslip_rst := True
           readCalibShift := 0
           calibTimeout := 0
         }
         whenIsActive {
           // Release resets after one cycle
-          io.phyCtrl.read.dq_rst := False
-          io.phyCtrl.read.bitslip_rst := False
+          io.phyCtrl.dq_rst := False
+          io.phyCtrl.bitslip_rst := False
 
           // Pulse counter for timing control
           val pulseCounter = RegInit(U(0, 4 bits))
@@ -698,23 +655,23 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
 
           // Alternate between DQ delay increment and bitslip
           when(pulseCounter === 0) {
-            io.phyCtrl.read.dq_inc := True
-            io.phyCtrl.read.bitslip := False
+            io.phyCtrl.dq_inc := True
+            io.phyCtrl.bitslip := False
           }.elsewhen(pulseCounter === 8) {
-            io.phyCtrl.read.dq_inc := False
-            io.phyCtrl.read.bitslip := True
+            io.phyCtrl.dq_inc := False
+            io.phyCtrl.bitslip := True
             // Increment shift counter on bitslip
             readCalibShift := readCalibShift + 1
           }.otherwise {
-            io.phyCtrl.read.dq_inc := False
-            io.phyCtrl.read.bitslip := False
+            io.phyCtrl.dq_inc := False
+            io.phyCtrl.bitslip := False
           }
 
           // Check calibration completion with valid shift range
           when(readCalibShift === 7) {  // After testing all 8 possible shift positions
             readGateDone := True
-            io.phyCtrl.read.dq_inc := False
-            io.phyCtrl.read.bitslip := False
+            io.phyCtrl.dq_inc := False
+            io.phyCtrl.bitslip := False
             goto(stateReadEyeTraining)
           }
 
@@ -733,7 +690,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
           readEyeDone := False
           calibTimeout := 0
           eyeScanPhase := 0
-          io.phyCtrl.phase.rd := 0
+          io.phyCtrl.rd_phase := 0
 
           // Initialize best eye metrics
           val eyeQuality = Reg(Vec(UInt(8 bits), 4)) // Quality metric for each phase
@@ -748,12 +705,12 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
           // Change phase every 256 cycles to allow for stabilization
           when(calibTimeout(7 downto 0).andR) {
             eyeScanPhase := eyeScanPhase + 1
-            io.phyCtrl.phase.rd := eyeScanPhase
+            io.phyCtrl.rd_phase := eyeScanPhase
 
             // After scanning all 4 phases, select the best one
             when(eyeScanPhase === 3) {
               readEyeDone := True
-              io.phyCtrl.phase.rd := bestEyePhase  // Use the determined best phase
+              io.phyCtrl.rd_phase := bestEyePhase  // Flat phyCtrl signal
               goto(stateCalibrationDone)
             }
           }
@@ -762,7 +719,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
           when(calibTimeout === 0xFFFF) {
             // Force completion on timeout
             readEyeDone := True
-            io.phyCtrl.phase.rd := 1  // Default to phase 1 on timeout
+            io.phyCtrl.rd_phase := 1  // Flat phyCtrl signal
             goto(stateCalibrationDone)
           }
         }
@@ -772,11 +729,11 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
         onEntry {
           calibDoneReg := True
           // Finalize all control signals
-          io.phyCtrl.ctrl.cdly_rst := False
-          io.phyCtrl.read.dq_inc := False
-          io.phyCtrl.read.bitslip := False
-          io.phyCtrl.write.dqs_inc := False
-          io.phyCtrl.write.bitslip := False
+          io.phyCtrl.cdly_rst := False
+          io.phyCtrl.dq_inc := False
+          io.phyCtrl.bitslip := False
+          // DQS increment removed as unused
+          io.phyCtrl.bitslip := False
         }
         whenIsActive {
           goto(stateReady)
@@ -787,7 +744,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
         onEntry {
           initDoneReg := True
           io.ctrl.initDone := True
-          io.phyCtrl.en_vtc := True  // Enable voltage/temperature compensation
+          // VTC always enabled after calibration
         }
         whenIsActive {
           goto(stateIdle)
