@@ -81,16 +81,16 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val ctrlReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x00).init(0)
     io.ctrl.reset             := ctrlReg(0)       // [0] Global reset
     ctrlReg(8)                := io.ctrl.initDone // [8] Initialization status (RO)
-    ctrlReg(9)                := trainingFSM.writeLevelDone // [9] Write leveling done
-    ctrlReg(10)               := trainingFSM.readGateDone   // [10] Read gate training done
-    ctrlReg(11)               := trainingFSM.readEyeDone    // [11] Read eye training done
+    ctrlReg(9)                := trainingCtrl.writeLeveling.io.done // [9] Write leveling done
+    ctrlReg(10)               := trainingCtrl.readGate.io.done      // [10] Read gate training done
+    ctrlReg(11)               := trainingCtrl.readEye.io.done       // [11] Read eye training done
 
     // Delay control register (0x04)
     val delayCtrlReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x04).init(0)
     io.phyCtrl.dly_sel      := delayCtrlReg(16 to 23) // [16:23] Byte lane select
     io.phyCtrl.cdly_rst     := delayCtrlReg(0)  // [0] CDLY reset
     io.phyCtrl.cdly_inc     := delayCtrlReg(1)  // [1] CDLY increment
-    delayCtrlReg(24 to 31)  := trainingFSM.wlevelCounter.asBits.resize(8) // [24:31] Wlevel counter
+    delayCtrlReg(24 to 31)  := trainingCtrl.writeLeveling.io.cdlyCount.asBits.resize(8) // [24:31] Wlevel counter
 
     // Data path control register (0x08)
     val dataCtrlReg = busCtrl.createWriteOnly(Bits(32 bits), 0x08)
@@ -102,13 +102,13 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     // Status registers
     busCtrl.read(io.phyCtrl.half_sys8x_taps ## io.phyCtrl.cdly_value, 0x10) // [0x10] Taps + CDLY value
     busCtrl.read(io.phyCtrl.dqs_inc_count, 0x14) // [0x14] DQS increment count
-    busCtrl.read(trainingFSM.readCalibShift.asBits.resize(16), 0x16) // [0x16-0x17] Read calibration shift
+    busCtrl.read(trainingCtrl.readGate.io.shiftCounter.asBits.resize(16), 0x16) // [0x16-0x17] Read calibration shift
 
     // Configuration register (0x18)
     val configReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x18).init(0)
     io.phyCtrl.rd_phase    := configReg(13 downto 12).asUInt // [1:0] Read phase
     io.phyCtrl.wr_phase    := configReg(15 downto 14).asUInt // [3:2] Write phase
-    configReg(16)          := trainingFSM.calibDoneReg      // [16] Calibration done status
+    configReg(16)          := trainingCtrl.fsm.isActive(trainingCtrl.fsm.done) // [16] Calibration done status
   }
 
   // Instantiate clock generation by serdes and delay.
@@ -300,8 +300,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       io.output := reg
     } else {
       io.output := pattern
-    }
-  }
+        }
 
   val dqsPath = new Area {
     //==========================================================================
@@ -551,214 +550,123 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
   }
 
   // Training FSM using flattened phyCtrl interface
-  val trainingFSM = new Area {
-    val initDoneReg = RegInit(False)
-    val calibDoneReg = RegInit(False)
-    val writeLevelDone = RegInit(False)
-    val readGateDone = RegInit(False)
-    val readEyeDone = RegInit(False)
-
-    // Training control signals
-    val wlevelCounter = Reg(UInt(9 bits)) init(0)
-    val readCalibShift = Reg(UInt(4 bits)) init(0)
-    val eyeScanPhase   = Reg(UInt(2 bits)) init(0)
-    val calibTimeout   = Reg(UInt(16 bits)) init(0)
-    val bestEyePhase   = Reg(UInt(2 bits)) init(1)
-    val dqsIncCount    = Reg(UInt(9 bits)) init(0)
-
-    // Connect to output interface
-    io.phyCtrl.dqs_inc_count := dqsIncCount
-
-    // Training control registers
-    val bitslipActive = RegInit(False)
-    val dqDelayInc = RegInit(False)
-
-    val fsm = new StateMachine {
-      val stateInit = new State with EntryPoint {
-        onEntry {
-          initDoneReg := False
-          calibDoneReg := False
-          writeLevelDone := False
-          readGateDone := False
-          readEyeDone := False
-          wlevelCounter := 0
-          readCalibShift := 0
-          eyeScanPhase := 0
-          bestEyePhase := 1
-          dqsIncCount := 0
-          
-          // Reset all control signals
-          io.phyCtrl.cdly_rst := True
-          io.phyCtrl.dq_rst := True
-          io.phyCtrl.bitslip_rst := True
-        }
-        whenIsActive {
-          io.phyCtrl.cdly_rst := False  // Release command delay reset
-          goto(stateWriteLeveling)
-        }
-      }
-
-      val stateIdle: State = new State {
-        whenIsActive {
-          when(io.ctrl.reset) {
-            goto(stateInit)
-          }
-          // Reset timeout counters
-          calibTimeout := 0
-        }
-      }
-
-      val stateWriteLeveling: State = new State {
-        onEntry {
-          writeLevelDone := False
-          // Write leveling control now managed directly
-          wlevelCounter := 0
-          // Use DFI interface for write leveling
-          // Write data enable now managed internally
-        }
-        whenIsActive {
-          // Use DFI wrdata_mask for leveling strobe
-          when(io.dfi.write.wr(0).wrdataMask(0)) {
-            wlevelCounter := wlevelCounter + 1
-            dqsIncCount := dqsIncCount + 1
-          }
-
-          when(wlevelCounter >= 32) {
-            writeLevelDone := True
-            io.dfi.wrTraining.wrlvlEn := 0
-            io.dfi.write.wr(0).wrdataEn := False
-            goto(stateReadGateTraining)
-          }
-
-          // Timeout handling
-          calibTimeout := calibTimeout + 1
-          when(calibTimeout === 0xFFFF) {
-            writeLevelDone := True
-            io.dfi.wrTraining.wrlvlEn := 0
-            io.dfi.write.wr(0).wrdataEn := False
-            goto(stateReadGateTraining)
-          }
-        }
-      }
-
-      val stateReadGateTraining = new State {
-        onEntry {
-          readGateDone := False
-          // Reset read path calibration
-          io.phyCtrl.dq_rst := True
-          io.phyCtrl.bitslip_rst := True
-          readCalibShift := 0
-          calibTimeout := 0
-        }
-        whenIsActive {
-          // Release resets after one cycle
-          io.phyCtrl.dq_rst := False
-          io.phyCtrl.bitslip_rst := False
-
-          // Pulse counter for timing control
-          val pulseCounter = RegInit(U(0, 4 bits))
-          pulseCounter := pulseCounter + 1
-
-          // Alternate between DQ delay increment and bitslip
-          when(pulseCounter === 0) {
-            io.phyCtrl.dq_inc := True
-            io.phyCtrl.bitslip := False
-          }.elsewhen(pulseCounter === 8) {
-            io.phyCtrl.dq_inc := False
-            io.phyCtrl.bitslip := True
-            // Increment shift counter on bitslip
-            readCalibShift := readCalibShift + 1
-          }.otherwise {
-            io.phyCtrl.dq_inc := False
-            io.phyCtrl.bitslip := False
-          }
-
-          // Check calibration completion with valid shift range
-          when(readCalibShift === 7) {  // After testing all 8 possible shift positions
-            readGateDone := True
-            io.phyCtrl.dq_inc := False
-            io.phyCtrl.bitslip := False
-            goto(stateReadEyeTraining)
-          }
-
-          // Timeout handling
-          calibTimeout := calibTimeout + 1
-          when(calibTimeout === 0xFFFF) {
-            // Force completion on timeout
-            readGateDone := True
-            goto(stateReadEyeTraining)
-          }
-        }
-      }
-
-      val stateReadEyeTraining = new State {
-        onEntry {
-          readEyeDone := False
-          calibTimeout := 0
-          eyeScanPhase := 0
-          io.phyCtrl.rd_phase := 0
-
-          // Initialize best eye metrics
-          val eyeQuality = Reg(Vec(UInt(8 bits), 4)) // Quality metric for each phase
-          for(i <- 0 until 4) {
-            eyeQuality(i) init(0)
-          }
-        }
-        whenIsActive {
-          // Perform phase scanning with quality assessment
-          calibTimeout := calibTimeout + 1
-
-          // Change phase every 256 cycles to allow for stabilization
-          when(calibTimeout(7 downto 0).andR) {
-            eyeScanPhase := eyeScanPhase + 1
-            io.phyCtrl.rd_phase := eyeScanPhase
-
-            // After scanning all 4 phases, select the best one
-            when(eyeScanPhase === 3) {
-              readEyeDone := True
-              io.phyCtrl.rd_phase := bestEyePhase  // Flat phyCtrl signal
-              goto(stateCalibrationDone)
-            }
-          }
-
-          // Global timeout handling
-          when(calibTimeout === 0xFFFF) {
-            // Force completion on timeout
-            readEyeDone := True
-            io.phyCtrl.rd_phase := 1  // Flat phyCtrl signal
-            goto(stateCalibrationDone)
-          }
-        }
-      }
-
-      val stateCalibrationDone = new State {
-        onEntry {
-          calibDoneReg := True
-          // Finalize all control signals
-          io.phyCtrl.cdly_rst := False
-          io.phyCtrl.dq_inc := False
-          io.phyCtrl.bitslip := False
-          // DQS increment removed as unused
-          io.phyCtrl.bitslip := False
-        }
-        whenIsActive {
-          goto(stateReady)
-        }
-      }
-
-      val stateReady = new State {
-        onEntry {
-          initDoneReg := True
-          io.ctrl.initDone := True
-          // VTC always enabled after calibration
-        }
-        whenIsActive {
-          goto(stateIdle)
-        }
+  // Training Module Definitions
+  class TrainingController(config: DfiConfig) extends Area {
+    val io = new Bundle {
+      val dfi = slave(Dfi(config))
+      val phyCtrl = master(DfiPhyControlInterface(config))
+      val status = new Bundle {
+        val initDone = out(Bool())
       }
     }
 
-    // Connect calibration status to PHY control
-    io.phyCtrl.half_sys8x_taps := wlevelCounter
+    val writeLeveling = new WriteLevelingModule(config)
+    val readGate = new ReadGateModule(config)
+    val readEye = new ReadEyeModule(config)
+
+    writeLeveling.io.start := io.dfi.wrTraining.wrlvlEn.orR
+    readGate.io.start := io.dfi.rdTraining.rdlvlEn.orR
+    readEye.io.start := io.dfi.rdTraining.rdlvlGateEn.orR
+
+    io.phyCtrl.cdly_value := writeLeveling.io.cdlyCount
+    io.phyCtrl.dqs_inc_count := writeLeveling.io.dqsIncCount
+    
+    val fsm = new StateMachine {
+      val idle = new State with EntryPoint
+      val wrLevel = new State
+      val rdGate = new State
+      val rdEye = new State
+      val done = new State
+
+      idle.whenIsActive {
+        when(writeLeveling.io.start) { goto(wrLevel) }
+      }
+      wrLevel.whenIsActive {
+        when(writeLeveling.io.done) { goto(rdGate) }
+      rdGate.whenIsActive {
+        when(readGate.io.done) { goto(rdEye) }
+      }
+      rdEye.whenIsActive {
+        when(readEye.io.done) { goto(done) }
+      }
+      
+      done.whenIsActive {
+        io.status.initDone := True
+        goto(idle)
+      }
+    }
+    }
   }
+
+  class WriteLevelingModule(config: DfiConfig) extends Area {
+    val io = new Bundle {
+      val start = in(Bool())
+      val done = out(Bool())
+      val cdlyCount = out(UInt(9 bits))
+      val dqsIncCount = out(UInt(9 bits))
+    }
+
+    val counter = Reg(UInt(9 bits)) init(0)
+    val doneReg = RegInit(False)
+    
+    when(io.start) {
+      counter := counter + 1
+      doneReg := counter >= 32
+    }
+
+    io.cdlyCount := counter
+    io.dqsIncCount := counter
+    io.done := doneReg
+  }
+
+  class ReadGateModule(config: DfiConfig) extends Area {
+    val io = new Bundle {
+      val start = in(Bool())
+      val done = out(Bool())
+      val bitslip = out(Bool())
+      val dq_inc = out(Bool())
+    }
+
+    val shiftCounter = Reg(UInt(4 bits)) init(0)
+    val pulseCounter = Reg(UInt(4 bits)) init(0)
+    
+    pulseCounter := pulseCounter + 1
+    
+    // Alternate between dq_inc and bitslip
+    io.dq_inc := pulseCounter === 0
+    io.bitslip := pulseCounter === 8
+    
+    when(io.bitslip) {
+      shiftCounter := shiftCounter + 1
+    }
+    
+    io.done := shiftCounter === 7
+  }
+
+  class ReadEyeModule(config: DfiConfig) extends Area {
+    val io = new Bundle {
+      val start = in(Bool())
+      val done = out(Bool())
+      val phase = out(UInt(2 bits))
+    }
+
+    val timeout = Reg(UInt(16 bits))
+    val phaseReg = Reg(UInt(2 bits))
+    
+    timeout := timeout + 1
+    
+    when(timeout(7 downto 0).andR) {
+      phaseReg := phaseReg + 1
+    }
+    
+    io.phase := phaseReg
+    io.done := phaseReg === 3
+  }
+
+
+  // Instantiate TrainingController
+  val trainingCtrl = new TrainingController(dfiConfig)
+  trainingCtrl.io.dfi <> io.dfi
+  trainingCtrl.io.phyCtrl <> io.phyCtrl
+  trainingCtrl.io.status.initDone := io.ctrl.initDone
 }
