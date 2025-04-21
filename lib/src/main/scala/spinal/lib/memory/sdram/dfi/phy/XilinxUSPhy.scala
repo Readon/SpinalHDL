@@ -334,21 +334,19 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
 
     // Delay line for timing generation - add extra taps for safety
     val delayTaps = safeWriteLatency + 3
-    val wrDelay = new TappedDelayLine(1, delayTaps)
-    wrDelay.io.input := wrDataEn
+    val wrDelay = History(wrDataEn, delayTaps)
 
     // Generate timing signals from delay taps with proper synchronization
-    val wrDataEnDelayed = RegNext(wrDelay.io.taps(safeWriteLatency)) init(False)
+    val wrDataEnDelayed = RegNext(wrDelay(safeWriteLatency)) init(False)
     dq_oe := RegNext(wrDataEnDelayed) init(False)  // Add extra register for better timing
     dqs_oe := dq_oe // Simplified - DQS always follows DQ
 
     // Improved preamble/postamble generation with proper timing
-    dqs_preamble := wrDelay.io.taps(safeWriteLatency - 1) & ~wrDataEnDelayed
-    dqs_postamble := wrDelay.io.taps(safeWriteLatency + 1) & ~wrDataEnDelayed
+    dqs_preamble := wrDelay(safeWriteLatency - 1) & ~wrDataEnDelayed
+    dqs_postamble := wrDelay(safeWriteLatency + 1) & ~wrDataEnDelayed
 
     // Delay line for output enable
-    val delayLine = new TappedDelayLine(1, 1)
-    delayLine.io.input := dqs_preamble | dqs_postamble | dqs_oe
+    val delayLine = History(dqs_preamble | dqs_postamble | dqs_oe, 1)
 
     //==========================================================================
     // DQS Pattern Generation
@@ -359,12 +357,6 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     pattern.io.postamble := dqs_postamble
     pattern.io.wlevel_en := io.dfi.wrTraining.wrlvlEn.orR
     pattern.io.wlevel_strobe := io.dfi.wrTraining.wrlvlStrobe.orR
-
-    // BitSlip for pattern alignment
-    val bitslip = new BitSlip(8)
-    bitslip.io.input := pattern.io.output
-    bitslip.io.rst := io.phyCtrl.bitslip_rst | sysRst
-    bitslip.io.slp := io.phyCtrl.bitslip
 
     //==========================================================================
     // DQS Output Path - Byte Lanes
@@ -380,8 +372,8 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       serdes.RST    := io.ctrl.reset | sysRst
       serdes.CLK    := io.clk4x
       serdes.CLKDIV := sysClk
-      serdes.D      := bitslip.io.output
-      serdes.T      := ~delayLine.io.output
+      serdes.D      := BitSlip(pattern.io.output, 2, io.phyCtrl.bitslip)
+      serdes.T      := ~delayLine.last
 
       // Configure delay line with proper reset and control signals
       delay.RST     := sysRst | io.ctrl.reset
@@ -418,13 +410,13 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     // DFI Interface Signals
     //==========================================================================
     // Write path signals from DFI interface
-    val wrData = io.dfi.write.wr(0).wrdata
+    val wrData = io.dfi.write.wr.map(_.wrdata)
     val wrDataEn = io.dfi.write.wr(0).wrdataEn
     val wrDataMask = io.dfi.write.wr(0).wrdataMask
     val wrDataCsN = if(dfiConfig.useWrdataCsN) Some(io.dfi.write.wr(0).wrdataCsN) else None
 
     // Read path signals to DFI interface
-    val rdData = io.dfi.read.rd(0).rddata
+    val rdData = io.dfi.read.rd.map(_.rddata)
 
     // Connect write data enable to dqsPath for DQS timing generation
     dqsPath.wrDataEn := wrDataEn
@@ -433,20 +425,12 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     // Write Path (DQ)
     //==========================================================================
     // Write data serialization components
-    val wrBitslip = Seq.fill(dfiConfig.dataWidth)(new BitSlip(8))
     val dqOserdes = Seq.fill(dfiConfig.dataWidth)(new OSERDESE3())
 
-    // Configure BitSlip for write data
-    for((slip, data) <- wrBitslip.zip(wrData.asBools)) {
-      slip.io.input := data.asBits #* 8
-      slip.io.rst := io.phyCtrl.bitslip_rst | sysRst
-      slip.io.slp := io.phyCtrl.bitslip
-    }
-
     // Configure and connect DQ OSERDES to pads
-    for(((osd, slip), i) <- dqOserdes.zip(wrBitslip).zipWithIndex) {
+    for(((osd, data), i) <- dqOserdes.zip(wrData).zipWithIndex) {
       // Configure OSERDES
-      osd.D := slip.io.output
+      osd.D := BitSlip(data, 2, io.phyCtrl.bitslip)
       osd.CLK := io.clk4x
       osd.CLKDIV := sysClk
       osd.RST := io.ctrl.reset | sysRst
@@ -463,7 +447,6 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     // Read Path (DQ)
     //==========================================================================
     // Read data deserialization components
-    val rdBitslip = Seq.fill(dfiConfig.dataWidth)(new BitSlip(8))
     val rdIserdes = Seq.fill(dfiConfig.dataWidth)(new ISERDESE3())
     val rdDelay = Seq.fill(dfiConfig.dataWidth)(new IDELAYE3(refClkFrequency = 200))
 
@@ -483,71 +466,23 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       serdes.CLKDIV := sysClk
       serdes.RST := io.ctrl.reset | sysRst
       serdes.D := delay.DATAOUT
-
-      // Connect to bitslip
-      rdBitslip(i).io.input := serdes.Q
     }
 
     // Connect read data to DFI interface
-    for((slip, data) <- rdBitslip.zip(rdData.asBools)) {
-      data := slip.io.output(0)
+    for((serdes, data) <- rdIserdes.zip(rdData)) {
+      data := BitSlip(serdes.Q, 2, io.phyCtrl.bitslip)
     }
   }
 
 
   // BitSlip module implementation - Fixed implementation
-  class BitSlip(width: Int) extends Component {
-    val io = new Bundle {
-      val input = in Bits(width bits)
-      val output = out Bits(width bits)
-      val rst = in Bool()
-      val slp = in Bool()
+  object BitSlip {
+    def apply[T <: Data](that: T, length: Int, slip: Bool, when: Bool = null, init: T = null): T = {
+      val max = that.getBitsWidth*(length - 1) + 1
+      val ptr = Counter(max, inc=slip) init(max - 2)
+      val hist = History(that, length, when, init)
+      hist.asBits(ptr, that.getBitsWidth bits).asInstanceOf[T]
     }
-
-    // Create a shift register that captures input on each slip pulse
-    val shiftReg = Reg(Vec(Bits(width bits), width))
-    val ptr = Counter(width, inc=io.slp)
-
-    // Initialize the shift register
-    for(i <- 0 until width) {
-      shiftReg(i) init(B(0, width bits))
-    }
-
-    // Update shift register on slip pulse
-    when(io.slp) {
-      for(i <- 0 until width-1) {
-        shiftReg(i+1) := shiftReg(i)
-      }
-      shiftReg(0) := io.input
-    }
-
-    // Reset handling
-    when(io.rst) {
-      ptr.clear()
-      for(i <- 0 until width) {
-        shiftReg(i) := B(0, width bits)
-      }
-    }
-
-    // Output is selected based on pointer value
-    io.output := shiftReg(ptr.value)
-  }
-
-  // TappedDelayLine module implementation
-  class TappedDelayLine(width: Int, ntaps: Int) extends Component {
-    val io = new Bundle {
-      val input = in Bool()
-      val taps = out Vec(Bool(), ntaps)
-      val output = out Bool()
-    }
-
-    val delayLine = Vec(Reg(Bool()) init(False), ntaps)
-    delayLine(0) := io.input
-    for(i <- 1 until ntaps) {
-      delayLine(i) := delayLine(i-1)
-    }
-    io.taps := delayLine
-    io.output := io.taps(ntaps - 1)
   }
 
   // Training FSM using flattened phyCtrl interface
