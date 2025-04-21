@@ -363,7 +363,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     //==========================================================================
     // DQS OSERDES for byte lanes with delay
     val dqsWidth = io.pads.dqs_p.getWidth
-    val oserdesVec = Seq.fill(dqsWidth)(new OSERDESE3())
+    val oserdesVec = Seq.fill(dqsWidth)(new OSERDESE3(hasTristate=true))
     val odelayVec = Seq.fill(dqsWidth)(new ODELAYE3(delayType="VARIABLE", refClkFrequency = 200))
 
     // Configure and connect DQS OSERDES for each byte lane
@@ -388,18 +388,17 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       delay.ODATAIN := serdes.OQ
 
       // Connect differential or single-ended buffer based on dqsType and dataRate
-      if(dfiConfig.sdram.generation.dataRate > 1) {
-        if(dfiConfig.sdram.generation.dqsType == DqsType.Differential) {
-          val buf = new IOBUFDSE3()
-          buf.I := delay.DATAOUT
-          buf.T := serdes.T_OUT
+      assert(dfiConfig.sdram.generation.dataRate > 1, "PHY do not support signal data rate.")
+      if(dfiConfig.sdram.generation.dqsType == DqsType.Differential) {
+        val buf = new IOBUFDSE3()
+        buf.I := delay.DATAOUT
+        buf.T := serdes.T_OUT
 
-          // Connect to pads
-          io.pads.dqs_p(i) := buf.IO
-          io.pads.dqs_n(i) := buf.IOB
-        } else {
-          io.pads.dqs_p(i) := delay.DATAOUT
-        }
+        // Connect to pads
+        io.pads.dqs_p(i) := buf.IO
+        io.pads.dqs_n(i) := buf.IOB
+      } else {
+        io.pads.dqs_p(i) := delay.DATAOUT
       }
     }
   }
