@@ -56,7 +56,7 @@ case class ODELAYE3(
   require(Set("NONE", "MASTER", "SLAVE").contains(cascade), "Invalid cascade mode (must be NONE, MASTER or SLAVE)")
   require(Set("TIME", "COUNT").contains(delayFormat), "delayFormat must be TIME or COUNT")
   require(Set("FIXED", "VARIABLE", "VAR_LOAD").contains(delayType), "delayType must be FIXED, VARIABLE or VAR_LOAD")
-  require(Set("ASYNC", "SYNC").contains(updateMode), "updateMode must be ASYNC or SYNC")
+  require(Set("ASYNC", "SYNC", "MANUAL").contains(updateMode), "updateMode must be ASYNC or SYNC")
   val generic = new Generic {
     val CASCADE = cascade
     val DELAY_FORMAT = delayFormat
@@ -78,7 +78,8 @@ case class ODELAYE3(
 
   // Control signals
   val CE = in Bool ()
-  val RST = in Bool ()
+  val RST = in Bool ()  
+  val EN_VTC = in Bool ()
 
   // Conditionally generated cascaded ports
   val CASC_OUT = (cascade != "NONE") generate out Bool ()
@@ -86,11 +87,10 @@ case class ODELAYE3(
   val CASC_RETURN = (cascade != "NONE") generate in Bool ()
 
   // Delay control (conditionally generated)
+  val INC = (delayType != "FIXED") generate in Bool ()
   val CNTVALUEOUT = (delayType != "FIXED") generate out UInt (9 bits)
   val CNTVALUEIN = (delayType != "FIXED") generate in UInt (9 bits)
-  val INC = (delayType != "FIXED") generate in Bool ()
   val LOAD = (delayType == "VAR_LOAD") generate in Bool ()
-  val EN_VTC = (delayType == "FIXED") generate in Bool ()
 }
 
 /** Enhanced IDELAYE3 with cascading support */
@@ -108,7 +108,7 @@ case class IDELAYE3(
   require(Set("NONE", "MASTER", "SLAVE").contains(cascade), "Invalid cascade mode (must be NONE, MASTER or SLAVE)")
   require(Set("TIME", "COUNT").contains(delayFormat), "delayFormat must be TIME or COUNT")
   require(Set("FIXED", "VARIABLE", "VAR_LOAD").contains(delayType), "delayType must be FIXED, VARIABLE or VAR_LOAD")
-  require(Set("ASYNC", "SYNC").contains(updateMode), "updateMode must be ASYNC or SYNC")
+  require(Set("ASYNC", "SYNC", "MANUAL").contains(updateMode), "updateMode must be ASYNC or SYNC")
   val generic = new Generic {
     val CASCADE = cascade
     val DELAY_FORMAT = delayFormat
@@ -132,13 +132,13 @@ case class IDELAYE3(
   // Control signals
   val CE = in Bool ()
   val RST = in Bool ()
+  val EN_VTC = in Bool ()
 
   // Delay control (conditionally generated)
   val CNTVALUEOUT = (delayType != "FIXED") generate out UInt (9 bits)
   val CNTVALUEIN = (delayType != "FIXED") generate in UInt (9 bits)
   val INC = (delayType != "FIXED") generate in Bool ()
   val LOAD = (delayType == "VAR_LOAD") generate in Bool ()
-  val EN_VTC = (delayType == "FIXED") generate in Bool ()
 
   // Cascade signals (generated when cascade != "NONE")
   val CASC_OUT = (cascade != "NONE") generate out Bool ()
