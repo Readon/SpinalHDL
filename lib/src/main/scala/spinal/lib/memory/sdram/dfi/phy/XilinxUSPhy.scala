@@ -308,42 +308,28 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     // DQS Timing Control
     //==========================================================================
     // Control signals
-    val dqs_preamble = Reg(Bool()) init(False)
-    val dqs_postamble = Reg(Bool()) init(False)
-    val dqs_oe = Reg(Bool()) init(False)
-    val dq_oe = Reg(Bool()) init(False)  // Output enable for DQ signals
+    val dqs_preamble = Bool()
+    val dqs_postamble = Bool()
+    val dqs_oe = Bool()
+    val dq_oe = Bool()  // Output enable for DQ signals
 
     // Write data enable from DFI interface - connected from dataPath
-    val wrDataEn = Reg(Bool()) init(False)
+    val wrDataEn = Bool()
 
     //==========================================================================
     // Write Latency and Timing Generation
     //==========================================================================
-    // Write latency calculation with fixed compensation
-    val writeCompensation = 2  // Fixed compensation value for reliable operation
-
-    // Calculate base latency from DFI configuration
-    // If tPhyWrLat is not available, use a safe default value
-    val baseLatency = dfiConfig.timeConfig.tPhyWrLat
-
-    // Apply DDR write latency compensation and add fixed compensation
-    val writeLatency = baseLatency - dfiConfig.sdram.ddrWrLat + writeCompensation
-
     // Ensure writeLatency is at least 3 for proper preamble/postamble
-    val safeWriteLatency = Math.max(3, writeLatency)
-
-    // Delay line for timing generation - add extra taps for safety
-    val delayTaps = safeWriteLatency + 3
-    val wrDelay = History(wrDataEn, delayTaps)
+    val safeWriteLatency = Math.ceil(dfiConfig.sdram.ddrWrLat / dfiConfig.frequencyRatio).toInt - 1
 
     // Generate timing signals from delay taps with proper synchronization
-    val wrDataEnDelayed = RegNext(wrDelay(safeWriteLatency)) init(False)
-    dq_oe := RegNext(wrDataEnDelayed) init(False)  // Add extra register for better timing
-    dqs_oe := dq_oe // Simplified - DQS always follows DQ
+    val wrDataEnDelayed = History(wrDataEn, safeWriteLatency + 2)
+    dq_oe := wrDataEnDelayed(safeWriteLatency)  // Add extra register for better timing
+    dqs_oe := Mux(io.dfi.wrTraining.wrlvlEn.orR, True, dq_oe) // Simplified - DQS always follows DQ
 
     // Improved preamble/postamble generation with proper timing
-    dqs_preamble := wrDelay(safeWriteLatency - 1) & ~wrDataEnDelayed
-    dqs_postamble := wrDelay(safeWriteLatency + 1) & ~wrDataEnDelayed
+    dqs_preamble := wrDataEnDelayed(safeWriteLatency - 1) & ~wrDataEnDelayed(safeWriteLatency)
+    dqs_postamble := wrDataEnDelayed(safeWriteLatency + 1) & ~wrDataEnDelayed(safeWriteLatency)
 
     // Delay line for output enable
     val delayLine = History(dqs_preamble | dqs_postamble | dqs_oe, 1)
@@ -410,7 +396,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     //==========================================================================
     // Write path signals from DFI interface
     val wrData = io.dfi.write.wr.map(_.wrdata)
-    val wrDataEn = io.dfi.write.wr(0).wrdataEn
+    val wrDataEn = io.dfi.write.wr.map(_.wrdataEn).orR
     val wrDataMask = io.dfi.write.wr(0).wrdataMask
     val wrDataCsN = if(dfiConfig.useWrdataCsN) Some(io.dfi.write.wr(0).wrdataCsN) else None
 
