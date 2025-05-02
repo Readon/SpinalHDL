@@ -105,7 +105,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     // Status registers
     busCtrl.read(io.phyCtrl.half_sys8x_taps ## io.phyCtrl.cdly_value, 0x10) // [0x10] Taps + CDLY value
     busCtrl.read(io.phyCtrl.dqs_inc_count, 0x14) // [0x14] DQS increment count
-    busCtrl.read(trainingCtrl.readGate.io.shiftCounter.asBits.resize(16), 0x16) // [0x16-0x17] Read calibration shift
+    // busCtrl.read(trainingCtrl.readGate.io.shiftCounter.asBits.resize(16), 0x16) // [0x16-0x17] Read calibration shift
 
     // Configuration register (0x18)
     val configReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x18).init(0)
@@ -478,23 +478,25 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
   }
 
   // BitSlip module implementation - Fixed implementation
-  class BitSlip(width: Int) extends Component {
+  object BitSlip {
+    def apply[T <: Data](that: T, length: Int, slip: Bool, when: Bool = null, init: T = null): T = {
+      val max = that.getBitsWidth*(length - 1) + 1
+      val ptr = Counter(max, inc=slip) init(max - 2)
+      val hist = History(that, length, when, init)
+      hist.asBits(ptr, that.getBitsWidth bits).asInstanceOf[T]
+    }
+  }
+
+  // Training FSM using flattened phyCtrl interface
+  // Training Module Definitions
+  class TrainingController(config: DfiConfig) extends Area {
     val io = new Bundle {
-      val input = in Bits (width bits)
-      val output = out Bits (width bits)
-      val rst = in Bool ()
-      val slp = in Bool ()
+      val dfi = slave(Dfi(config))
+      val status = new Bundle {
+        val initDone = out(Bool())
+      }
     }
-
-    // Create a shift register that captures input on each slip pulse
-    val shiftReg = Reg(Vec(Bits(width bits), width))
-    val ptr = Counter(width, inc = io.slp)
-
-    // Initialize the shift register
-    for (i <- 0 until width) {
-      shiftReg(i) init (B(0, width bits))
-    }
-
+    
     val writeLeveling = new WriteLevelingModule(config)
     val readGate = new ReadGateModule(config)
     val readEye = new ReadEyeModule(config)
@@ -502,8 +504,8 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     readGate.io.start := io.dfi.rdTraining.rdlvlEn.orR
     readEye.io.start := io.dfi.rdTraining.rdlvlGateEn.orR
 
-    io.phyCtrl.cdly_value := writeLeveling.io.cdlyCount
-    io.phyCtrl.dqs_inc_count := writeLeveling.io.dqsIncCount
+    // io.phyCtrl.cdly_value := writeLeveling.io.cdlyCount
+    // io.phyCtrl.dqs_inc_count := writeLeveling.io.dqsIncCount
 
     val fsm = new StateMachine {
       val idle = new State with EntryPoint
@@ -600,6 +602,5 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
   // Instantiate TrainingController
   val trainingCtrl = new TrainingController(dfiConfig)
   trainingCtrl.io.dfi <> io.dfi
-  trainingCtrl.io.phyCtrl <> io.phyCtrl
   trainingCtrl.io.status.initDone := io.ctrl.initDone
 }
