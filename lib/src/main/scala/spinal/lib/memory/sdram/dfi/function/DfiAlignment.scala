@@ -7,7 +7,7 @@ case class CAAlignment(config: DfiConfig) extends Component {
   val io = new Bundle {
     val cmd = Vec(slave(Flow(DfiCmd(config))), config.frequencyRatio)
     val address = Vec(slave(Flow(DfiAddr(config))), config.frequencyRatio)
-    val cke = in Vec (Bits(config.chipSelectNumber bits), config.frequencyRatio)
+    val cke = in Vec(Bits(config.chipSelectNumber bits), config.frequencyRatio)
     val output = master(DfiControlInterface(config))
   }
   // cke,reserN,odt
@@ -21,7 +21,7 @@ case class CAAlignment(config: DfiConfig) extends Component {
   // CRC data. With CRC enabled, the MC may need to extend ODT.
   if (config.useOdt) io.output.odt.clearAll()
 
-  // cmd
+  // Initialize command signals based on config
   if (config.useAckN) io.output.actN := Bits(widthOf(io.output.actN) bits).setAll()
   io.output.csN := Bits(widthOf(io.output.csN) bits).setAll()
   io.output.rasN := Bits(widthOf(io.output.rasN) bits).setAll()
@@ -29,7 +29,7 @@ case class CAAlignment(config: DfiConfig) extends Component {
   io.output.weN := Bits(widthOf(io.output.weN) bits).setAll()
   if (config.useCid) io.output.cid := Bits(widthOf(io.output.cid) bits).clearAll()
 
-  // address
+  // Initialize address signals
   if (config.useBg) io.output.bg := Bits(widthOf(io.output.bg) bits).assignDontCare()
   io.output.bank := Bits(widthOf(io.output.bank) bits).clearAll()
   io.output.address := Bits(widthOf(io.output.address) bits).clearAll()
@@ -58,12 +58,13 @@ case class CAAlignment(config: DfiConfig) extends Component {
 
 case class RdAlignment(config: DfiConfig) extends Component {
   val io = new Bundle {
-    val phaseClear = in Bool ()
-    val inputEn = in Vec (Bool(), config.frequencyRatio)
+    val phaseClear = in Bool()
+    val inputEn = in Vec(Bool(), config.frequencyRatio)
     val input = Vec(master(Stream(Fragment(DfiRdData(config)))), config.frequencyRatio)
     val inputCs = config.useRddataCsN generate Vec(slave(Flow(DfiReadCs(config))), config.frequencyRatio)
     val output = master(DfiReadInterface(config))
   }
+
   val dfiRdCs = config.useRddataCsN generate Vec(out(DfiRdCs(config)), config.frequencyRatio)
   val dfiRd = Vec(DfiRd(config), config.frequencyRatio)
   io.output.rden := io.inputEn
@@ -72,6 +73,7 @@ case class RdAlignment(config: DfiConfig) extends Component {
 
   val rdDataTemp = Vec(Stream(Fragment(DfiRdData(config))), config.frequencyRatio)
   rdDataTemp.foreach(_.last.clear())
+
   for (i <- 0 until (config.frequencyRatio)) {
     rdDataTemp(i).valid := dfiRd(i).rddataValid
     rdDataTemp(i).rdData.assignDontCare()
@@ -96,11 +98,13 @@ case class RdAlignment(config: DfiConfig) extends Component {
         .resized
     }
   }
+
   val rdDataFifos = for (i <- 0 until (config.frequencyRatio)) yield new Area {
     val rdDataFifo = new StreamFifo(Fragment(DfiRdData(config)), config.beatCount + 2)
     rdDataFifo.io.flush.clear()
     rdDataFifo.io.flush.setWhen(io.phaseClear)
   }
+
   val readyForPop = Mux(rdDataFifos.map(_.rdDataFifo.io.occupancy =/= 0).andR, io.input.map(_.ready).orR, False)
 
   for (i <- 0 until (config.frequencyRatio)) {
@@ -126,6 +130,7 @@ case class WrAlignment(config: DfiConfig) extends Component {
     val input = Vec(slave(Flow(DfiWrData(config))), config.frequencyRatio)
     val output = master(DfiWriteInterface(config))
   }
+
   val frequencyRatio = config.frequencyRatio
   val timeConfig = config.timeConfig
 
