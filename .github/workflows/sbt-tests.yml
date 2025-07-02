@@ -1,3 +1,5 @@
+# 可复用工作流：SBT测试套件
+# 这个工作流被其他工作流调用，执行完整的SpinalHDL编译和测试流程
 name: Run sbt tests
 on:
   workflow_call:
@@ -15,153 +17,200 @@ on:
         required: true
         type: string
 
+# 定义并行执行的测试任务组
 jobs:
+  # ========== 编译阶段 ==========
+  # 这是整个测试流程的基础，所有其他测试都依赖于此阶段的编译产物
   compile:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+    runs-on: ubuntu-latest                                    # 运行环境：Ubuntu最新版
+    timeout-minutes: 90                                      # 超时限制：90分钟
     container:
-      image: ghcr.io/jaynerlin/spinalhdl:${{ inputs.verilator_version }}
+      # 使用纯净的基础镜像（仅包含Verilator和构建工具，不包含预编译的SpinalHDL）
+      # 这确保测试的是当前分支的代码，而不是镜像中预存的master分支代码
+      image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
     steps:
+    # 步骤1：签出当前分支/PR的源代码
     - uses: actions/checkout@v3
+    # 步骤2：获取Git子模块（如果项目依赖外部子模块）
     - name: Get submodules
       shell: bash
       run: git submodule update --init --recursive
+    # 步骤3：编译主要源码
+    # ++${{ inputs.scala_version }} 指定使用传入的Scala版本进行编译
     - run: sbt ++${{ inputs.scala_version }} compile
+    # 步骤4：编译测试代码
     - run: sbt ++${{ inputs.scala_version }} Test/compile
+    # 步骤5：缓存编译产物
+    # 将编译结果保存到GitHub Actions缓存中，供后续测试任务复用
+    # 缓存键包含运行环境、提交SHA和Verilator版本，确保缓存的精确匹配
     - uses: actions/cache/save@v3
       with:
         path: |
           **/
         key: ${{ inputs.runner_os }}-compiled-${{ inputs.github_sha }}-${{ inputs.verilator_version }}
 
+  # ========== IDSL插件测试 ==========
+  # 测试SpinalHDL的Scala编译器插件功能
   idslplugin-test:
-    needs: compile
+    needs: compile                                           # 依赖编译阶段完成
     runs-on: ubuntu-latest
     timeout-minutes: 90
     container:
-      image: ghcr.io/jaynerlin/spinalhdl:${{ inputs.verilator_version }}
+      image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
     steps:
     - uses: actions/checkout@v3
+    # 恢复编译阶段缓存的编译产物，避免重复编译
     - uses: ./.github/actions/get-compiled
+    # 运行IDSL插件的单元测试
     - run: sbt ++${{ inputs.scala_version }} idslplugin/test
 
+  # ========== IDSL载荷测试 ==========
+  # 测试IDSL相关的载荷处理功能
   idslpayload-test:
     needs: compile
     runs-on: ubuntu-latest
     timeout-minutes: 90
     container:
-      image: ghcr.io/jaynerlin/spinalhdl:${{ inputs.verilator_version }}
+      image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 运行IDSL载荷相关的测试
     - run: sbt ++${{ inputs.scala_version }} idslpayload/test
 
+  # ========== 核心功能测试 ==========
+  # 测试SpinalHDL的核心语言功能（排除形式化验证和PSL测试）
   core-test:
     needs: compile
     runs-on: ubuntu-latest
     timeout-minutes: 90
     container:
-      image: ghcr.io/jaynerlin/spinalhdl:${{ inputs.verilator_version }}
+      image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 运行核心测试，但排除形式化验证标签(-l spinal.tester.formal)和PSL标签(-l spinal.tester.psl)
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.core.* -- -l spinal.tester.formal -l spinal.tester.psl'
 
+  # ========== 核心形式化验证测试 ==========
+  # 专门测试SpinalHDL核心功能的形式化验证特性
   core-formal:
     needs: compile
     runs-on: ubuntu-latest
     timeout-minutes: 90
     container:
-      image: ghcr.io/jaynerlin/spinalhdl:${{ inputs.verilator_version }}
+      image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 仅运行带有形式化验证标签(-n spinal.tester.formal)的测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.core.* -- -n spinal.tester.formal'
 
+  # ========== 核心PSL测试 ==========
+  # 测试Property Specification Language (PSL) 相关功能
   core-psl:
     needs: compile
     runs-on: ubuntu-latest
     timeout-minutes: 90
     container:
-      image: ghcr.io/jaynerlin/spinalhdl:${{ inputs.verilator_version }}
+      image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 仅运行带有PSL标签(-n spinal.tester.psl)的测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.core.* -- -n spinal.tester.psl'
 
+  # ========== 仿真后端测试 ==========
+  # 测试SpinalHDL的仿真功能，这是当前修复Verilator兼容性的关键测试
   sim-test:
     needs: compile
     runs-on: ubuntu-latest
     timeout-minutes: 90
     container:
-      image: ghcr.io/jaynerlin/spinalhdl:${{ inputs.verilator_version }}
+      image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 运行仿真模块的测试，这将验证VerilatorBackend等仿真相关代码
+    # 这是验证Verilator 5+兼容性修复是否成功的关键测试
     - run: sbt ++${{ inputs.scala_version }} sim/test
 
+  # ========== 测试器功能测试 ==========
+  # 测试SpinalHDL测试框架本身的功能（排除形式化验证和PSL）
   tester-test:
     needs: compile
     runs-on: ubuntu-latest
     timeout-minutes: 90
     container:
-      image: ghcr.io/jaynerlin/spinalhdl:${{ inputs.verilator_version }}
+      image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 运行测试器相关的测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.tester.* -- -l spinal.tester.formal -l spinal.tester.psl'
 
+  # ========== 测试器形式化验证测试 ==========
   tester-formal:
     needs: compile
     runs-on: ubuntu-latest
     timeout-minutes: 90
     container:
-      image: ghcr.io/jaynerlin/spinalhdl:${{ inputs.verilator_version }}
+      image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 运行测试器的形式化验证测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.tester.* -- -n spinal.tester.formal'
 
+  # ========== 测试器PSL测试 ==========
   tester-psl:
     needs: compile
     runs-on: ubuntu-latest
     timeout-minutes: 90
     container:
-      image: ghcr.io/jaynerlin/spinalhdl:${{ inputs.verilator_version }}
+      image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 运行测试器的PSL测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.tester.* -- -n spinal.tester.psl'
 
+  # ========== 库功能测试 ==========
+  # 测试SpinalHDL标准库（lib模块）的功能
   lib-test:
     needs: compile
     runs-on: ubuntu-latest
     timeout-minutes: 90
     container:
-      image: ghcr.io/jaynerlin/spinalhdl:${{ inputs.verilator_version }}
+      image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 运行库模块的测试，包括各种总线协议、IP核等
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.lib.* -- -l spinal.tester.formal -l spinal.tester.psl'
 
+  # ========== 库形式化验证测试 ==========
   lib-formal:
     needs: compile
     runs-on: ubuntu-latest
     timeout-minutes: 90
     container:
-      image: ghcr.io/jaynerlin/spinalhdl:${{ inputs.verilator_version }}
+      image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 运行库模块的形式化验证测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.lib.* -- -n spinal.tester.formal'
 
+  # ========== 库PSL测试 ==========
   lib-psl:
     needs: compile
     runs-on: ubuntu-latest
     timeout-minutes: 90
     container:
-      image: ghcr.io/jaynerlin/spinalhdl:${{ inputs.verilator_version }}
+      image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 运行库模块的PSL测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.lib.* -- -n spinal.tester.psl'

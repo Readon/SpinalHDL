@@ -1,39 +1,68 @@
+# 工作流名称，将在GitHub Actions页面显示
 name: Run tests
 
+# 定义触发此工作流的事件条件
 on:
+  # 当有Pull Request创建或更新时触发
   pull_request:
+  # 当代码被推送到指定分支时触发
   push:
     branches:
-      - master
-      - dev
+      - master    # 主分支
+      - dev       # 开发分支
+  # 允许手动触发工作流，并可输入参数
   workflow_dispatch:
     inputs:
+      # 定义一个输入参数：Verilator版本选择
       verilator_version:
-        description: 'Verilator version to use for testing'
-        required: true
-        default: 'V4.228'
-        type: choice
-        options:
-          - 'V4.228'
-          - 'V5.022'
-          - 'V5.024'
+        description: 'Verilator version to use for testing'  # 参数描述
+        required: true                                        # 必填参数
+        default: 'verilator-v4.228'                          # 默认值
+        type: choice                                          # 参数类型：选择框
+        options:                                              # 可选项列表
+          - 'verilator-v4.228'                               # 稳定版本v4.228
+          - 'verilator-v5.022'                               # 新版本v5.022
+          - 'verilator-v5.024'                               # 新版本v5.024
+          - 'verilator-v5.036'                               # 新版本v5.036
+          - 'verilator-v5.024_without5016'                   # v5.024但禁用特定功能
+          - 'verilator-v5.022_with5016'                      # v5.022但启用特定功能
 
+# 定义工作流中的具体任务
 jobs:
+  # 主要的SBT测试任务
   run-sbt-tests:
+    # 调用可复用工作流：sbt-tests.yml
+    # 这个文件包含所有实际的编译和测试逻辑
     uses: ./.github/workflows/sbt-tests.yml
+    # 向被调用的工作流传递参数
     with:
-      scala_version: '2.12.18'
-      runner_os: 'Linux'
+      scala_version: '2.12.18'                              # 指定Scala版本
+      runner_os: 'Linux'                                    # 指定运行环境操作系统
+      # 传递当前commit的SHA值，确保所有测试基于相同的代码版本
+      # - 对于PR：指向PR分支的最新commit
+      # - 对于push：指向被推送的commit
+      # - 对于手动触发：指向当前分支HEAD
       github_sha: ${{ github.sha }}
+      # Verilator版本选择：优先使用手动输入的版本，否则使用默认的V4.228
+      # github.event.inputs.verilator_version 来自workflow_dispatch的输入
       verilator_version: ${{ github.event.inputs.verilator_version || 'V4.228' }}
 
+  # Scaladoc文档生成任务
   scaladoc:
+    # 依赖关系：必须等待run-sbt-tests任务成功完成后才能运行
     needs: run-sbt-tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    runs-on: ubuntu-latest                                   # 运行环境：Ubuntu最新版
+    timeout-minutes: 30                                     # 超时限制：30分钟
+    # 使用Docker容器运行
     container:
-      image: ghcr.io/spinalhdl/docker:latest
+      # 使用纯净的基础镜像（不包含预编译的SpinalHDL代码）
+      image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
     steps:
+    # 步骤1：签出当前分支的源代码到容器中
     - uses: actions/checkout@v3
+    # 步骤2：恢复之前编译阶段缓存的编译产物
+    # 这可以显著加快文档生成速度，避免重复编译
     - uses: ./.github/actions/get-compiled
+    # 步骤3：使用SBT生成统一的API文档
+    # unidoc命令会为所有模块生成合并的Scaladoc文档
     - run: sbt unidoc
