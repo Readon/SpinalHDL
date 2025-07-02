@@ -56,7 +56,7 @@ jobs:
     # 使用Docker容器运行
     container:
       # 使用纯净的基础镜像（不包含预编译的SpinalHDL代码）
-      image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
+      image: ghcr.io/jaynerlin/docker:${{ github.event.inputs.verilator_version || 'verilator-v4.228' }}
     steps:
     # 步骤1：签出当前分支的源代码到容器中
     - uses: actions/checkout@v3
