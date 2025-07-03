@@ -21,9 +21,17 @@ on:
         type: choice                                          # 参数类型：选择框
         options:                                              # 可选项列表
           - 'verilator-v4.228'                               # 稳定版本v4.228
+          - 'verilator-v5.002'                               # 新版本v5.002
+          - 'verilator-v5.004'                               # 新版本v5.004
+          - 'verilator-v5.006'                               # 新版本v5.006
+          - 'verilator-v5.008'                               # 新版本v5.008
+          - 'verilator-v5.010'                               # 新版本v5.010
+          - 'verilator-v5.012'                               # 新版本v5.012
+          - 'verilator-v5.014'                               # 新版本v5.014
+          - 'verilator-v5.016'                               # 新版本v5.016
+          - 'verilator-v5.018'                               # 新版本v5.018
+          - 'verilator-v5.020'                               # 新版本v5.020
           - 'verilator-v5.022'                               # 新版本v5.022
-          - 'verilator-v5.024'                               # 新版本v5.024
-          - 'verilator-v5.036'                               # 新版本v5.036
           - 'verilator-v5.024_without5016'                   # v5.024但禁用特定功能
           - 'verilator-v5.022_with5016'                      # v5.022但启用特定功能
 
