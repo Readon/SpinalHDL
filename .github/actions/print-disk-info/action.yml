@@ -1,0 +1,102 @@
+name: 'Print Disk Information'
+description: '打印详细的磁盘使用信息，用于监控测试过程中的存储空间消耗'
+
+inputs:
+  job_name:
+    description: '当前作业名称，用于日志标识'
+    required: false
+    default: 'unknown-job'
+  show_details:
+    description: '是否显示详细的目录大小信息'
+    required: false
+    default: 'true'
+
+runs:
+  using: "composite"
+  steps:
+    - name: Print disk usage summary
+      shell: bash
+      run: |
+        echo "🔍 ==================== 磁盘使用情况报告 ===================="
+        echo "📊 作业名称: ${{ inputs.job_name }}"
+        echo "⏰ 检查时间: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo ""
+        
+        echo "💾 总体磁盘使用情况:"
+        df -h / | head -1
+        df -h / | tail -1 | awk '{printf "   根分区: %s 已用 / %s 总计 (使用率: %s)\n", $3, $2, $5}'
+        echo ""
+        
+        # 检查可用空间并给出警告
+        AVAIL_GB=$(df / | tail -1 | awk '{print int($4/1024/1024)}')
+        if [ $AVAIL_GB -lt 2 ]; then
+          echo "⚠️  警告: 可用空间不足 ${AVAIL_GB}GB，可能影响测试执行"
+        elif [ $AVAIL_GB -lt 5 ]; then
+          echo "🔶 注意: 可用空间仅剩 ${AVAIL_GB}GB，建议监控"
+        else
+          echo "✅ 磁盘空间充足: ${AVAIL_GB}GB 可用"
+        fi
+        
+    - name: Show detailed directory sizes
+      if: inputs.show_details == 'true'
+      shell: bash
+      run: |
+        echo ""
+        echo "📁 工作目录详细使用情况:"
+        
+        # 显示工作区根目录的主要子目录大小
+        echo "   工作区主目录 ($PWD):"
+        du -sh . 2>/dev/null | awk '{printf "      总计: %s\n", $1}' || echo "      总计: 无法获取"
+        
+        # 显示最大的几个子目录
+        echo "   主要子目录:"
+        du -sh */ 2>/dev/null | sort -hr | head -8 | while read size dir; do
+          echo "      $dir: $size"
+        done
+        
+        # 显示target目录详情（SBT构建产物）
+        if [ -d "target" ]; then
+          echo "   SBT构建产物 (target/):"
+          du -sh target/* 2>/dev/null | sort -hr | head -5 | while read size dir; do
+            echo "      $(basename $dir): $size"
+          done
+        fi
+        
+        # 显示.metals和.bloop目录（如果存在）
+        for dir in ".metals" ".bloop" "project/target"; do
+          if [ -d "$dir" ]; then
+            SIZE=$(du -sh "$dir" 2>/dev/null | cut -f1)
+            echo "      $dir: $SIZE"
+          fi
+        done
+        
+    - name: Check memory usage
+      shell: bash
+      run: |
+        echo ""
+        echo "🧠 内存使用情况:"
+        free -h | head -1
+        free -h | grep "Mem:" | awk '{printf "   内存: %s 已用 / %s 总计 (可用: %s)\n", $3, $2, $7}'
+        
+        echo ""
+        echo "🔄 交换空间:"
+        free -h | grep "Swap:" | awk '{
+          if ($2 == "0B" || $2 == "0") 
+            print "   交换空间: 未配置"
+          else 
+            printf "   交换空间: %s 已用 / %s 总计\n", $3, $2
+        }'
+        
+    - name: Show process information
+      shell: bash
+      run: |
+        echo ""
+        echo "⚙️  当前运行的关键进程:"
+        ps aux --sort=-%mem | head -6 | while IFS= read -r line; do
+          if echo "$line" | grep -q "PID\|java\|scala\|sbt\|verilator"; then
+            echo "   $line"
+          fi
+        done
+        
+        echo ""
+        echo "🔚 ==================== 磁盘报告结束 =====================" 

@@ -48,6 +48,14 @@ jobs:
         path: |
           **/
         key: ${{ inputs.runner_os }}-compiled-${{ inputs.github_sha }}-${{ inputs.verilator_version }}
+    
+    # 🔍 编译完成后的磁盘使用情况报告 (用于Verilator版本对比分析)
+    - name: Report disk usage after compile
+      uses: ./.github/actions/print-disk-info
+      with:
+        job_name: 'compile-verilator-${{ inputs.verilator_version }}'
+        show_details: 'true'
+      if: always()
 
   # ========== IDSL插件测试 ==========
   # 测试SpinalHDL的Scala编译器插件功能
@@ -63,6 +71,14 @@ jobs:
     - uses: ./.github/actions/get-compiled
     # 运行IDSL插件的单元测试
     - run: sbt ++${{ inputs.scala_version }} idslplugin/test
+    
+    # 🔍 IDSL插件测试完成后的磁盘使用情况报告
+    - name: Report disk usage after idslplugin-test
+      uses: ./.github/actions/print-disk-info
+      with:
+        job_name: 'idslplugin-test-verilator-${{ inputs.verilator_version }}'
+        show_details: 'true'
+      if: always()
 
   # ========== IDSL载荷测试 ==========
   # 测试IDSL相关的载荷处理功能
@@ -77,6 +93,14 @@ jobs:
     - uses: ./.github/actions/get-compiled
     # 运行IDSL载荷相关的测试
     - run: sbt ++${{ inputs.scala_version }} idslpayload/test
+    
+    # 🔍 IDSL载荷测试完成后的磁盘使用情况报告
+    - name: Report disk usage after idslpayload-test
+      uses: ./.github/actions/print-disk-info
+      with:
+        job_name: 'idslpayload-test-verilator-${{ inputs.verilator_version }}'
+        show_details: 'true'
+      if: always()
 
   # ========== 核心功能测试 ==========
   # 测试SpinalHDL的核心语言功能（排除形式化验证和PSL测试）
@@ -91,6 +115,14 @@ jobs:
     - uses: ./.github/actions/get-compiled
     # 运行核心测试，但排除形式化验证标签(-l spinal.tester.formal)和PSL标签(-l spinal.tester.psl)
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.core.* -- -l spinal.tester.formal -l spinal.tester.psl'
+    
+    # 🔍 核心功能测试完成后的磁盘使用情况报告
+    - name: Report disk usage after core-test
+      uses: ./.github/actions/print-disk-info
+      with:
+        job_name: 'core-test-verilator-${{ inputs.verilator_version }}'
+        show_details: 'true'
+      if: always()
 
   # ========== 核心形式化验证测试 ==========
   # 专门测试SpinalHDL核心功能的形式化验证特性
@@ -105,6 +137,14 @@ jobs:
     - uses: ./.github/actions/get-compiled
     # 仅运行带有形式化验证标签(-n spinal.tester.formal)的测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.core.* -- -n spinal.tester.formal'
+    
+    # 🔍 核心形式化验证测试完成后的磁盘使用情况报告
+    - name: Report disk usage after core-formal
+      uses: ./.github/actions/print-disk-info
+      with:
+        job_name: 'core-formal-verilator-${{ inputs.verilator_version }}'
+        show_details: 'true'
+      if: always()
 
   # ========== 核心PSL测试 ==========
   # 测试Property Specification Language (PSL) 相关功能
@@ -119,6 +159,14 @@ jobs:
     - uses: ./.github/actions/get-compiled
     # 仅运行带有PSL标签(-n spinal.tester.psl)的测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.core.* -- -n spinal.tester.psl'
+    
+    # 🔍 核心PSL测试完成后的磁盘使用情况报告
+    - name: Report disk usage after core-psl
+      uses: ./.github/actions/print-disk-info
+      with:
+        job_name: 'core-psl-verilator-${{ inputs.verilator_version }}'
+        show_details: 'true'
+      if: always()
 
   # ========== 仿真后端测试 ==========
   # 测试SpinalHDL的仿真功能，这是当前修复Verilator兼容性的关键测试
@@ -134,6 +182,14 @@ jobs:
     # 运行仿真模块的测试，这将验证VerilatorBackend等仿真相关代码
     # 这是验证Verilator 5+兼容性修复是否成功的关键测试
     - run: sbt ++${{ inputs.scala_version }} sim/test
+    
+    # 🔍 仿真后端测试完成后的磁盘使用情况报告 (重点关注：Verilator版本对比)
+    - name: Report disk usage after sim-test
+      uses: ./.github/actions/print-disk-info
+      with:
+        job_name: 'sim-test-verilator-${{ inputs.verilator_version }}'
+        show_details: 'true'
+      if: always()
 
   # ========== 测试器功能测试 ==========
   # 测试SpinalHDL测试框架本身的功能（排除形式化验证和PSL）
@@ -148,6 +204,14 @@ jobs:
     - uses: ./.github/actions/get-compiled
     # 运行测试器相关的测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.tester.* -- -l spinal.tester.formal -l spinal.tester.psl'
+    
+    # 🔍 测试器功能测试完成后的磁盘使用情况报告 (重点关注：Verilator版本对比)
+    - name: Report disk usage after tester-test
+      uses: ./.github/actions/print-disk-info
+      with:
+        job_name: 'tester-test-verilator-${{ inputs.verilator_version }}'
+        show_details: 'true'
+      if: always()
 
   # ========== 测试器形式化验证测试 ==========
   tester-formal:
@@ -161,6 +225,14 @@ jobs:
     - uses: ./.github/actions/get-compiled
     # 运行测试器的形式化验证测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.tester.* -- -n spinal.tester.formal'
+    
+    # 🔍 测试器形式化验证测试完成后的磁盘使用情况报告
+    - name: Report disk usage after tester-formal
+      uses: ./.github/actions/print-disk-info
+      with:
+        job_name: 'tester-formal-verilator-${{ inputs.verilator_version }}'
+        show_details: 'true'
+      if: always()
 
   # ========== 测试器PSL测试 ==========
   tester-psl:
@@ -174,6 +246,14 @@ jobs:
     - uses: ./.github/actions/get-compiled
     # 运行测试器的PSL测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.tester.* -- -n spinal.tester.psl'
+    
+    # 🔍 测试器PSL测试完成后的磁盘使用情况报告
+    - name: Report disk usage after tester-psl
+      uses: ./.github/actions/print-disk-info
+      with:
+        job_name: 'tester-psl-verilator-${{ inputs.verilator_version }}'
+        show_details: 'true'
+      if: always()
 
   # ========== 库功能测试 ==========
   # 测试SpinalHDL标准库（lib模块）的功能
@@ -188,6 +268,14 @@ jobs:
     - uses: ./.github/actions/get-compiled
     # 运行库模块的测试，包括各种总线协议、IP核等
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.lib.* -- -l spinal.tester.formal -l spinal.tester.psl'
+    
+    # 🔍 库功能测试完成后的磁盘使用情况报告 (重点关注：Verilator版本对比)
+    - name: Report disk usage after lib-test
+      uses: ./.github/actions/print-disk-info
+      with:
+        job_name: 'lib-test-verilator-${{ inputs.verilator_version }}'
+        show_details: 'true'
+      if: always()
 
   # ========== 库形式化验证测试 ==========
   lib-formal:
@@ -201,6 +289,14 @@ jobs:
     - uses: ./.github/actions/get-compiled
     # 运行库模块的形式化验证测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.lib.* -- -n spinal.tester.formal'
+    
+    # 🔍 库形式化验证测试完成后的磁盘使用情况报告
+    - name: Report disk usage after lib-formal
+      uses: ./.github/actions/print-disk-info
+      with:
+        job_name: 'lib-formal-verilator-${{ inputs.verilator_version }}'
+        show_details: 'true'
+      if: always()
 
   # ========== 库PSL测试 ==========
   lib-psl:
@@ -214,3 +310,34 @@ jobs:
     - uses: ./.github/actions/get-compiled
     # 运行库模块的PSL测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.lib.* -- -n spinal.tester.psl'
+    
+    # 🔍 库PSL测试完成后的磁盘使用情况报告
+    - name: Report disk usage after lib-psl
+      uses: ./.github/actions/print-disk-info
+      with:
+        job_name: 'lib-psl-verilator-${{ inputs.verilator_version }}'
+        show_details: 'true'
+      if: always()
+
+# 📊 Verilator版本磁盘使用对比分析说明：
+# 
+# 🎯 分析目的：
+#   通过对比不同Verilator版本在各个测试阶段的磁盘使用情况，验证版本迭代
+#   是否导致仿真编译的中间产物体积增长，进而引发磁盘空间不足问题。
+#
+# 🔍 重点关注的测试任务：
+#   - sim-test：       Verilator仿真核心功能，产生大量C++编译产物
+#   - tester-test：    SpinalHDL测试框架，包含多种仿真测试用例  
+#   - lib-test：       标准库测试，涉及复杂IP核的仿真验证
+#
+# 📈 关键指标对比：
+#   - 工作区总大小变化
+#   - target/目录大小（SBT编译产物）
+#   - .bloop/目录大小（编译器服务缓存）
+#   - 根分区使用率差异
+#
+# 💡 使用建议：
+#   1. 运行不同Verilator版本的测试（如5.008 vs 5.020）
+#   2. 对比相同测试任务在不同版本下的磁盘使用报告
+#   3. 重点分析sim-test、tester-test、lib-test的磁盘消耗差异
+#   4. 如发现显著增长，可针对性优化或调整CI资源配置
