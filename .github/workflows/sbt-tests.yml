@@ -16,6 +16,11 @@ on:
       verilator_version:
         required: true
         type: string
+      verilator_flags:
+        required: false
+        type: string
+        default: "--fno-dfg -O1 --output-groups 0 --no-assert"
+        description: "Additional Verilator compilation flags"
 
 # 定义并行执行的测试任务组
 jobs:
@@ -176,9 +181,17 @@ jobs:
     timeout-minutes: 90
     container:
       image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
+    env:
+      SPINAL_VERILATOR_FLAGS: ${{ inputs.verilator_flags }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 设置Verilator编译选项
+    - name: Configure Verilator options
+      shell: bash
+      run: |
+        echo "🔧 设置Verilator编译选项: ${{ inputs.verilator_flags }}"
+        echo "ℹ️  这些选项将应用于所有Verilator仿真编译过程"
     # 运行仿真模块的测试，这将验证VerilatorBackend等仿真相关代码
     # 这是验证Verilator 5+兼容性修复是否成功的关键测试
     - run: sbt ++${{ inputs.scala_version }} sim/test
@@ -199,9 +212,17 @@ jobs:
     timeout-minutes: 90
     container:
       image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
+    env:
+      SPINAL_VERILATOR_FLAGS: ${{ inputs.verilator_flags }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 设置Verilator编译选项
+    - name: Configure Verilator options
+      shell: bash
+      run: |
+        echo "🔧 设置Verilator编译选项: ${{ inputs.verilator_flags }}"
+        echo "ℹ️  这些选项将应用于所有Verilator仿真编译过程"
     # 运行测试器相关的测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.tester.* -- -l spinal.tester.formal -l spinal.tester.psl'
     
@@ -220,9 +241,17 @@ jobs:
     timeout-minutes: 90
     container:
       image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
+    env:
+      SPINAL_VERILATOR_FLAGS: ${{ inputs.verilator_flags }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 设置Verilator编译选项
+    - name: Configure Verilator options
+      shell: bash
+      run: |
+        echo "🔧 设置Verilator编译选项: ${{ inputs.verilator_flags }}"
+        echo "ℹ️  这些选项将应用于所有Verilator仿真编译过程"
     # 运行测试器的形式化验证测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.tester.* -- -n spinal.tester.formal'
     
@@ -241,9 +270,17 @@ jobs:
     timeout-minutes: 90
     container:
       image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
+    env:
+      SPINAL_VERILATOR_FLAGS: ${{ inputs.verilator_flags }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 设置Verilator编译选项
+    - name: Configure Verilator options
+      shell: bash
+      run: |
+        echo "🔧 设置Verilator编译选项: ${{ inputs.verilator_flags }}"
+        echo "ℹ️  这些选项将应用于所有Verilator仿真编译过程"
     # 运行测试器的PSL测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.tester.* -- -n spinal.tester.psl'
     
@@ -263,9 +300,17 @@ jobs:
     timeout-minutes: 90
     container:
       image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
+    env:
+      SPINAL_VERILATOR_FLAGS: ${{ inputs.verilator_flags }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 设置Verilator编译选项
+    - name: Configure Verilator options
+      shell: bash
+      run: |
+        echo "🔧 设置Verilator编译选项: ${{ inputs.verilator_flags }}"
+        echo "ℹ️  这些选项将应用于所有Verilator仿真编译过程"
     # 运行库模块的测试，包括各种总线协议、IP核等
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.lib.* -- -l spinal.tester.formal -l spinal.tester.psl'
     
@@ -284,9 +329,17 @@ jobs:
     timeout-minutes: 90
     container:
       image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
+    env:
+      SPINAL_VERILATOR_FLAGS: ${{ inputs.verilator_flags }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 设置Verilator编译选项
+    - name: Configure Verilator options
+      shell: bash
+      run: |
+        echo "🔧 设置Verilator编译选项: ${{ inputs.verilator_flags }}"
+        echo "ℹ️  这些选项将应用于所有Verilator仿真编译过程"
     # 运行库模块的形式化验证测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.lib.* -- -n spinal.tester.formal'
     
@@ -305,9 +358,17 @@ jobs:
     timeout-minutes: 90
     container:
       image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
+    env:
+      SPINAL_VERILATOR_FLAGS: ${{ inputs.verilator_flags }}
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
+    # 设置Verilator编译选项
+    - name: Configure Verilator options
+      shell: bash
+      run: |
+        echo "🔧 设置Verilator编译选项: ${{ inputs.verilator_flags }}"
+        echo "ℹ️  这些选项将应用于所有Verilator仿真编译过程"
     # 运行库模块的PSL测试
     - run: sbt ++${{ inputs.scala_version }} 'tester/testOnly spinal.lib.* -- -n spinal.tester.psl'
     
@@ -319,25 +380,36 @@ jobs:
         show_details: 'true'
       if: always()
 
-# 📊 Verilator版本磁盘使用对比分析说明：
+# 📊 Verilator编译选项优化测试说明：
 # 
-# 🎯 分析目的：
-#   通过对比不同Verilator版本在各个测试阶段的磁盘使用情况，验证版本迭代
-#   是否导致仿真编译的中间产物体积增长，进而引发磁盘空间不足问题。
+# 🎯 测试目的：
+#   通过在所有仿真测试任务中应用统一的Verilator编译选项，验证特定编译配置
+#   对SpinalHDL项目的兼容性和性能影响，确保在优化的编译设置下系统的稳定性。
 #
-# 🔍 重点关注的测试任务：
-#   - sim-test：       Verilator仿真核心功能，产生大量C++编译产物
-#   - tester-test：    SpinalHDL测试框架，包含多种仿真测试用例  
-#   - lib-test：       标准库测试，涉及复杂IP核的仿真验证
+# 🔧 当前应用的Verilator编译选项：
+#   - --fno-dfg：       禁用DFG(数据流图)优化器，避免潜在的优化相关问题
+#   - -O1：             使用优化级别1，在编译时间和运行性能间取得平衡
+#   - --output-groups 0： 禁用文件分组，生成单一的输出文件以简化构建流程
+#   - --no-assert：     禁用断言检查，可能提升仿真性能并减少编译复杂度
 #
-# 📈 关键指标对比：
-#   - 工作区总大小变化
-#   - target/目录大小（SBT编译产物）
-#   - .bloop/目录大小（编译器服务缓存）
-#   - 根分区使用率差异
+# 🔍 受影响的测试任务：
+#   - sim-test：        Verilator仿真核心功能，验证基础仿真兼容性
+#   - tester-test：     SpinalHDL测试框架，确保测试工具在优化配置下正常工作
+#   - tester-formal：   形式化验证测试，验证编译选项对验证流程的影响
+#   - tester-psl：      PSL(Property Specification Language)测试
+#   - lib-test：        标准库测试，验证复杂IP核在优化配置下的行为
+#   - lib-formal：      标准库形式化验证测试
+#   - lib-psl：         标准库PSL测试
 #
-# 💡 使用建议：
-#   1. 运行不同Verilator版本的测试（如5.008 vs 5.020）
-#   2. 对比相同测试任务在不同版本下的磁盘使用报告
-#   3. 重点分析sim-test、tester-test、lib-test的磁盘消耗差异
-#   4. 如发现显著增长，可针对性优化或调整CI资源配置
+# 📈 关键监控指标：
+#   - 编译时间变化（优化级别对编译速度的影响）
+#   - 磁盘使用情况（文件分组禁用对编译产物大小的影响）
+#   - 测试通过率（验证编译选项的兼容性）
+#   - 内存消耗情况（优化对资源使用的影响）
+#
+# 💡 分析建议：
+#   1. 对比启用这些选项前后的测试执行时间和资源消耗
+#   2. 重点关注任何测试失败情况，可能表明编译选项不兼容
+#   3. 分析磁盘使用报告，了解文件分组禁用对存储需求的影响
+#   4. 根据测试结果调整编译选项配置，优化CI构建效率
+#   5. 如果测试稳定，可以考虑将这些选项作为默认配置
