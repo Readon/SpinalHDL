@@ -19,7 +19,7 @@ on:
       verilator_flags:
         required: false
         type: string
-        default: "--fno-dfg -O1 --output-groups 0 --no-assert"
+        default: ""
         description: "Additional Verilator compilation flags"
 
 # 定义并行执行的测试任务组
@@ -214,6 +214,7 @@ jobs:
       image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
     env:
       SPINAL_VERILATOR_FLAGS: ${{ inputs.verilator_flags }}
+      VM_DEFAULT_RULES: "0"  # 禁用预编译头文件
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
@@ -302,6 +303,7 @@ jobs:
       image: ghcr.io/jaynerlin/docker:${{ inputs.verilator_version }}
     env:
       SPINAL_VERILATOR_FLAGS: ${{ inputs.verilator_flags }}
+      VM_DEFAULT_RULES: "0"  # 禁用预编译头文件
     steps:
     - uses: actions/checkout@v3
     - uses: ./.github/actions/get-compiled
