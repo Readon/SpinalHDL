@@ -19,7 +19,7 @@ on:
       verilator_flags:
         required: false
         type: string
-        default: ""
+        default: "--threads 1"
         description: "Additional Verilator compilation flags"
 
 # 定义并行执行的测试任务组
