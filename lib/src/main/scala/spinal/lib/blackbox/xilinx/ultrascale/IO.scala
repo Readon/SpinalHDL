@@ -82,15 +82,15 @@ case class ODELAYE3(
   val EN_VTC = in Bool ()
 
   // Conditionally generated cascaded ports
-  val CASC_OUT = (cascade != "NONE") generate out Bool ()
-  val CASC_IN = (cascade != "NONE") generate in Bool ()
-  val CASC_RETURN = (cascade != "NONE") generate in Bool ()
+  val CASC_OUT = (cascade != "NONE") generate out(Bool())
+  val CASC_IN = (cascade != "NONE") generate in(Bool())
+  val CASC_RETURN = (cascade != "NONE") generate in(Bool())
 
   // Delay control (conditionally generated)
-  val INC = (delayType != "FIXED") generate in Bool ()
-  val CNTVALUEOUT = (delayType != "FIXED") generate out UInt (9 bits)
-  val CNTVALUEIN = (delayType != "FIXED") generate in UInt (9 bits)
-  val LOAD = (delayType == "VAR_LOAD") generate in Bool ()
+  val INC = (delayType != "FIXED") generate in(Bool())
+  val CNTVALUEOUT = (delayType != "FIXED") generate out(UInt(9 bits))
+  val CNTVALUEIN = (delayType != "FIXED") generate in(UInt(9 bits))
+  val LOAD = (delayType == "VAR_LOAD") generate in(Bool())
 }
 
 /** Enhanced IDELAYE3 with cascading support */
@@ -135,15 +135,15 @@ case class IDELAYE3(
   val EN_VTC = in Bool ()
 
   // Delay control (conditionally generated)
-  val CNTVALUEOUT = (delayType != "FIXED") generate out UInt (9 bits)
-  val CNTVALUEIN = (delayType != "FIXED") generate in UInt (9 bits)
-  val INC = (delayType != "FIXED") generate in Bool ()
-  val LOAD = (delayType == "VAR_LOAD") generate in Bool ()
+  val CNTVALUEOUT = (delayType != "FIXED") generate out(UInt(9 bits))
+  val CNTVALUEIN = (delayType != "FIXED") generate in(UInt(9 bits))
+  val INC = (delayType != "FIXED") generate in(Bool())
+  val LOAD = (delayType == "VAR_LOAD") generate in(Bool())
 
   // Cascade signals (generated when cascade != "NONE")
-  val CASC_OUT = (cascade != "NONE") generate out Bool ()
-  val CASC_IN = (cascade != "NONE") generate in Bool ()
-  val CASC_RETURN = (cascade != "NONE") generate in Bool ()
+  val CASC_OUT = (cascade != "NONE") generate out(Bool ())
+  val CASC_IN = (cascade != "NONE") generate in(Bool ())
+  val CASC_RETURN = (cascade != "NONE") generate in(Bool ())
 }
 
 /** Enhanced IOBUF_DCIEN with termination control */
