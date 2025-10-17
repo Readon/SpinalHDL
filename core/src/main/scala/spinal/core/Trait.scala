@@ -29,6 +29,8 @@ import scala.collection.mutable.{ArrayBuffer, Stack}
 import spinal.core.internals._
 import spinal.idslplugin.Location
 
+import scala.reflect.ClassTag
+
 trait DummyTrait
 object DummyObject extends DummyTrait
 
@@ -204,7 +206,7 @@ trait GlobalDataUser {
 }
 
 
-trait ContextUser extends GlobalDataUser with ScalaLocated{
+trait ContextUser extends GlobalDataUser with ScalaLocated {
   var parentScope : ScopeStatement = if(globalData != null) DslScopeStack.get else null
 
   def component: Component = if(parentScope != null) parentScope.component else null
@@ -437,8 +439,13 @@ trait Nameable extends OwnableRef with ContextUser {
 
   private[core] def getNameElseThrow: String = {
     getName(null) match {
-      case null =>  throw new Exception("Internal error")
-      case name =>  name
+      case null => {
+        val errorMessage =
+          s"Signal $this has no name but is used in a context where a name is required. " +
+          s"Location of the signal: \n${getScalaLocationLong}. "
+        SpinalError(errorMessage)
+      }
+      case name => name
     }
   }
 
@@ -628,13 +635,15 @@ object ScalaLocated {
   def long(scalaTrace: Throwable, tab: String = "    "): String = {
     if(scalaTrace == null) return "???"
 
-    filterStackTrace(scalaTrace.getStackTrace).map(_.toString).filter(filter).map(tab + _ ).mkString("\n") + "\n\n"
+    filterStackTrace(scalaTrace.getStackTrace).map(_.toString).filter(filter).
+      map(tab + "at " + _ ).mkString("\n") + "\n\n"
   }
 
   def long2(trace: Array[StackTraceElement], tab: String = "    "): String = {
     if(trace == null) return "???"
 
-    filterStackTrace(trace).map(_.toString).filter(filter).map(tab + _ ).mkString("\n") + "\n\n"
+    filterStackTrace(trace).map(_.toString).filter(filter).
+      map(tab + "at " + _ ).mkString("\n") + "\n\n"
   }
 
   def short: String = short(new Throwable())
@@ -739,6 +748,10 @@ trait SpinalTagReady {
     _spinalTags.filter(cond)
   }
 
+  def getTagsOf[T <: SpinalTag]()(implicit tag: ClassTag[T]) : Iterable[T] = {
+    getTags().filter(tag.runtimeClass.isInstance(_)).map(_.asInstanceOf[T])
+  }
+
   def addAttribute(attribute: Attribute): this.type = addTag(attribute)
   def addAttribute(name: String): this.type = addAttribute(new AttributeFlag(name))
   def addAttribute(name: String, value: String): this.type = addAttribute(new AttributeString(name, value))
@@ -830,7 +843,12 @@ object unusedTag                     extends SpinalTag
 object noCombinatorialLoopCheck      extends SpinalTag
 object noLatchCheck                  extends SpinalTag
 object noBackendCombMerge            extends SpinalTag
+
+/** Tag for clock crossing signals
+  * @see [[https://spinalhdl.github.io/SpinalDoc-RTD/master/SpinalHDL/Structuring/clock_domain.html#clock-domain-crossing Clock domain crossing documentation]]
+  */
 object crossClockDomain              extends SpinalTag{ override def moveToSyncNode = true }
+
 object crossClockBuffer              extends SpinalTag{ override def moveToSyncNode = true }
 
 sealed trait TimingEndpointType

@@ -33,6 +33,8 @@ object BufferCC {
     apply(input, null.asInstanceOf[T], inputAttributes = List(crossClockMaxDelay(1, true)))
   def withTag[T <: Data](input: T, init: => T): T =
     apply(input, init, inputAttributes = List(crossClockMaxDelay(1, true)))
+  def falsePath[T <: Data](input: T): T =
+    apply(input, null.asInstanceOf[T], inputAttributes = List(crossClockFalsePath()))
 
   val defaultDepth = ScopeProperty(2)
   def defaultDepthOptioned(cd : ClockDomain, option : Option[Int]) : Int = {
@@ -265,12 +267,14 @@ object ResetCtrl{
 
     val solvedOutputPolarity = if(outputPolarity == null) clockDomain.config.resetActiveLevel else outputPolarity
     val falsePathAttrs = List(crossClockFalsePath(Some(input), destType = TimingEndpointType.RESET))
-    samplerCD(BufferCC(
+  val ret = samplerCD(BufferCC(
       input       = ((if(solvedOutputPolarity == HIGH) False else True) ^ inputSync).setCompositeName(input, "asyncAssertSyncDeassert", true),
       init        = if(solvedOutputPolarity == HIGH) True  else False,
       bufferDepth = bufferDepth,
       allBufAttributes = falsePathAttrs)
     )
+    ret.getDrivingReg().simInit(if(solvedOutputPolarity == HIGH) False else True)
+    ret
   }
 
   /**

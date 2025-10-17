@@ -6,10 +6,10 @@ import spinal.lib.bus
 import spinal.lib.bus.amba4.axilite._
 import spinal.lib._
 import spinal.lib.bus.misc.BusSlaveFactory
-import spinal.lib.misc.InterruptNode
+import spinal.lib.misc._
 
 import scala.collection.mutable.ArrayBuffer
-import scala.collection.{Seq, mutable}
+import scala.collection.Seq
 
 class MappedPlic[T <: spinal.core.Data with IMasterSlave](sourceIds : Seq[Int],
                                                           targetIds : Seq[Int],
@@ -69,32 +69,6 @@ class TilelinkPlic(p : bus.tilelink.BusParameter,
   new bus.tilelink.SlaveFactory(_, false)
 )
 
-trait InterruptCtrlFiber extends Nameable{
-  val lock = Lock()
-
-  def createInterruptMaster(id: Int): InterruptNode
-  def createInterruptSlave(id: Int): InterruptNode
-
-  val mappedInterrupts = mutable.LinkedHashMap[InterruptNode, InterruptNode]()
-
-  def mapUpInterrupt(id: Int, node: InterruptNode): Unit = {
-    val local = createInterruptSlave(id)
-    local.setLambdaName(node.isNamed && this.isNamed)(s"${this.getName()}_from_${node.getName}")
-    local << node
-    mappedInterrupts(node) = local
-  }
-
-  def mapDownInterrupt(id: Int, node: InterruptNode): Unit = {
-    val local = createInterruptMaster(id)
-    local.setLambdaName(node.isNamed && this.isNamed)(s"${this.getName()}_to_${node.getName}")
-    node << local
-    mappedInterrupts(node) = local
-  }
-
-  def retain() = lock.retain()
-  def release() = lock.release()
-}
-
 case class TilelinkPlicFiber() extends Area with InterruptCtrlFiber{
   val node = bus.tilelink.fabric.Node.slave()
 
@@ -105,6 +79,7 @@ case class TilelinkPlicFiber() extends Area with InterruptCtrlFiber{
   val targetsSpecs = ArrayBuffer[TargetSpec]()
   val gatewaySpecs = ArrayBuffer[GatewaySpec]()
 
+  override def defaultInterruptMode = LEVEL_HIGH
 
   override def createInterruptMaster(id : Int) : InterruptNode = {
     val spec = node.clockDomain on TargetSpec(InterruptNode.master(), id)
@@ -112,7 +87,9 @@ case class TilelinkPlicFiber() extends Area with InterruptCtrlFiber{
     spec.node
   }
 
-  override def createInterruptSlave(id: Int) : InterruptNode = {
+  override def createInterruptSlave(id: Int, mode: InterruptMode) : InterruptNode = {
+    require(mode == LEVEL_HIGH, "PLIC only support level high interrupt")
+
     val spec = node.clockDomain on GatewaySpec(InterruptNode.slave(), id)
     gatewaySpecs += spec
     spec.node

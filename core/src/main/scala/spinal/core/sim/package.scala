@@ -67,7 +67,7 @@ package object sim {
 
   private def btToSignal(manager: SimManager, bt: BaseNode) = {
     if(bt.algoIncrementale != -1){
-      SimError(s"UNACCESSIBLE SIGNAL : $bt isn't accessible during the simulation.\n- To fix it, call simPublic() on it during the elaboration.")
+      SimError(s"UNACCESSIBLE SIGNAL : $bt isn't accessible during the simulation.\n- To fix it, call simPublic() on it during the elaboration.\nIf that doesn't resolve the issue, ensure that the signal has a name. (you can force a name via : mySignal.setName(...) durring the hardware elaboration)")
     }
 
     manager.raw.userData.asInstanceOf[ArrayBuffer[Signal]](bt.algoInt)
@@ -299,6 +299,10 @@ package object sim {
     }
   }
 
+  def periodicaly(delay : TimeNumber)(body : => Unit) : Unit = {
+    periodicaly(timeToLong(delay))(body)
+  }
+
   def simThread = SimManagerContext.current.thread
 
 
@@ -376,6 +380,11 @@ package object sim {
   implicit class SimDataPimper[T <: Data](bt: T) {
 
     def randomize(): Unit = bt.flattenForeach(_.randomize())
+    
+    /** Set a signal inside the component’s hierarchy as accessible from the simulation.
+      * 
+      * @see [[https://spinalhdl.github.io/SpinalDoc-RTD/master/SpinalHDL/Simulation/signal.html#accessing-signals-inside-the-component-s-hierarchy section in simulation doc]]
+      */
     def simPublic(): T = bt.addTag(SimPublic)
   }
 
@@ -386,6 +395,11 @@ package object sim {
   implicit class SimMemPimper[T <: Data](mem: Mem[T]) {
     def setBigInt(address : Long, data : BigInt): Unit = sim.setBigInt(mem,address,data)
     def getBigInt(address : Long): BigInt = sim.getBigInt(mem,address)
+    
+    /** Set a signal inside the component’s hierarchy as accessible from the simulation.
+      * 
+      * @see [[https://spinalhdl.github.io/SpinalDoc-RTD/master/SpinalHDL/Simulation/signal.html#accessing-signals-inside-the-component-s-hierarchy section in simulation doc]]
+      */
     def simPublic(): Mem[T] = mem.addTag(SimPublic)
   }
 
@@ -395,6 +409,7 @@ package object sim {
   implicit class SimBoolPimper(bt: Bool) extends SimEquiv {
     def simProxy() = new SimProxy(bt)
     class SimProxy(bt : Bool){
+      assert(bt.isNamed)
       val manager = SimManagerContext.current.manager
       val signal = manager.raw.userData.asInstanceOf[ArrayBuffer[Signal]](bt.algoInt)
       def toBoolean = manager.getLong(signal) != 0
@@ -412,7 +427,13 @@ package object sim {
 
     // SimEquiv implementation
     type SimEquivT = Boolean
+    
+    /** Assign a hardware ``Bool`` from an Scala ``Boolean``
+      *
+      * @see [[https://spinalhdl.github.io/SpinalDoc-RTD/master/SpinalHDL/Simulation/signal.html#read-and-write-signals Simulation documentation]]
+      */
     def #=(value: Boolean) = setLong(bt, if(value) 1 else 0)
+    
     def getSim(): SimEquivT = getLong(bt) != 0
 
     def toBoolean = getSim()
@@ -423,7 +444,13 @@ package object sim {
   // Several SimEquiv implementations needed since BitVector can correspond to several types
   implicit class SimEquivBitVectorLongPimper(bt: BitVector) extends SimEquiv {
     type SimEquivT = Long
-    def #=(value: Long)    = setLong(bt, value)
+    
+    /** Assign a hardware ``BitVector`` from an Scala ``Long``
+      *
+      * @see [[https://spinalhdl.github.io/SpinalDoc-RTD/master/SpinalHDL/Simulation/signal.html#read-and-write-signals Simulation documentation]]
+      */
+    def #=(value: Long) = setLong(bt, value)
+
     def getSim(): Long = getLong(bt)
   }
 
@@ -435,12 +462,18 @@ package object sim {
 
   implicit class SimEquivBitVectorBytesPimper(bt: BitVector) extends SimEquiv {
     type SimEquivT = Array[Byte]
+    
+    /** Assign a hardware ``BitVector`` from an Scala ``Array[Byte]``
+      *
+      * @see [[https://spinalhdl.github.io/SpinalDoc-RTD/master/SpinalHDL/Simulation/signal.html#read-and-write-signals Simulation documentation]]
+      */
     def #=(value: Array[Byte])    = {
       var acc = BigInt(0)
-      for(i <- value.size-1 downto 0){
+      for(i <- value.size-1 downto 0) {
         acc = acc << 8
         acc |= value(i).toInt & 0xFF
       }
+
       setBigInt(bt, acc)
     }
     def getSim(): Array[Byte] = getBigInt(bt).toBytes(bt.getBitsWidth)
@@ -448,13 +481,19 @@ package object sim {
 
   implicit class SimEquivBitVectorBooleansPimper(bt: BitVector) extends SimEquiv {
     type SimEquivT = Array[Boolean]
-    def #=(value: Array[Boolean])    = {
+
+    /** Assign a hardware ``BitVector`` from an Scala ``Array[Boolean]``
+      *
+      * @see [[https://spinalhdl.github.io/SpinalDoc-RTD/master/SpinalHDL/Simulation/signal.html#read-and-write-signals Simulation documentation]]
+      */
+    def #=(value: Array[Boolean]) = {
       var acc = BigInt(0)
       for(i <- value.size-1 downto 0){
         if(value(i)) acc = acc.setBit(i)
       }
       setBigInt(bt, acc)
     }
+
     def getSim(): Array[Boolean] = {
       val width = bt.getBitsWidth
       val ret = new Array[Boolean](width)
@@ -470,13 +509,18 @@ package object sim {
   implicit class SimBitVectorPimper(bt: BitVector) {
     def simProxy() = new SimProxy(bt)
     class SimProxy(bt : BitVector){
+      val alwaysZero = bt.getBitsWidth <= 0
+      assert(bt.isNamed)
       val manager = SimManagerContext.current.manager
       val signal = manager.raw.userData.asInstanceOf[ArrayBuffer[Signal]](bt.algoInt)
-      val alwaysZero = bt.getBitsWidth == 0
       def toInt = if(alwaysZero) 0 else manager.getInt(signal)
       def toLong = if(alwaysZero) 0 else manager.getLong(signal)
       def toBigInt = if(alwaysZero) 0 else manager.getBigInt(signal)
 
+      /** Assign a hardware ``BitVector`` from an Scala ``Int``
+        *
+        * @see [[https://spinalhdl.github.io/SpinalDoc-RTD/master/SpinalHDL/Simulation/signal.html#read-and-write-signals Simulation documentation]]
+        */
       def #=(value: Int) : Unit  = {
         if(alwaysZero) {
           assert(value == 0)
@@ -484,6 +528,11 @@ package object sim {
         }
         manager.setLong(signal, value)
       }
+
+      /** Assign a hardware ``BitVector`` from an Scala ``Long``
+        *
+        * @see [[https://spinalhdl.github.io/SpinalDoc-RTD/master/SpinalHDL/Simulation/signal.html#read-and-write-signals Simulation documentation]]
+        */      
       def #=(value: Long) : Unit  = {
         if(alwaysZero) {
           assert(value == 0)
@@ -518,6 +567,7 @@ package object sim {
       new SimUnionElementPimper.PendingAssign())
 
     class SimProxy[E <: Data](rawBits: Bits, e: E) {
+      assert(rawBits.parentScope != null)
       var offset = 0
       breakable {
         for (ee <- dummyData.flatten) {

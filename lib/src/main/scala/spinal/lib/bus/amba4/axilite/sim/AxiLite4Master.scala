@@ -118,10 +118,11 @@ case class AxiLite4Master(axil: AxiLite4, clockDomain: ClockDomain) {
   }
 
   private val arDriver = StreamDriver(axil.ar, clockDomain) { ar =>
-    if (arQueue.isEmpty) false else {
+    // do not allow interleaving AR and R
+    if (arQueue.nonEmpty && rQueue.isEmpty) {
       arQueue.dequeue()(ar)
       true
-    }
+    } else false
   }
 
   StreamReadyRandomizer(axil.r, clockDomain)
@@ -200,10 +201,11 @@ case class AxiLite4Master(axil: AxiLite4, clockDomain: ClockDomain) {
   }
 
   private val awDriver = StreamDriver(axil.aw, clockDomain) { aw =>
-    if (awQueue.isEmpty) false else {
+    // do not allow interleaving AW+W and B
+    if (awQueue.nonEmpty && bQueue.isEmpty) {
       awQueue.dequeue()(aw)
       true
-    }
+    } else false
   }
 
   private val wDriver = StreamDriver(axil.w, clockDomain) { w =>

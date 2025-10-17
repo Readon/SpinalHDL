@@ -675,7 +675,7 @@ case class SpinalSimConfig(
                             var _workspacePath     : String = System.getenv().getOrDefault("SPINALSIM_WORKSPACE","./simWorkspace"),
                             var _workspaceName     : String = null,
                             var _waveDepth         : Int = 0, //0 => all
-                            var _spinalConfig      : SpinalConfig = SpinalConfig(),
+                            var _spinalConfig      : SpinalConfig = SpinalConfig().includeSimulation,
                             var _optimisationLevel : Int = 0,
                             var _simulatorFlags    : ArrayBuffer[String] = ArrayBuffer[String](),
                             var _runFlags          : ArrayBuffer[String] = ArrayBuffer[String](),
@@ -930,6 +930,8 @@ case class SpinalSimConfig(
     import parser._
     opt[Unit]("trace-fst") action { (v, c) => this.withFstWave }
     opt[Unit]("trace-vcd") action { (v, c) => this.withVcdWave }
+    opt[Unit]("iverilog") action { (v, c) => this.withIVerilog }
+    opt[Unit]("no-wave") action { (v, c) => this._waveFormat = WaveFormat.NONE}
   }
 
   def doSim[T <: Component](report: SpinalReport[T])(body: T => Unit): Unit = compile(report).doSim(body)

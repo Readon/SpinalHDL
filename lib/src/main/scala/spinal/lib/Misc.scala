@@ -21,12 +21,14 @@ class BoolPimped(pimped: Bool){
   }
 }
 
-object KeepAttribute{
-  object syn_keep_verilog extends AttributeFlag("synthesis syn_keep = 1", COMMENT_ATTRIBUTE){
+/** Attribute used to instruct the synthesis tool it should not optimize out some signals
+  */
+object KeepAttribute {
+  object syn_keep_verilog extends AttributeFlag("synthesis syn_keep = 1", COMMENT_ATTRIBUTE) {
     override def isLanguageReady(language: Language) : Boolean = language == Language.VERILOG || language == Language.SYSTEM_VERILOG
   }
 
-  object syn_keep_vhdl extends AttributeFlag("syn_keep"){
+  object syn_keep_vhdl extends AttributeFlag("syn_keep") {
     override def isLanguageReady(language: Language) : Boolean = language == Language.VHDL
   }
   object keep extends AttributeFlag("keep")
@@ -41,7 +43,7 @@ object KeepAttribute{
 }
 
 
-object CheckSocketPort{
+object CheckSocketPort {
   val reserved = mutable.LinkedHashSet[Int]()
   def reserve(port : Int): Unit = {
     while(true) {
@@ -190,7 +192,7 @@ object DataCc{
   def apply[T <: BaseType](to : T, from : T)(initValue : => T): Unit = {
     apply(to, from, to.clockDomain, from.clockDomain)(initValue)
   }
-  def apply[T <: BaseType](from : T, fromCd : ClockDomain, toCd : ClockDomain)(initValue : => T) : T = {
+  def apply[T <: Data](from : T, fromCd : ClockDomain, toCd : ClockDomain)(initValue : => T) : T = {
     ClockDomain.areSynchronous(toCd, fromCd) match {
       case true => from
       case false => {
@@ -204,7 +206,14 @@ object DataCc{
       }
     }
   }
-  def apply[T <: BaseType](to : T, from : T, toCd : ClockDomain, fromCd : ClockDomain)(initValue : => T): Unit = {
+  def apply[T <: Data](to : T, from : T, toCd : ClockDomain, fromCd : ClockDomain)(initValue : => T): Unit = {
     to := apply(from, fromCd, toCd)(initValue)
+  }
+}
+
+
+object ClockGating{
+  def apply(enable : Bool, cd : ClockDomain = ClockDomain.current) = {
+    cd.copy(clock = (cd.readClockWire & enable).setLambdaName(cd.clock.isNamed && enable.isNamed)(s"${cd.clock.getName()}_gated_${enable.getName()}"))
   }
 }

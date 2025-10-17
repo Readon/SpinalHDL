@@ -287,6 +287,7 @@ class ComponentEmitterVerilog(
   def emitInitials() : Unit = {
     var withRandBoot = ArrayBuffer[(BaseType, String)]();
     var withInitBoot = ArrayBuffer[(BaseType, String)]();
+    var withSimInit = ArrayBuffer[(BaseType, String)]();
     component.dslBody.walkDeclarations {
       case bt: BaseType => {
         if (!bt.isSuffix) {
@@ -298,12 +299,16 @@ class ComponentEmitterVerilog(
             case null =>
             case str  => withInitBoot += bt -> str
           }
+          getBaseTypeSignalSimInit(bt) match {
+            case null =>
+            case str  => withSimInit += bt -> str
+          }
         }
       }
       case _ =>
     }
 
-    if(initials.isEmpty && withRandBoot.isEmpty && withInitBoot.isEmpty) return
+    if(initials.isEmpty && withRandBoot.isEmpty && withInitBoot.isEmpty && withSimInit.isEmpty) return
     logics ++= "  initial begin\n"
     emitLeafStatements(initials, 0, c.dslBody, "=", logics , "    ")
 
@@ -314,6 +319,11 @@ class ComponentEmitterVerilog(
         logics ++= s"${theme.maintab + theme.maintab}${name}${str};\n"
       }
       logics ++= "  `endif\n"
+    }
+
+    for((bt, str) <- withSimInit){
+      val name = emitReference(bt, false)
+      logics ++= s"${theme.maintab + theme.maintab}${name}${str};\n"
     }
 
     for((bt, str) <- withInitBoot){
@@ -1153,6 +1163,50 @@ class ComponentEmitterVerilog(
       }
     }
     null
+  }
+
+  def getBaseTypeSignalSimInit(signal: BaseType): String = {
+    if(signal.isReg){
+      signal.getTag(classOf[SimInitTag]) match {
+        case Some(tag) =>
+          try {
+            val result = tag.value match {
+              case bvl: BitVectorLiteral =>
+                val targetWidth = signal.getBitsWidth
+                val value = bvl.getValue()
+
+                // Handle negative values
+                val unsignedValue = if (value >= 0) {
+                  value
+                } else {
+                  (BigInt(1) << targetWidth) + value
+                }
+
+                // Use hex for width > 4, binary for width <= 4
+                if (targetWidth > 4) {
+                  val hexDigits = (targetWidth + 3) / 4
+                  val hexValue = unsignedValue.toString(16)
+                  val paddedHex = ("0" * (hexDigits - hexValue.length)) + hexValue
+                  s"${targetWidth}'h${paddedHex}"
+                } else {
+                  val binValue = unsignedValue.toString(2)
+                  val paddedBin = ("0" * (targetWidth - binValue.length)) + binValue
+                  s"${targetWidth}'b${paddedBin}"
+                }
+              case _ =>
+                emitExpressionNoWrappeForFirstOne(tag.value)
+            }
+            " = " + result
+          } catch {
+            case e: Exception =>
+              SpinalError(s"Failed to process SimInit for signal $signal: ${e.getMessage}. " +
+                s"SimInit value must be a compile-time constant. Tag value: ${tag.value}, type: ${tag.value.getClass}")
+          }
+        case None => null
+      }
+    } else {
+      null
+    }
   }
 
   var memBitsMaskKind: MemBitsMaskKind = MULTIPLE_RAM

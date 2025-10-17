@@ -245,7 +245,7 @@ class VCSBackend(config: VCSBackendConfig) extends VpiBackend(config) {
 
     config.rtlSourcesPaths
       .filter { s =>
-        s.endsWith(".bin") || s.endsWith(".mem")
+        s.endsWith(".bin") || s.endsWith(".mem") || s.endsWith(".hex")
       }
       .foreach { path =>
         FileUtils.copyFileToDirectory(new File(path), new File(workspacePath))

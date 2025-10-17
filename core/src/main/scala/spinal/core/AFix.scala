@@ -572,7 +572,7 @@ class AFix(val maxRaw: BigInt, val minRaw: BigInt, val exp: Int) extends MultiDa
   // Shift bits and decimal point left, adding padding bits right
   def <<|(shift: Int): AFix = {
     val shiftBig = BigInt(2).pow(shift)
-    val ret = new AFix(this.maxRaw * shiftBig, this.minRaw * shiftBig, (this.exp + shift))
+    val ret = new AFix(this.maxRaw * shiftBig, this.minRaw * shiftBig, this.exp)
 
     ret.raw := this.raw << shift
 
@@ -662,7 +662,7 @@ class AFix(val maxRaw: BigInt, val minRaw: BigInt, val exp: Int) extends MultiDa
     if(this.minRaw >= 0)
       ret.raw := U(this.raw).twoComplement(enable, plusOneEnable).asBits
     else
-      ret.raw := S(this.raw).twoComplement(enable, plusOneEnable).asBits
+      ret.raw := S(this.raw).twoComplement(enable, plusOneEnable).asBits.resized
     ret
   }
 
@@ -1066,6 +1066,37 @@ class AFix(val maxRaw: BigInt, val minRaw: BigInt, val exp: Int) extends MultiDa
     val res = AFix(Q)
     res := this.fixTo(res, roundType)
     res
+  }
+
+  /** Round an AFix to a specific exponent, using a specified rounding type. */
+  def round(newExp: ExpNumber, rounding: RoundType, align: Boolean): AFix = this._round(rounding, newExp.value, align)
+  def round(newExp: ExpNumber, rounding: RoundType): AFix = round(newExp, rounding, align = getTrunc.saturation)
+  def round(newExp: ExpNumber): AFix = round(newExp, rounding = getTrunc.rounding, align = getTrunc.saturation)
+  /** Round an AFix to a specific bit width, using a specified roundType type. */
+  def round(bits: BitCount, rounding: RoundType, ignoreExpand: Boolean, align: Boolean): AFix = {
+    val newLeftExp = leftExp - bits.value
+    val prospect = round(newLeftExp exp, rounding, align)
+    // sometimes rounding can expand the representable range and give us an extra MSB
+    if (ignoreExpand || prospect.getBitsWidth == bits.value) {
+      prospect
+    } else {
+      round(newLeftExp + 1 exp, rounding, align)
+    }
+  }
+  def round(bits: BitCount, rounding: RoundType, ignoreExpand: Boolean): AFix = round(bits, rounding, ignoreExpand, align = getTrunc.saturation)
+  def round(bits: BitCount, rounding: RoundType): AFix = round(bits, rounding, ignoreExpand = true, align = getTrunc.saturation)
+  def round(bits: BitCount): AFix = round(bits, rounding = getTrunc.rounding, ignoreExpand = true, align = getTrunc.saturation)
+  /** Round an AFix in such a way that the given number of bits are removed. */
+  def roundOffBits(bits: BitCount, rounding: RoundType = getTrunc.rounding, ignoreExpand: Boolean = true, align: Boolean = getTrunc.saturation): AFix = {
+    assert(bits.value < numWidth, "cannot round away all the bits of a number!")
+    val newExp = exp + bits.value
+    val prospect = round(newExp exp, rounding, align)
+    // sometimes rounding can expand the representable range and give us an extra MSB
+    if (ignoreExpand || prospect.getBitsWidth + bits.value == getBitsWidth) {
+      prospect
+    } else {
+      round(newExp + 1 exp, rounding, align)
+    }
   }
 
   override def toString: String = {

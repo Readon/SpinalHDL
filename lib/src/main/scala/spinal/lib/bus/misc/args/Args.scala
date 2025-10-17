@@ -4,7 +4,7 @@ import spinal.core
 import spinal.core._
 import spinal.lib._
 import spinal.lib.com.i2c.{I2cMasterMemoryMappedGenerics, I2cSlaveGenerics, I2cSlaveMemoryMappedGenerics, TilelinkI2cCtrlFiber}
-import spinal.lib.misc.plic.InterruptCtrlFiber
+import spinal.lib.misc.InterruptCtrlFiber
 
 import scala.collection.mutable.ArrayBuffer
 

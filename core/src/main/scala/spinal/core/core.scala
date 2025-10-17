@@ -80,8 +80,11 @@ package object core extends BaseTypeFactory with BaseTypeCast {
 
     def downto(start: Int): Range.Inclusive = Range.inclusive(i, start, -1)
 
+    /** SpinalHDL "marker" to transform an [[Int]] into a [[BitCount]] */
     def bit    = new BitCount(i)
+    /** SpinalHDL "marker" to transform an [[Int]] into a [[BitCount]] */
     def bits   = new BitCount(i)
+
     def exp    = new ExpNumber(i)
     def pos    = new PosCount(i)
     def slices = new SlicesCount(i)
@@ -261,11 +264,11 @@ package object core extends BaseTypeFactory with BaseTypeCast {
     def UQ(integerWidth: BitCount, fractionWidth: BitCount): AFix = AF(d, integerWidth, fractionWidth, signed = false)
   }
 
-
-  /** SpinalHDL true value
+  /** Hardware true value
    */
   def True(implicit loc: Location)  = Bool(true)
-  /** SpinalHDL false value  
+
+  /** Hardware false value  
    */  
   def False(implicit loc: Location) = Bool(false)
 
@@ -656,6 +659,52 @@ package object core extends BaseTypeFactory with BaseTypeCast {
         String.format(fmt, obj.asInstanceOf[AnyRef])
       }
       formatted.mkString
+    }
+  }
+
+  /**
+   * Extension methods for register simulation initialization
+   */
+  implicit class DataSimInitPimper[T <: Data](data: T) {
+    /**
+     * Set simulation initial value for registers
+     *
+     * @param that Initial value for simulation (supports same types as init())
+     * @return The register itself for chaining
+     *
+     * @example {{{
+     * val counter = Reg(UInt(8 bits)).simInit(0x32)
+     * val reg = Reg(UInt(8 bits)).init(0x00).simInit(0x32)
+     * }}}
+     */
+    def simInit(that: T): T = {
+      require(data.flatten.forall(_.isReg), "simInit can only be applied to registers")
+      
+      // Extract literal values from expressions
+      def findLiteral(expr: Expression): Expression = expr match {
+        case lit: Literal => lit
+        case bt: BaseType => {
+          if (Statement.isSomethingToFullStatement(bt)) {
+            findLiteral(bt.head.source)
+          } else {
+            expr
+          }
+        }
+        case _ => expr
+      }
+      
+      (data, that) match {
+        case (reg: BaseType, value: BaseType) if data.flatten.length == 1 =>
+          val literalValue = findLiteral(value)
+          reg.addTag(SimInitTag(literalValue))
+        case _ =>
+          for ((regElement, valueElement) <- (data.flatten, that.flatten).zipped) {
+            val literalValue = findLiteral(valueElement)
+            regElement.addTag(SimInitTag(literalValue))
+          }
+      }
+      
+      data
     }
   }
 }
