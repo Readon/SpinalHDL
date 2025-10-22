@@ -34,6 +34,7 @@ SpinalHDL 是一个用于描述数字硬件的语言，它：
 - **测试模块**: `spinal.tester` - 全局/集成测试
 
 #### Stream-Based Design Principles (流式设计原则)
+
 **核心理念**：优先使用反压流（Stream）基础设施，替代传统的状态机设计模式，提高代码的可读性、可维护性和可复用性。
 
 **设计准则**：
@@ -42,6 +43,25 @@ SpinalHDL 是一个用于描述数字硬件的语言，它：
 3. **流式仲裁**：使用 `StreamArbiter` 进行多流仲裁，确保公平性和效率
 4. **流式分离**：使用 `StreamDemux` 等工具进行流分离，减少中间变量
 5. **直接转换**：优先使用 `translateWith`、`translateFrom`、`translateInto` 等流转换方法
+
+#### Component Encapsulation Standards (组件封装标准)
+
+**核心原则**：Component类对象的所有输入输出必须通过名为`io`的Bundle实现访问，内部信号不能被外部对象直接访问。
+
+**封装准则**：
+1. **IO Bundle强制**：每个Component必须定义`val io = new Bundle { ... }`
+2. **信号隔离**：所有外部接口信号必须在`io` Bundle中定义
+3. **内部封装**：Component内部信号不得被外部对象直接访问
+4. **接口清晰**：通过`io` Bundle提供明确的硬件接口定义
+#### Component Encapsulation Standards (组件封装标准)
+
+**核心原则**：Component类对象的所有输入输出必须通过名为`io`的Bundle实现访问，内部信号不能被外部对象直接访问。
+
+**封装准则**：
+1. **IO Bundle强制**：每个Component必须定义`val io = new Bundle { ... }`
+2. **信号隔离**：所有外部接口信号必须在`io` Bundle中定义
+3. **内部封装**：Component内部信号不得被外部对象直接访问
+4. **接口清晰**：通过`io` Bundle提供明确的硬件接口定义
 
 ### Testing Strategy
 - **测试类型**: 主要是集成测试
