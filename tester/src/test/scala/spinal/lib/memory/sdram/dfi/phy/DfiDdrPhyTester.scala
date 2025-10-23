@@ -140,16 +140,16 @@ class DfiDdrPhyTester extends SpinalAnyFunSuite {
         dut.io.dfi.control.bank #= 0
 
         // 初始化写数据信号
-        for (i <- 0 until dut.io.dfi.write.wr.length) {
-          dut.io.dfi.write.wr(i).wrdataEn #= false
-          dut.io.dfi.write.wr(i).wrdata #= 0
-          dut.io.dfi.write.wr(i).wrdataMask #= 0
+        dut.io.dfi.write.wr.foreach { wr =>
+          wr.wrdataEn #= false
+          wr.wrdata #= 0
+          wr.wrdataMask #= 0
         }
 
         // 初始化读数据信号
-        for (i <- 0 until dut.io.dfi.read.rd.length) {
-          dut.io.dfi.read.rd(i).rddataValid #= false
-          dut.io.dfi.read.rd(i).rddata #= 0
+        dut.io.dfi.read.rd.foreach { rd =>
+          rd.rddataValid #= false
+          rd.rddata #= 0
         }
 
         // 初始化训练信号
