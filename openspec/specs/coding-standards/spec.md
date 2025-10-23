@@ -181,17 +181,24 @@ Hardware designs MUST include proper verification constructs and optimization te
 
 
 #### REQ-CS-007: Simulation and Testing Best Practices
-Test code MUST follow established patterns for reliable verification and maintainability.
+Test code MUST follow established patterns for reliable verification and maintainability, including DUT definition, SimConfig usage, doSim block logic, simulator support, clock domain management, and assertions.
 
-**Rationale**: Consistent simulation patterns ensure reliable test results and maintainable test code that clearly separates verification logic from hardware design.
+**Rationale**: Consistent simulation patterns ensure reliable test results and maintainable test code that clearly separates verification logic from hardware design. Comprehensive testing covers DUT instantiation, configuration, execution, and validation across supported simulators.
 
 **Requirements**:
-- Use `SpinalAnyFunSuite` for unit tests and `SpinalTesterGhdlBase` for simulation tests
+- Use `SpinalAnyFunSuite` or `SpinalSimFunSuite` (for multi-simulator support) as base classes for test suites
 - Follow test class naming conventions ending with "Tester" or "Test"
-- Organize test code in hierarchical structure mirroring main code
-- Use explicit signal assignments with `#=` operator in simulation
+- Organize test code in hierarchical structure mirroring main code, placed in `tester/src/test/scala/`
+- Define DUT as a class extending `Component` with proper `io` Bundle
+- Use `SimConfig` with options like `withWave` for compilation and waveform generation
+- Implement test logic in `doSim` or `doSimUntilVoid` blocks, using `fork` for concurrency, `waitSampling` for timing, and `assert`/`shouldBe` for validation
+- Support multiple simulators: Verilator (preferred for speed), GHDL, IVerilog; configure via `SimConfig.withVerilator` etc.
+- Manage clock domains with `forkStimulus` for stimulus generation and `ClockDomain` for multi-domain designs
+- Use explicit signal assignments with `#=` operator in simulation (never `:=` which is for hardware logic)
 - Use proper data types (`Int`, `Boolean`, `BigInt`) for test assignments
 - Group related test assignments logically with descriptive comments
+- Ensure test coverage includes functional, timing, boundary, and error conditions
+- Distinguish simulation assignments (`#=`) from hardware assignments (`:=`) to avoid compilation errors
 
 ##### Scenario: Test Class Organization
 - **WHEN** creating test classes
@@ -212,6 +219,26 @@ Test code MUST follow established patterns for reliable verification and maintai
 ##### Scenario: Valid Test Coverage
 - **WHEN** implementing test suites
 - **THEN** achieve comprehensive coverage of design functionality
+
+##### Scenario: DUT Definition and Compilation
+- **WHEN** defining a DUT for testing
+- **THEN** use a Component class with io Bundle and compile via SimConfig
+
+##### Scenario: doSim Block Logic
+- **WHEN** implementing test logic
+- **THEN** use fork for concurrency, waitSampling for timing control, and assertions for validation
+
+##### Scenario: Simulator Support
+- **WHEN** running simulations
+- **THEN** support Verilator, GHDL, IVerilog with appropriate SimConfig settings
+
+##### Scenario: Clock Domain Management
+- **WHEN** testing multi-clock designs
+- **THEN** use forkStimulus and ClockDomain for proper timing
+
+##### Scenario: Assertion and Validation
+- **WHEN** validating outputs
+- **THEN** use assert or shouldBe with descriptive messages
 
 #### REQ-CS-013: Stream-Based Design Pattern
 Data processing components SHOULD use Stream infrastructure for flow control and backpressure.
@@ -254,29 +281,34 @@ case class StreamProcessor(config: Config) extends Component {
 
 
 #### REQ-CS-026: Test Signal Assignment Patterns
-Test signal assignments during simulation MUST follow consistent patterns for different data types.
+Test signal assignments during simulation MUST follow consistent patterns for different data types, strictly using `#=` in doSim blocks and avoiding `:=` which is reserved for hardware logic.
 
-**Rationale**: Consistent assignment patterns improve test code readability and reduce errors in simulation-based testing. Explicit collection indexing prevents ambiguous assignments and improves maintainability.
+**Rationale**: Consistent assignment patterns improve test code readability and reduce errors in simulation-based testing. Explicit collection indexing prevents ambiguous assignments and improves maintainability. Distinguishing simulation assignments from hardware assignments prevents compilation errors.
 
 **Requirements**:
-- Use `#=` operator for all signal assignments in simulation
+- Use `#=` operator exclusively for all signal assignments in simulation functions like `doSim` or `doSimUntilVoid`
+- Never use `:=` in simulation contexts, as it is for hardware logic and will cause type errors
 - Use appropriate data types: `Int` for integer values, `Boolean` for boolean values, `BigInt` for large integers
 - Use explicit indexing for all collection assignments (e.g., `signal(index) #= value`)
 - Use `.randomize()` for generating random test data
 - Use descriptive variable names for complex expressions
 - Group related assignments and use comments to explain test phases
+- Ensure assignments propagate via `waitSampling()` calls
 
 
 **Valid Examples**:
 ```scala
-// ✓ Clear: explicit indexing for all collections
+// ✓ Correct: #= for simulation assignments in doSim
 dut.io.dfi.rdTraining.rdlvlReq(0) #= false      // Read level training request for slice 0
 
-// ✓ Clear: explicit loop for collection initialization
+// ✓ Correct: Loop for collection initialization with #=
 for (i <- 0 until dut.io.dfi.read.rd.length) {
   dut.io.dfi.read.rd(i).rddataValid #= false
   dut.io.dfi.read.rd(i).rddata #= 0
 }
+
+// ✗ Incorrect: := in simulation (compilation error)
+// dut.io.input := 5  // Wrong: := is for hardware logic
 ```
 
 ##### Scenario: Boolean Signal Assignment
@@ -290,6 +322,10 @@ for (i <- 0 until dut.io.dfi.read.rd.length) {
 ##### Scenario: Collection Signal Assignment
 - **WHEN** assigning signals to collections in tests
 - **THEN** use `foreach(_ #= value)` patterns for Vec, List, and similar container types' assignment.
+
+##### Scenario: Invalid Hardware Assignment in Simulation
+- **WHEN** using `:=` in doSim blocks
+- **THEN** it must be flagged as compilation error since `:=` is for hardware logic
 
 ## Implementation Notes
 
