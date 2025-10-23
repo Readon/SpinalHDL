@@ -79,29 +79,29 @@ case class DdrReadDataInterface(config: SdramConfig) extends Bundle with IMaster
  */
 case class DdrInterface(config: SdramConfig) extends Bundle with IMasterSlave {
   // 时钟和控制信号
-  val clk = out Bool()
-  val clk_n = out Bool()
-  val cke = out Bits(1 bits) // 简化为单片选，实际使用时可扩展
-  val cs_n = out Bits(1 bits)
-  val ras_n = out Bool()
-  val cas_n = out Bool()
-  val we_n = out Bool()
+  val clk = Bool()
+  val clk_n = Bool()
+  val cke = Bits(1 bits) // 简化为单片选，实际使用时可扩展
+  val cs_n = Bits(1 bits)
+  val ras_n = Bool()
+  val cas_n = Bool()
+  val we_n = Bool()
 
   // 地址和银行信号
-  val addr = out Bits(Math.max(config.rowWidth, config.columnWidth) bits)
-  val ba = out Bits(config.bankWidth bits)
-  val bg = config.bgWidth > 0 generate out Bits(config.bgWidth bits)
-  val cid = config.cidWidth > 0 generate out Bits(config.cidWidth bits)
+  val addr = Bits(Math.max(config.rowWidth, config.columnWidth) bits)
+  val ba = Bits(config.bankWidth bits)
+  val bg = config.bgWidth > 0 generate Bits(config.bgWidth bits)
+  val cid = config.cidWidth > 0 generate Bits(config.cidWidth bits)
 
   // 数据信号
-  val dq = out Bits(config.dataWidth bits)
-  val dqs = out Bits(config.dataWidth / 8 bits)
-  val dqs_n = out Bits(config.dataWidth / 8 bits)
-  val dm = out Bits(config.dataWidth / 8 bits)
+  val dq = Bits(config.dataWidth bits)
+  val dqs = Bits(config.dataWidth / 8 bits)
+  val dqs_n = Bits(config.dataWidth / 8 bits)
+  val dm = Bits(config.dataWidth / 8 bits)
 
   // 电源管理
-  val odt = out Bits(1 bits)
-  val reset_n = out Bool()
+  val odt = Bits(1 bits)
+  val reset_n = Bool()
 
   override def asMaster(): Unit = {
     out(clk, clk_n, cke, cs_n, ras_n, cas_n, we_n, addr, ba, bg, cid, dq, dqs, dqs_n, dm, odt, reset_n)

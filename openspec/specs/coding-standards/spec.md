@@ -65,6 +65,34 @@ case class MyComponent(config: MyConfig) extends Component {
 - **WHEN** a configuration class contains hardware types
 - **THEN** it should be flagged as design error
 
+#### REQ-CS-008: Bundle and Interface Direction Management
+Bundle inheritance and IMasterSlave interface implementation MUST follow standardized patterns for signal direction management to ensure flexibility and prevent conflicts.
+
+**Rationale**: When creating new interface types through Bundle inheritance or implementing IMasterSlave interfaces, signal directions should not be specified in signal definitions to avoid unnecessary constraints and potential interface conflicts. Directions must be uniformly managed through the IMasterSlave trait's asMaster() method to maintain interface flexibility and standardization.
+
+**Requirements**:
+- When inheriting from Bundle to create new interface types, signal directions MUST NOT be specified in signal definitions
+- When implementing IMasterSlave interfaces, signal directions MUST be explicitly specified only in the asMaster function
+- In other functions or contexts, signal directions MUST NOT be given
+- Directions MUST be managed uniformly through the IMasterSlave trait's asMaster() method
+- This prevents unnecessary constraints, potential interface conflicts, and ensures consistent interface behavior
+
+##### Scenario: Valid Bundle Inheritance
+- **WHEN** creating new interface types through Bundle inheritance
+- **THEN** signal directions must not be specified in signal definitions and should be managed via IMasterSlave.asMaster()
+
+##### Scenario: Valid IMasterSlave Implementation
+- **WHEN** implementing IMasterSlave interface
+- **THEN** signal directions must be specified only in asMaster function
+
+##### Scenario: Invalid Direction Specification in Bundle
+- **WHEN** signal directions are specified in Bundle inheritance
+- **THEN** it must be flagged as design error
+
+##### Scenario: Invalid Direction Specification Outside asMaster
+- **WHEN** signal directions are specified outside asMaster function
+- **THEN** it must be flagged as implementation error
+
 #### REQ-CS-002: Basic Data Type Usage Standards
 Basic data types MUST be used according to their intended semantics and proper initialization patterns.
 
