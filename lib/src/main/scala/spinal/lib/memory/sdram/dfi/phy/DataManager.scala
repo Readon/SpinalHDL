@@ -154,7 +154,7 @@ case class DataProcessor(config: DataManagerConfig,
   // 暂时简化处理，直接连接数据流
 
   // 调试信号
-  debug.dataCount := CountOne(Seq(data.write.valid, data.read.valid))
+  debug.dataCount := CountOne(Seq(data.write.valid, data.read.valid)).resize(32)
 }
 
 /**
@@ -294,7 +294,7 @@ case class DataManagerCommandScheduler(config: DataManagerConfig,
   }
 
   // 调试信号
-  debug.commandCount := CountOne(Seq(command.valid))
+  debug.commandCount := CountOne(Seq(command.valid)).resize(32)
   debug.timingViolationCount := U(0, 32 bits)
 }
 

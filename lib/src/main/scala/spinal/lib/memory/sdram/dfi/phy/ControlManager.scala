@@ -222,12 +222,12 @@ case class ControlDdrInterfaceController(config: ControlConfig,
   sdram.ras_n := True
   sdram.cas_n := True
   sdram.we_n := True
-  sdram.addr := B"0"
-  sdram.ba := B"0"
-  sdram.dq := B"0"
-  sdram.dqs := B"0"
-  sdram.dqs_n := B"0"
-  sdram.dm := B"0"
+  sdram.addr := B"0".resized
+  sdram.ba := B"0".resized
+  sdram.dq := B"0".resized
+  sdram.dqs := B"0".resized
+  sdram.dqs_n := B"0".resized
+  sdram.dm := B"0".resized
   sdram.odt(0) := False
   sdram.reset_n := True
 

@@ -109,17 +109,18 @@ case class UnifiedCommandParser(config: UnifiedAdapterConfig,
   parsedCommand.bank := dfiControl.bank.orR ? dfiControl.bank.asUInt | U"0"
   parsedCommand.chipSelect := dfiControl.csN.asUInt(log2Up(config.dfiConfig.chipSelectNumber) - 1 downto 0)
 
-  // 数据解析
+  // 数据解析 - 根据dataSlice配置处理数据
   parsedData.writeValid := dfiWrite.wr.map(_.wrdataEn).reduce(_ || _)
-  parsedData.writeData := dfiWrite.wr.map(_.wrdata).reduce(_ ## _)
-  parsedData.writeMask := dfiWrite.wr.map(_.wrdataMask).reduce(_ ## _)
+  // 当dataSlice=1时，只使用第一个数据片段；否则拼接所有片段
+  parsedData.writeData := (if (config.dfiConfig.dataSlice == 1) dfiWrite.wr.head.wrdata else dfiWrite.wr.map(_.wrdata).reduce(_ ## _)).resized
+  parsedData.writeMask := (if (config.dfiConfig.dataSlice == 1) dfiWrite.wr.head.wrdataMask else dfiWrite.wr.map(_.wrdataMask).reduce(_ ## _)).resized
   parsedData.readReady := True
-  parsedData.readData := dfiRead.rd.map(_.rddata).reduce(_ ## _)
+  parsedData.readData := (if (config.dfiConfig.dataSlice == 1) dfiRead.rd.head.rddata else dfiRead.rd.map(_.rddata).reduce(_ ## _)).resized
   parsedData.readValid := dfiRead.rd.map(_.rddataValid).reduce(_ || _)
 
   // 调试信号 - 符合REQ-CS-018：使用直接对象访问
-  debug.commandCount := CountOne(Seq(parsedCommand.valid))
-  debug.dataCount := CountOne(Seq(parsedData.writeValid, parsedData.readValid))
+  debug.commandCount := CountOne(Seq(parsedCommand.valid)).resize(32)
+  debug.dataCount := CountOne(Seq(parsedData.writeValid, parsedData.readValid)).resize(32)
   debug.errorCount := U(0, 32 bits)
 }
 
@@ -192,21 +193,21 @@ case class UnifiedTrainingProcessor(config: UnifiedAdapterConfig,
   if (config.dfiConfig.useRdlvlResp) {
     training.readResp := dfiRdTraining.rdlvlResp.orR ? dfiRdTraining.rdlvlResp | B"0"
   } else {
-    training.readResp := B"0"
+    training.readResp := B"0".resized
   }
   if (config.dfiConfig.useWrlvlResp) {
     training.writeResp := dfiWrTraining.wrlvlResp.orR ? dfiWrTraining.wrlvlResp | B"0"
   } else {
-    training.writeResp := B"0"
+    training.writeResp := B"0".resized
   }
   if (config.dfiConfig.useCalvlResp) {
     training.caResp := dfiCaTraining.calvlResp.orR ? dfiCaTraining.calvlResp | B"0"
   } else {
-    training.caResp := B"0"
+    training.caResp := B"0".resized
   }
 
   // 调试信号 - 符合REQ-CS-018：使用直接对象访问
-  debug.trainingCount := CountOne(Seq(training.readReq, training.writeReq, training.caReq))
+  debug.trainingCount := CountOne(Seq(training.readReq, training.writeReq, training.caReq)).resize(32)
   debug.errorCount := U(0, 32 bits)
 }
 
@@ -232,14 +233,14 @@ case class UnifiedInitProcessor(config: UnifiedAdapterConfig,
   init.modeRegisterSet := Vec(False, False, False, False)
   init.zqCalibration := False
   if (config.dfiConfig.useFreqRatio) {
-    init.freqRatio := dfiStatus.freqRatio
+    init.freqRatio := dfiStatus.freqRatio.resized
   } else {
-    init.freqRatio := B"0"
+    init.freqRatio := B"0".resized
   }
   if (config.dfiConfig.useStatusSignals) {
-    init.dramClkDisable := dfiStatus.dramClkDisable
+    init.dramClkDisable := dfiStatus.dramClkDisable.resized
   } else {
-    init.dramClkDisable := B"0"
+    init.dramClkDisable := B"0".resized
   }
 }
 
@@ -293,12 +294,12 @@ case class UnifiedParsedCommand(config: DfiConfig) extends Bundle with IMasterSl
  * 统一解析数据接口
  */
 case class UnifiedParsedData(config: DfiConfig) extends Bundle with IMasterSlave {
-  val writeValid = Bool()
-  val writeData = Bits(config.dataWidth bits)
-  val writeMask = Bits(config.dataWidth / 8 bits)
-  val readReady = Bool()
-  val readData = Bits(config.dataWidth bits)
-  val readValid = Bool()
+   val writeValid = Bool()
+   val writeData = Bits(config.sdram.dataWidth bits)
+   val writeMask = Bits(config.sdram.dataWidth / 8 bits)
+   val readReady = Bool()
+   val readData = Bits(config.sdram.dataWidth bits)
+   val readValid = Bool()
 
   override def asMaster(): Unit = {
     out(writeValid, writeData, writeMask, readReady)
@@ -346,12 +347,12 @@ case class UnifiedCommandInterface(config: DfiConfig) extends Bundle with IMaste
  * 统一数据接口
  */
 case class UnifiedDataInterface(config: DfiConfig) extends Bundle with IMasterSlave {
-  val writeValid = Bool()
-  val writeData = Bits(config.dataWidth bits)
-  val writeMask = Bits(config.dataWidth / 8 bits)
-  val readReady = Bool()
-  val readData = Bits(config.dataWidth bits)
-  val readValid = Bool()
+   val writeValid = Bool()
+   val writeData = Bits(config.sdram.dataWidth bits)
+   val writeMask = Bits(config.sdram.dataWidth / 8 bits)
+   val readReady = Bool()
+   val readData = Bits(config.sdram.dataWidth bits)
+   val readValid = Bool()
 
   override def asMaster(): Unit = {
     out(writeValid, writeData, writeMask, readReady)

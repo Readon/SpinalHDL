@@ -33,7 +33,7 @@ class Dfi31ComplianceTester extends SpinalAnyFunSuite {
   private val TEST_BANK_WIDTH = 3
   private val TEST_COLUMN_WIDTH = 10
   private val TEST_ROW_WIDTH = 15
-  private val TEST_DATA_WIDTH = 16
+  private val TEST_DATA_WIDTH = 32
   private val TEST_DDR_MHZ = 200
   private val TEST_DDR_WR_LAT = 4
   private val TEST_DDR_RD_LAT = 4
