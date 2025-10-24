@@ -84,16 +84,16 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     val ctrlReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x00).init(0)
     io.ctrl.reset := ctrlReg(0) // [0] Global reset
     ctrlReg(8) := io.ctrl.initDone // [8] Initialization status (RO)
-    ctrlReg(9) := trainingCtrl.writeLeveling.io.done // [9] Write leveling done
-    ctrlReg(10) := trainingCtrl.readGate.io.done // [10] Read gate training done
-    ctrlReg(11) := trainingCtrl.readEye.io.done // [11] Read eye training done
+    ctrlReg(9) := trainingCtrl.writeLeveling.done // [9] Write leveling done
+    ctrlReg(10) := trainingCtrl.readGate.done // [10] Read gate training done
+    ctrlReg(11) := trainingCtrl.readEye.done // [11] Read eye training done
 
     // Delay control register (0x04)
     val delayCtrlReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x04).init(0)
     io.phyCtrl.dly_sel := delayCtrlReg(16 to 23) // [16:23] Byte lane select
     io.phyCtrl.cdly_rst := delayCtrlReg(0) // [0] CDLY reset
     io.phyCtrl.cdly_inc := delayCtrlReg(1) // [1] CDLY increment
-    delayCtrlReg(24 to 31) := trainingCtrl.writeLeveling.io.cdlyCount.asBits.resize(8) // [24:31] Wlevel counter
+    delayCtrlReg(24 to 31) := trainingCtrl.writeLeveling.cdlyCount.asBits.resize(8) // [24:31] Wlevel counter
 
     // Data path control register (0x08)
     val dataCtrlReg = busCtrl.createWriteOnly(Bits(32 bits), 0x08)
@@ -233,7 +233,7 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     }
 
     // Extract all DFI source signals for serialization
-    val signals: Seq[Bool] = signalMappings.map(_.padSignal)
+    val signals = signalMappings.map(_.padSignal)
 
     // Method to connect the processed output to the correct pad
     def connectOutput(index: Int, dataOut: Bool): Unit = {
@@ -475,20 +475,10 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
 
   // Training FSM using flattened phyCtrl interface
   // Training Module Definitions
-  class TrainingController(config: DfiConfig) extends Area {
-    val io = new Bundle {
-      val dfi = slave(Dfi(config))
-      val status = new Bundle {
-        val initDone = out(Bool())
-      }
-    }
-    
-    val writeLeveling = new WriteLevelingModule(config)
-    val readGate = new ReadGateModule(config)
-    val readEye = new ReadEyeModule(config)
-    writeLeveling.io.start := io.dfi.wrTraining.wrlvlEn.orR
-    readGate.io.start := io.dfi.rdTraining.rdlvlEn.orR
-    readEye.io.start := io.dfi.rdTraining.rdlvlGateEn.orR
+  class TrainingController(config: DfiConfig, dfi: Dfi, initDone: Bool) extends Area {
+    val writeLeveling = new WriteLevelingModule(config, dfi.wrTraining.wrlvlEn.orR)
+    val readGate = new ReadGateModule(config, dfi.rdTraining.rdlvlEn.orR)
+    val readEye = new ReadEyeModule(config, dfi.rdTraining.rdlvlGateEn.orR)
 
     // io.phyCtrl.cdly_value := writeLeveling.io.cdlyCount
     // io.phyCtrl.dqs_inc_count := writeLeveling.io.dqsIncCount
@@ -501,53 +491,47 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       val done = new State
 
       idle.whenIsActive {
-        when(writeLeveling.io.start) { goto(wrLevel) }
+        when(writeLeveling.done) { goto(wrLevel) }
       }
       wrLevel.whenIsActive {
-        when(writeLeveling.io.done) { goto(rdGate) }
+        when(writeLeveling.done) { goto(rdGate) }
         rdGate.whenIsActive {
-          when(readGate.io.done) { goto(rdEye) }
+          when(readGate.done) { goto(rdEye) }
         }
         rdEye.whenIsActive {
-          when(readEye.io.done) { goto(done) }
+          when(readEye.done) { goto(done) }
         }
 
         done.whenIsActive {
-          io.status.initDone := True
+          initDone := True
           goto(idle)
         }
       }
     }
   }
 
-  class WriteLevelingModule(config: DfiConfig) extends Area {
-    val io = new Bundle {
-      val start = in(Bool())
-      val done = out(Bool())
-      val cdlyCount = out(UInt(9 bits))
-      val dqsIncCount = out(UInt(9 bits))
-    }
+  class WriteLevelingModule(config: DfiConfig, start: Bool) extends Area {
+    val done = Bool()
+    val cdlyCount = UInt(9 bits)
+    val dqsIncCount = UInt(9 bits)
 
     val counter = Reg(UInt(9 bits)) init (0)
     val doneReg = RegInit(False)
 
-    when(io.start) {
+    when(start) {
       counter := counter + 1
       doneReg := counter >= 32
     }
 
-    io.cdlyCount := counter
-    io.dqsIncCount := counter
-    io.done := doneReg
+    cdlyCount := counter
+    dqsIncCount := counter
+    done := doneReg
   }
 
-  class ReadGateModule(config: DfiConfig) extends Area {
-    val io = new Bundle {
-      val start = in(Bool())
-      val done = out(Bool())
-      val bitslip = out(Bool())
-      val dq_inc = out(Bool())
-    }
+  class ReadGateModule(config: DfiConfig, start: Bool) extends Area {
+    val done = Bool()
+    val bitslip = Bool()
+    val dq_inc = Bool()
 
     val shiftCounter = Reg(UInt(4 bits)) init (0)
     val pulseCounter = Reg(UInt(4 bits)) init (0)
@@ -555,22 +539,19 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
     pulseCounter := pulseCounter + 1
 
     // Alternate between dq_inc and bitslip
-    io.dq_inc := pulseCounter === 0
-    io.bitslip := pulseCounter === 8
+    dq_inc := pulseCounter === 0
+    bitslip := pulseCounter === 8
 
-    when(io.bitslip) {
+    when(bitslip) {
       shiftCounter := shiftCounter + 1
     }
 
-    io.done := shiftCounter === 7
+    done := shiftCounter === 7
   }
 
-  class ReadEyeModule(config: DfiConfig) extends Area {
-    val io = new Bundle {
-      val start = in(Bool())
-      val done = out(Bool())
-      val phase = out(UInt(2 bits))
-    }
+  class ReadEyeModule(config: DfiConfig, start: Bool) extends Area {
+    val done = Bool()
+    val phase = UInt(2 bits)
 
     val timeout = Reg(UInt(16 bits))
     val phaseReg = Reg(UInt(2 bits))
@@ -581,12 +562,10 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
       phaseReg := phaseReg + 1
     }
 
-    io.phase := phaseReg
-    io.done := phaseReg === 3
+    phase := phaseReg
+    done := phaseReg === 3
   }
 
   // Instantiate TrainingController
-  val trainingCtrl = new TrainingController(dfiConfig)
-  trainingCtrl.io.dfi := io.dfi
-  trainingCtrl.io.status.initDone := io.ctrl.initDone
+  val trainingCtrl = new TrainingController(dfiConfig, io.dfi, io.ctrl.initDone)
 }

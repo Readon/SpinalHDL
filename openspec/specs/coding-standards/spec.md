@@ -6,19 +6,16 @@ This specification defines the global coding standards for SpinalHDL library dev
 ## Requirements
 
 #### REQ-CS-001: Component IO Bundle Access and Naming Standards
-All Component class input/output signals MUST be accessed through the `io` named Bundle, and internal signals MUST be properly encapsulated. Area objects MUST NOT define Bundles named "io"; instead, use more descriptive names that clearly indicate the Bundle's purpose and context.
+All Component class input/output signals MUST be accessed through the `io` named Bundle, and internal signals MUST be properly encapsulated.
 
-**Rationale**: SpinalHDL Components encapsulate hardware modules, and all external interfaces must go through the dedicated `io` Bundle to maintain proper encapsulation and prevent direct signal access. Area objects provide encapsulation for related logic and signals. Using generic names like "io" reduces code readability and makes it harder to understand the purpose of different Bundles within an Area. Descriptive naming improves maintainability and makes the design intent clearer. Additionally, proper signal assignment completeness ensures all hardware signals have defined connections.
+**Rationale**: SpinalHDL Components encapsulate hardware modules, and all external interfaces must go through the dedicated `io` Bundle to maintain proper encapsulation and prevent direct signal access. Additionally, proper signal assignment completeness ensures all hardware signals have defined connections.
 
 **Requirements**:
 - Component classes MUST define a `val io = new Bundle { ... }` field
 - All input/output signals MUST be defined within the `io` Bundle
 - External objects MUST NOT directly access internal Component signals
 - Internal signals MAY be accessed within the Component for logic implementation
-- Area objects MUST NOT define any Bundle with the name "io"
-- Bundle names MUST be descriptive and indicate their specific purpose
-- Bundle names SHOULD reflect the signals they contain or their functional role
-- Avoid generic names that don't provide context about the Bundle's usage
+- Bundle names MUST follow general naming conventions (see REQ-CS-033)
 - When creating hardware signals in transformations, all Bundle fields MUST be explicitly assigned using `assignUnassignedByName()` after custom assignments
 - Use direct object access for Bundle field assignments instead of method chaining
 
@@ -59,10 +56,6 @@ case class MyComponent(config: MyConfig) extends Component {
 
 **Scenarios**:
 - **WHEN** defining a Component **THEN** all IO must go through the `io` Bundle and internal signals are properly encapsulated
-- **WHEN** defining Bundles within Area objects **THEN** use descriptive names instead of "io"
-- **WHEN** naming Bundles in Area objects **THEN** choose names that reflect their purpose and content
-- **WHEN** using generic names like "io" in Area objects **THEN** it must be flagged as naming violation
-- **WHEN** designing Area objects **THEN** ensure Bundle names enhance code readability and maintainability
 - **WHEN** creating hardware signals in transformations **THEN** all Bundle fields must be explicitly assigned using `assignUnassignedByName()`
 - **WHEN** assigning Bundle fields **THEN** use direct object access instead of method chaining
 - **WHEN** external code accesses Component internal signals **THEN** it must be flagged as encapsulation violation
@@ -180,7 +173,7 @@ Test code MUST follow established patterns for reliable verification and maintai
 
 **Requirements**:
 - Use `SpinalAnyFunSuite` or `SpinalSimFunSuite` (for multi-simulator support) as base classes for test suites
-- Follow test class naming conventions ending with "Tester" or "Test"
+- Test class names MUST follow general naming conventions (see REQ-CS-033)
 - Organize test code in hierarchical structure mirroring main code, placed in `tester/src/test/scala/`
 - Define DUT as a class extending `Component` with proper `io` Bundle
 - Use `SimConfig` with options like `withWave` for compilation and waveform generation
@@ -306,7 +299,7 @@ Test signal assignments during simulation MUST follow consistent patterns for di
 - Use appropriate data types: `Int` for integer values, `Boolean` for boolean values, `BigInt` for large integers
 - Use explicit indexing for all collection assignments (e.g., `signal(index) #= value`)
 - Use `.randomize()` for generating random test data
-- Use descriptive variable names for complex expressions
+- Variable names MUST follow general naming conventions (see REQ-CS-033)
 - Group related assignments and use comments to explain test phases
 - Ensure assignments propagate via `waitSampling()` calls
 
@@ -394,6 +387,11 @@ IMasterSlave interfaces SHOULD implement << and >> functions for standardized bi
 - Functions MUST support interface composition and chaining for flexible signal routing
 - Connect signals defined with << and >> functions with those functions as possible
 
+**Connection Usage Requirements**:
+- When connecting IMasterSlave interfaces that implement << and >> functions, these functions MUST be used for connections instead of manual signal assignments
+- Prefer << and >> functions over individual signal assignments (:=) for interface connections to ensure consistency and type safety
+- Interface connections using << and >> functions improve code readability and maintainability
+
 **Example**:
 ```scala
 trait MyInterface extends Bundle with IMasterSlave {
@@ -421,8 +419,14 @@ case class MyComponent() extends Component {
     val output = master(MyInterface())
   }
 
+  // ✓ Correct: Use << and >> functions for interface connections
   io.output << io.input  // Forward connection
   io.input >> io.output  // Reverse connection
+
+  // ✗ Incorrect: Manual signal assignments when << and >> are available
+  // io.output.data := io.input.data
+  // io.output.valid := io.input.valid
+  // io.input.ready := io.output.ready
 }
 ```
 
@@ -431,3 +435,126 @@ case class MyComponent() extends Component {
 - **WHEN** connecting interfaces **THEN** use << or >> functions for consistent, type-safe signal routing
 - **WHEN** chaining interfaces **THEN** leverage function composition for flexible signal paths
 - **WHEN** connecting signals defined with << and >> functions **THEN** use those functions for connections
+- **WHEN** an IMasterSlave interface implements << and >> functions **THEN** connections to that interface MUST use those functions instead of manual signal assignments
+- **WHEN** manually assigning individual signals between IMasterSlave interfaces **THEN** it should be flagged as connection pattern violation if << and >> functions are available
+- **WHEN** designing connection logic **THEN** prefer << and >> functions over := assignments for interface connections to improve maintainability
+
+#### REQ-CS-030: Configuration Class Hardware Syntax Prohibition
+Configuration classes MUST NOT use hardware description syntax to maintain type safety and design clarity.
+
+**Rationale**: Configuration classes should remain pure Scala constructs to avoid type mismatches and ensure they serve only as parameter containers without hardware logic.
+
+**Requirements**:
+- Configuration classes MUST NOT contain hardware types (e.g., `Bool`, `UInt`, `SInt`, `Bundle`)
+- Configuration classes MUST NOT use hardware description syntax (e.g., `:=`, `when`, `<>`)
+- Configuration classes SHOULD contain only pure Scala types and methods
+
+**Scenarios**:
+- **WHEN** defining a configuration class **THEN** it must not contain hardware types
+- **WHEN** a configuration class contains hardware syntax **THEN** it should be flagged as design error
+
+#### REQ-CS-032: Area Object Signal Direction Restrictions
+Area objects MUST use only directionless signals to maintain proper encapsulation and avoid interface confusion.
+
+**Rationale**: Area objects provide encapsulation for related logic and signals. Direction signals in Area can break encapsulation and make interfaces unclear. Additionally, minimizing Bundle creation in Area objects improves code simplicity and readability.
+
+**Requirements**:
+- Area objects MUST NOT define signals with direction specifiers (`in`, `out`, `inout`, `master`, `slave`). All signals in Area objects MUST be directionless
+- Area objects SHOULD avoid creating new Bundles; prefer direct signal definitions for simplicity
+
+**Example**:
+```scala
+case class MyComponent(config: MyConfig) extends Component {
+  val io = new Bundle {
+    val input = in UInt(32 bits)
+    val output = out UInt(32 bits)
+  }
+
+  val processingArea = new Area {
+    // ✓ Correct: Directionless signals in Area
+    val enable = Bool()
+    val reset = Bool()
+    val data = UInt(32 bits)
+
+    // ✗ Incorrect: Direction signals in Area
+    // val input = in UInt(32 bits)  // Not allowed
+
+    // ✗ Incorrect: Avoid new Bundles in Area
+    // val signals = new Bundle { ... }  // Discouraged
+  }
+}
+```
+
+**Scenarios**:
+- **WHEN** defining signals in Area objects **THEN** avoid direction specifiers to maintain encapsulation
+- **WHEN** a signal in Area has direction **THEN** it must be flagged as encapsulation violation
+- **WHEN** designing Area objects **THEN** prefer direct signal definitions over new Bundles for simplicity
+
+#### REQ-CS-033: General Naming Conventions
+All identifiers (classes, components, bundles, signals, variables, etc.) MUST follow consistent naming patterns to improve code readability and maintainability.
+
+**Rationale**: Consistent and descriptive naming makes code self-documenting, reduces cognitive load, and facilitates understanding of design intent across the codebase.
+
+**Requirements**:
+- All names MUST be descriptive and indicate their specific purpose
+- All names SHOULD reflect the functional role or content of the entity
+- Avoid generic names that don't provide context about the entity's usage
+- Use camelCase for variables, signals, and methods
+- Use PascalCase for classes, components, and bundles
+- Test class names MUST end with "Tester" or "Test"
+- Bundle names MUST clearly indicate their interface purpose
+- Signal names MUST describe their function or data content
+
+**Example**:
+```scala
+// ✓ Correct: Descriptive naming
+case class MemoryController(config: MemoryConfig) extends Component {
+  val io = new Bundle {
+    val readRequest = in Bool()
+    val writeRequest = in Bool()
+    val address = in UInt(32 bits)
+    val dataOut = out Bits(64 bits)
+  }
+  
+  val addressDecoder = new Area {
+    val bankSelect = UInt(4 bits)
+    val rowAddress = UInt(16 bits)
+  }
+}
+
+// ✗ Incorrect: Generic naming
+case class MyModule(config: MyConfig) extends Component {
+  val io = new Bundle {
+    val in1 = in Bool()
+    val in2 = in Bool()
+    val out1 = out Bits(64 bits)
+  }
+  
+  val area1 = new Area {
+    val sig1 = UInt(4 bits)
+    val sig2 = UInt(16 bits)
+  }
+}
+```
+
+**Scenarios**:
+- **WHEN** naming any identifier **THEN** it must be descriptive and indicate its specific purpose
+- **WHEN** a name is generic or lacks context **THEN** it must be flagged as naming violation
+- **WHEN** naming configuration classes **THEN** they must end with "Config"
+- **WHEN** naming test classes **THEN** they must end with "Tester" or "Test"
+- **WHEN** naming bundles **THEN** they must clearly indicate their interface purpose
+- **WHEN** naming signals **THEN** they must describe their function or data content
+
+#### REQ-CS-031: Configuration Class Naming Convention
+Configuration class names MUST follow standardized naming patterns for consistency and readability.
+
+**Rationale**: Uniform naming conventions improve code maintainability and make configuration classes easily identifiable.
+
+**Requirements**:
+- Configuration class names MUST end with "Config"
+- Configuration class names MUST follow general naming conventions (see REQ-CS-033)
+
+**Scenarios**:
+- **WHEN** a class's name ends with "Config" **THEN** it should be considered a configuration class
+- **WHEN** naming a configuration class **THEN** it must end with "Config"
+- **WHEN** a configuration class does not end with "Config" **THEN** it should be flagged as naming violation

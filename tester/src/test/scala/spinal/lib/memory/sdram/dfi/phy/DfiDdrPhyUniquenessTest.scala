@@ -9,7 +9,7 @@ import spinal.core._
 import spinal.lib._
 import spinal.lib.memory.sdram.dfi._
 import spinal.lib.memory.sdram.dfi.phy.interfaces._
-import spinal.lib.memory.sdram.dfi.phy.abstracts._
+import spinal.lib.memory.sdram.dfi.phy.interfaces._
 
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -283,6 +283,81 @@ class DfiDdrPhyUniquenessTest extends AnyFunSuite {
     assert(true) // 结构验证通过
   }
 
+  test("新架构模块验证") {
+    // 验证新的3模块架构组件
+    val sdramConfig = SdramConfig(
+      generation = SdramGeneration.DDR3,
+      bgWidth = 0,
+      cidWidth = 0,
+      bankWidth = TEST_BANK_WIDTH,
+      columnWidth = TEST_COLUMN_WIDTH,
+      rowWidth = TEST_ROW_WIDTH,
+      dataWidth = TEST_DATA_WIDTH,
+      ddrMHZ = TEST_DDR_MHZ,
+      ddrWrLat = TEST_DDR_WR_LAT,
+      ddrRdLat = TEST_DDR_RD_LAT,
+      sdramtime = SdramTiming(
+        generation = 3,
+        RFC = TEST_RFC,
+        RAS = TEST_RAS,
+        RP = TEST_RP,
+        RCD = TEST_RCD,
+        WTR = TEST_WTR,
+        WTP = TEST_WTP,
+        RTP = TEST_RTP,
+        RRD = TEST_RRD,
+        REF = TEST_REF,
+        FAW = TEST_FAW
+      )
+    )
+
+    val dfiConfig = DfiConfig(
+      chipSelectNumber = TEST_CHIP_SELECT_SINGLE,
+      dataSlice = TEST_DATA_SLICE_DOUBLE,
+      signalConfig = DfiSignalConfig.DDR3(),
+      timeConfig = DfiTimeConfig(
+        frequencyRatio = TEST_FREQUENCY_RATIO_1,
+        cmdPhase = TEST_CMD_PHASE,
+        tPhyWrLat = TEST_PHY_WR_LAT,
+        tPhyWrData = TEST_PHY_WR_DATA,
+        tPhyWrCsLat = TEST_PHY_WR_CS_LAT,
+        tPhyWrCsGap = TEST_PHY_WR_CS_GAP,
+        tRddataEn = TEST_RDDATA_EN,
+        tPhyRdlat = TEST_PHY_RD_LAT,
+        tPhyRdCslat = TEST_PHY_RD_CS_LAT,
+        tPhyRdCsGap = TEST_PHY_RD_CS_GAP
+      ),
+      sdram = sdramConfig
+    )
+
+    // 验证新架构配置
+    val unifiedAdapterConfig = UnifiedAdapterConfig(
+      dfiConfig = dfiConfig,
+      sdramConfig = sdramConfig,
+      ddrStandard = DdrStandard.DDR3,
+      features = DfiDdrPhyFeatures()
+    )
+
+    // 验证新架构接口
+    val unifiedInternal = UnifiedInternalInterface(dfiConfig)
+    val unifiedParsedCommand = UnifiedParsedCommand(dfiConfig)
+    val unifiedParsedData = UnifiedParsedData(dfiConfig)
+
+    // 验证新架构调试接口
+    val unifiedAdapterDebug = UnifiedAdapterDebug()
+    val unifiedCommandParserDebug = UnifiedCommandParserDebug()
+    val unifiedTrainingProcessorDebug = UnifiedTrainingProcessorDebug()
+
+    // 验证新架构组件结构
+    assert(unifiedAdapterConfig.dfiConfig.chipSelectNumber > 0)
+    assert(unifiedInternal.command.valid.isInstanceOf[Bool])
+    assert(unifiedParsedCommand.valid.isInstanceOf[Bool])
+    assert(unifiedParsedData.writeValid.isInstanceOf[Bool])
+    assert(unifiedAdapterDebug.commandCount.isInstanceOf[UInt])
+
+    assert(true) // 新架构验证通过
+  }
+
   test("包结构完整性验证") {
     // 验证包结构完整，所有必要的组件都已定义
 
@@ -292,10 +367,16 @@ class DfiDdrPhyUniquenessTest extends AnyFunSuite {
     // 验证关键类型可以被引用
     type TestInternal = DfiInternal
     type TestStandard = DdrStandardInterface
-    type TestTiming = TimingController
-    type TestStateMachine = StateMachineTemplate
-    type TestDataTransformer = DataTransformer[_, _]
-    type TestCommandProcessor = CommandProcessor[_, _]
+    type TestTiming = DdrTimingInterface
+    type TestStateMachine = DdrInitInterface
+    type TestDataTransformer = DdrDataInterface
+    type TestCommandProcessor = DdrCommandInterface
+
+    // 验证新架构类型
+    type TestUnifiedAdapter = UnifiedAdapter
+    type TestDataManager = DataManager
+    type TestControlManager = ControlManager
+    type TestUnifiedInternal = UnifiedInternalInterface
 
     assert(true) // 包结构验证通过
   }

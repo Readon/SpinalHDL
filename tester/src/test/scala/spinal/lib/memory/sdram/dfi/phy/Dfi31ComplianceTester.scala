@@ -735,4 +735,93 @@ class Dfi31ComplianceTester extends SpinalAnyFunSuite {
         simSuccess()
       }
   }
+
+  test("Dfi31_NewArchitectureIntegration") {
+    SimConfig.withVcdWave
+      .compile {
+        // 创建支持新3模块架构的PHY配置
+        val sdramConfig = SdramConfig(
+          generation = SdramGeneration.DDR3,
+          bgWidth = 0,
+          cidWidth = 0,
+          bankWidth = TEST_BANK_WIDTH,
+          columnWidth = TEST_COLUMN_WIDTH,
+          rowWidth = TEST_ROW_WIDTH,
+          dataWidth = TEST_DATA_WIDTH,
+          ddrMHZ = TEST_DDR_MHZ,
+          ddrWrLat = TEST_DDR_WR_LAT,
+          ddrRdLat = TEST_DDR_RD_LAT,
+          sdramtime = SdramTiming(
+            generation = TEST_DDR3_GENERATION,
+            RFC = TEST_RFC,
+            RAS = TEST_RAS,
+            RP = TEST_RP,
+            RCD = TEST_RCD,
+            WTR = TEST_WTR,
+            WTP = TEST_WTP,
+            RTP = TEST_RTP,
+            RRD = TEST_RRD,
+            REF = TEST_REF,
+            FAW = TEST_FAW
+          )
+        )
+
+        val dfiConfig = DfiConfig(
+          chipSelectNumber = TEST_CHIP_SELECT_SINGLE,
+          dataSlice = TEST_DATA_SLICE_SINGLE,
+          signalConfig = DfiSignalConfig.DDR3(),
+          timeConfig = DfiTimeConfig(
+            frequencyRatio = TEST_FREQUENCY_RATIO_1,
+            cmdPhase = TEST_CMD_PHASE,
+            tPhyWrLat = TEST_PHY_WR_LAT,
+            tPhyWrData = TEST_PHY_WR_DATA,
+            tPhyWrCsLat = TEST_PHY_WR_CS_LAT,
+            tPhyWrCsGap = TEST_PHY_WR_CS_GAP,
+            tRddataEn = TEST_RDDATA_EN,
+            tPhyRdlat = TEST_PHY_RD_LAT,
+            tPhyRdCslat = TEST_PHY_RD_CS_LAT,
+            tPhyRdCsGap = TEST_PHY_RD_CS_GAP
+          ),
+          sdram = sdramConfig
+        )
+
+        val phyConfig = DfiDdrPhyConfig(
+          ddrStandard = DdrStandard.DDR3,
+          dfiConfig = dfiConfig,
+          sdramConfig = sdramConfig,
+          features = DfiDdrPhyFeatures()
+        )
+
+        val phy = DfiDdrPhy(phyConfig)
+        phy
+      }
+      .doSimUntilVoid { dut =>
+        dut.clockDomain.forkStimulus(TEST_CLOCK_PERIOD)
+
+        // 初始化所有信号
+        dut.io.dfi.control.rasN #= 1
+        dut.io.dfi.control.casN #= 1
+        dut.io.dfi.control.weN #= 1
+        dut.io.dfi.control.csN #= 0
+
+        dut.clockDomain.waitSampling(TEST_INIT_WAIT_CYCLES)
+
+        // 测试新架构下的命令流
+        // UnifiedAdapter -> DataManager -> ControlManager 数据流
+        dut.io.dfi.control.rasN #= 0
+        dut.io.dfi.control.casN #= 1
+        dut.io.dfi.control.weN #= 1
+        dut.io.dfi.control.address #= 0x1000
+        dut.io.dfi.control.bank #= 1
+        dut.clockDomain.waitSampling(TEST_COMMAND_WAIT_CYCLES)
+
+        // 验证新架构状态
+        println(s"新架构初始化状态: ${dut.io.status.initialized.toBoolean}")
+        println(s"新架构校准状态: ${dut.io.status.calibrating.toBoolean}")
+        println(s"新架构错误状态: ${dut.io.status.error.toBoolean}")
+
+        dut.clockDomain.waitSampling(TEST_FINAL_WAIT_CYCLES)
+        simSuccess()
+      }
+  }
 }

@@ -124,7 +124,7 @@ class DfiDdrPhyTester extends SpinalAnyFunSuite {
           features = DfiDdrPhyFeatures()
         )
 
-        // 创建PHY和Controller
+        // 创建PHY - 使用新的3模块架构
         val phy = DfiDdrPhy(phyConfig)
         phy
       }

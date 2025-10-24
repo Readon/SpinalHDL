@@ -1,3 +1,4 @@
+
 package spinal.lib.memory.sdram.dfi.phy
 
 import spinal.core._
@@ -9,11 +10,11 @@ import spinal.tester.SpinalAnyFunSuite
 import scala.util.Random
 
 /**
- * DFI适配器单元测试
+ * 统一适配器单元测试
  *
- * 测试DFI信号到内部命令的转换功能
+ * 测试DFI协议解析和标准适配的合并功能
  */
-class DfiAdapterTester extends SpinalAnyFunSuite {
+class UnifiedAdapterTester extends SpinalAnyFunSuite {
 
   import spinal.core._
   import spinal.core.sim._
@@ -55,7 +56,7 @@ class DfiAdapterTester extends SpinalAnyFunSuite {
   private val TEST_COMMAND_WAIT_CYCLES = 1
   private val TEST_FINAL_WAIT_CYCLES = 50
 
-  test("DfiAdapter_BasicCommandParsing") {
+  test("UnifiedAdapter_BasicCommandParsing") {
     SimConfig.withVcdWave
       .compile {
         // 创建DDR3配置
@@ -104,12 +105,14 @@ class DfiAdapterTester extends SpinalAnyFunSuite {
           sdram = sdramConfig
         )
 
-        val config = DfiAdapterConfig(
+        val config = UnifiedAdapterConfig(
           dfiConfig = dfiConfig,
+          sdramConfig = sdramConfig,
+          ddrStandard = DdrStandard.DDR3,
           features = DfiDdrPhyFeatures()
         )
 
-        DfiAdapter(config)
+        UnifiedAdapter(config)
       }
       .doSimUntilVoid { dut =>
         dut.clockDomain.forkStimulus(TEST_CLOCK_PERIOD)
@@ -134,10 +137,10 @@ class DfiAdapterTester extends SpinalAnyFunSuite {
         dut.clockDomain.waitSampling(TEST_COMMAND_WAIT_CYCLES)
 
         // 验证内部命令
-        assert(dut.io.dfiInternal.command.valid.toBoolean)
-        assert(dut.io.dfiInternal.command.command.toEnum == DdrCommand.ACT)
-        assert(dut.io.dfiInternal.command.address.toLong == 0x1000)
-        assert(dut.io.dfiInternal.command.bank.toInt == 1)
+        assert(dut.io.internal.command.valid.toBoolean)
+        assert(dut.io.internal.command.cmd.toEnum == DdrCommand.ACT)
+        assert(dut.io.internal.command.addr.toLong == 0x1000)
+        assert(dut.io.internal.command.ba.toInt == 1)
 
         // 测试READ命令
         dut.io.dfi.control.rasN #= 1
@@ -147,10 +150,10 @@ class DfiAdapterTester extends SpinalAnyFunSuite {
         dut.io.dfi.control.bank #= 2
         dut.clockDomain.waitSampling(TEST_COMMAND_WAIT_CYCLES)
 
-        assert(dut.io.dfiInternal.command.valid.toBoolean)
-        assert(dut.io.dfiInternal.command.command.toEnum == DdrCommand.READ)
-        assert(dut.io.dfiInternal.command.address.toLong == 0x2000)
-        assert(dut.io.dfiInternal.command.bank.toInt == 2)
+        assert(dut.io.internal.command.valid.toBoolean)
+        assert(dut.io.internal.command.cmd.toEnum == DdrCommand.READ)
+        assert(dut.io.internal.command.addr.toLong == 0x2000)
+        assert(dut.io.internal.command.ba.toInt == 2)
 
         // 测试WRITE命令
         dut.io.dfi.control.rasN #= 1
@@ -160,17 +163,17 @@ class DfiAdapterTester extends SpinalAnyFunSuite {
         dut.io.dfi.control.bank #= 3
         dut.clockDomain.waitSampling(TEST_COMMAND_WAIT_CYCLES)
 
-        assert(dut.io.dfiInternal.command.valid.toBoolean)
-        assert(dut.io.dfiInternal.command.command.toEnum == DdrCommand.WRITE)
-        assert(dut.io.dfiInternal.command.address.toLong == 0x3000)
-        assert(dut.io.dfiInternal.command.bank.toInt == 3)
+        assert(dut.io.internal.command.valid.toBoolean)
+        assert(dut.io.internal.command.cmd.toEnum == DdrCommand.WRITE)
+        assert(dut.io.internal.command.addr.toLong == 0x3000)
+        assert(dut.io.internal.command.ba.toInt == 3)
 
         dut.clockDomain.waitSampling(TEST_FINAL_WAIT_CYCLES)
         simSuccess()
       }
   }
 
-  test("DfiAdapter_WriteDataParsing") {
+  test("UnifiedAdapter_WriteDataParsing") {
     SimConfig.withVcdWave
       .compile {
         // 创建DDR3配置
@@ -219,12 +222,14 @@ class DfiAdapterTester extends SpinalAnyFunSuite {
           sdram = sdramConfig
         )
 
-        val config = DfiAdapterConfig(
+        val config = UnifiedAdapterConfig(
           dfiConfig = dfiConfig,
+          sdramConfig = sdramConfig,
+          ddrStandard = DdrStandard.DDR3,
           features = DfiDdrPhyFeatures()
         )
 
-        DfiAdapter(config)
+        UnifiedAdapter(config)
       }
       .doSimUntilVoid { dut =>
         dut.clockDomain.forkStimulus(TEST_CLOCK_PERIOD)
@@ -256,16 +261,16 @@ class DfiAdapterTester extends SpinalAnyFunSuite {
         dut.clockDomain.waitSampling(TEST_COMMAND_WAIT_CYCLES)
 
         // 验证内部写接口
-        assert(dut.io.dfiInternal.write.valid.toBoolean)
-        assert(dut.io.dfiInternal.write.data.toInt == testData)
-        assert(dut.io.dfiInternal.write.mask.toInt == testMask)
+        assert(dut.io.internal.data.write.valid.toBoolean)
+        assert(dut.io.internal.data.write.data.toInt == testData)
+        assert(dut.io.internal.data.write.mask.toInt == testMask)
 
         dut.clockDomain.waitSampling(TEST_FINAL_WAIT_CYCLES)
         simSuccess()
       }
   }
 
-  test("DfiAdapter_ReadDataGeneration") {
+  test("UnifiedAdapter_ReadDataGeneration") {
     SimConfig.withVcdWave
       .compile {
         // 创建DDR3配置
@@ -314,12 +319,14 @@ class DfiAdapterTester extends SpinalAnyFunSuite {
           sdram = sdramConfig
         )
 
-        val config = DfiAdapterConfig(
+        val config = UnifiedAdapterConfig(
           dfiConfig = dfiConfig,
+          sdramConfig = sdramConfig,
+          ddrStandard = DdrStandard.DDR3,
           features = DfiDdrPhyFeatures()
         )
 
-        DfiAdapter(config)
+        UnifiedAdapter(config)
       }
       .doSimUntilVoid { dut =>
         dut.clockDomain.forkStimulus(TEST_CLOCK_PERIOD)
@@ -341,15 +348,15 @@ class DfiAdapterTester extends SpinalAnyFunSuite {
         dut.clockDomain.waitSampling(TEST_COMMAND_WAIT_CYCLES)
 
         // 验证内部读接口
-        assert(dut.io.dfiInternal.read.valid.toBoolean)
-        assert(dut.io.dfiInternal.read.data.toInt == testData)
+        assert(dut.io.internal.data.read.valid.toBoolean)
+        assert(dut.io.internal.data.read.data.toInt == testData)
 
         dut.clockDomain.waitSampling(TEST_FINAL_WAIT_CYCLES)
         simSuccess()
       }
   }
 
-  test("DfiAdapter_TrainingInterface") {
+  test("UnifiedAdapter_TrainingInterface") {
     SimConfig.withVcdWave
       .compile {
         // 创建DDR3配置
@@ -398,17 +405,19 @@ class DfiAdapterTester extends SpinalAnyFunSuite {
           sdram = sdramConfig
         )
 
-        val config = DfiAdapterConfig(
+        val config = UnifiedAdapterConfig(
           dfiConfig = dfiConfig,
+          sdramConfig = sdramConfig,
+          ddrStandard = DdrStandard.DDR3,
           features = DfiDdrPhyFeatures()
         )
 
-        DfiAdapter(config)
+        UnifiedAdapter(config)
       }
       .doSimUntilVoid { dut =>
         dut.clockDomain.forkStimulus(TEST_CLOCK_PERIOD)
 
-        // 初始化训练信号
+        // 初始化训练接口信号
         for (i <- 0 until dut.io.dfi.rdTraining.rdlvlReq.getWidth) {
           dut.io.dfi.rdTraining.rdlvlReq(i) #= false
         }
@@ -430,7 +439,7 @@ class DfiAdapterTester extends SpinalAnyFunSuite {
         }
         dut.clockDomain.waitSampling(TEST_COMMAND_WAIT_CYCLES)
 
-        assert(dut.io.training.readTraining.req.toBoolean)
+        assert(dut.io.internal.training.readTraining.req.toBoolean)
 
         // 测试写训练请求
         for (i <- 0 until dut.io.dfi.rdTraining.rdlvlReq.getWidth) {
@@ -441,7 +450,7 @@ class DfiAdapterTester extends SpinalAnyFunSuite {
         }
         dut.clockDomain.waitSampling(TEST_COMMAND_WAIT_CYCLES)
 
-        assert(dut.io.training.writeTraining.req.toBoolean)
+        assert(dut.io.internal.training.writeTraining.req.toBoolean)
 
         dut.clockDomain.waitSampling(TEST_FINAL_WAIT_CYCLES)
         simSuccess()
@@ -449,7 +458,7 @@ class DfiAdapterTester extends SpinalAnyFunSuite {
   }
 
   // 边界情况测试
-  test("DfiAdapter_BoundaryConditions") {
+  test("UnifiedAdapter_BoundaryConditions") {
     SimConfig.withVcdWave
       .compile {
         // 使用最小配置进行边界测试
@@ -498,12 +507,14 @@ class DfiAdapterTester extends SpinalAnyFunSuite {
           sdram = sdramConfig
         )
 
-        val config = DfiAdapterConfig(
+        val config = UnifiedAdapterConfig(
           dfiConfig = dfiConfig,
+          sdramConfig = sdramConfig,
+          ddrStandard = DdrStandard.DDR3,
           features = DfiDdrPhyFeatures()
         )
 
-        DfiAdapter(config)
+        UnifiedAdapter(config)
       }
       .doSimUntilVoid { dut =>
         dut.clockDomain.forkStimulus(TEST_CLOCK_PERIOD)
@@ -520,7 +531,7 @@ class DfiAdapterTester extends SpinalAnyFunSuite {
         dut.io.dfi.control.rasN #= 0
         dut.clockDomain.waitSampling(1)
 
-        assert(dut.io.dfiInternal.command.valid.toBoolean)
+        assert(dut.io.internal.command.valid.toBoolean)
 
         dut.clockDomain.waitSampling(TEST_FINAL_WAIT_CYCLES)
         simSuccess()

@@ -47,6 +47,25 @@ case class TimingConfig(
 )
 
 /**
+ * 时序参数硬件Bundle
+ * 包含运行时可配置的时序参数寄存器
+ */
+case class TimingParams() extends Bundle with IMasterSlave {
+  val tRCD = UInt(8 bits)  // Row to Column Delay
+  val tRP = UInt(8 bits)   // Row Precharge Time
+  val tRAS = UInt(8 bits)  // Row Active Time
+  val tWR = UInt(8 bits)   // Write Recovery Time
+  val tRTP = UInt(8 bits)  // Read to Precharge Time
+  val tWTR = UInt(8 bits)  // Write to Read Time
+  val tREFI = UInt(16 bits) // Refresh Interval
+  val tRFC = UInt(16 bits)  // Refresh Cycle Time
+
+  override def asMaster(): Unit = {
+    out(tRCD, tRP, tRAS, tWR, tRTP, tWTR, tREFI, tRFC)
+  }
+}
+
+/**
  * DDR时序接口
  */
 case class DdrTimingInterface(config: SdramConfig) extends Bundle with IMasterSlave {

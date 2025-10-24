@@ -13,12 +13,9 @@ import spinal.lib.memory.sdram.dfi._
  * 支持DDR2、DDR3、DDR4以及LPDDR系列存储器标准。
  *
  * 架构组成：
- * - DfiAdapter: DFI信号适配器，接收DfiController的DFI信号
- * - StandardAdapter: 标准适配器，适配不同DDR标准的电气特性
- * - TimingGenerator: 时序生成器，生成精确的DDR时序
- * - DataPath: 数据路径，处理读写数据传输
- * - CalibrationEngine: 校准引擎，执行训练和校准操作
- * - InitializationManager: 初始化管理器，执行DDR初始化序列
+ * - UnifiedAdapter: 统一适配器，合并DFI协议解析和标准适配功能
+ * - DataManager: 数据管理器，统一管理时序控制和数据流
+ * - ControlManager: 控制管理器，统一管理DDR初始化、校准和训练状态机
  */
 case class DfiDdrPhy(config: DfiDdrPhyConfig) extends Component {
 
@@ -41,41 +38,42 @@ case class DfiDdrPhy(config: DfiDdrPhyConfig) extends Component {
     val debug = out(DfiDdrPhyDebug())
   }
 
-  // 子模块实例化
-  val dfiAdapter = DfiAdapter(config.dfiAdapterConfig)
-  val standardAdapter = StandardAdapter(config.standardAdapterConfig)
-  val timingGenerator = TimingGenerator(config.timingGeneratorConfig)
-  val dataPath = DataPath(config.dataPathConfig)
-  val calibrationEngine = CalibrationEngine(config.calibrationConfig)
-  val initializationManager = InitializationManager(config.initializationConfig)
+  // 子模块实例化 - 新的3模块架构
+  val unifiedAdapter = UnifiedAdapter(config.unifiedAdapterConfig)
+  val dataManager = DataManager(config.dataManagerConfig)
+  val controlManager = ControlManager(config.controlConfig)
 
-  // DFI适配器连接
-  dfiAdapter.io.dfi << io.dfi
+  // UnifiedAdapter连接
+  unifiedAdapter.io.dfi << io.dfi
 
-  // 标准适配器连接
-  standardAdapter.io.dfiInternal << dfiAdapter.io.dfiInternal
+  // DataManager连接
+  dataManager.io.command << unifiedAdapter.io.internal.command
+  dataManager.io.data << unifiedAdapter.io.internal.data
+  
+  // 转换TimingConfig为TimingParams
+  val timingParams = TimingParams()
+  timingParams.tRCD := config.timingConfig.tRCD
+  timingParams.tRP := config.timingConfig.tRP
+  timingParams.tRAS := config.timingConfig.tRAS
+  timingParams.tWR := config.timingConfig.tWR
+  timingParams.tRTP := config.timingConfig.tRTP
+  timingParams.tWTR := config.timingConfig.tWTR
+  timingParams.tREFI := config.timingConfig.tREFI
+  timingParams.tRFC := config.timingConfig.tRFC
+  dataManager.io.timingConfig := timingParams
 
-  // 时序生成器连接
-  timingGenerator.io.command << standardAdapter.io.command
-  // timingGenerator.io.timingConfig := config.timingConfig
+  // ControlManager连接
+  controlManager.io.training << unifiedAdapter.io.internal.training
+  controlManager.io.init << unifiedAdapter.io.internal.init
+  controlManager.io.calibrationInterface << dataManager.io.calibration
 
-  // 数据路径连接
-  dataPath.io.timing << timingGenerator.io.timing
-  dataPath.io.data << standardAdapter.io.data
-
-  // 校准引擎连接
-  calibrationEngine.io.training << dfiAdapter.io.training
-  calibrationEngine.io.calibrationInterface << dataPath.io.calibration
+  // DDR接口连接 - 从ControlManager输出
+  io.sdram << controlManager.io.sdram
 
   // 训练接口连接 - 暴露到顶层
   if(config.features.trainingSupport) {
-    io.training << dfiAdapter.io.training
+    io.training << unifiedAdapter.io.internal.training
   }
-
-  // 初始化管理器连接
-  initializationManager.io.init << dfiAdapter.io.init
-  initializationManager.io.initializationInterface << standardAdapter.io.init
-  io.sdram << initializationManager.io.sdram
 
   // 状态和调试信号连接 - 符合REQ-CS-018：使用直接对象访问
   io.status.initialized := True
@@ -85,12 +83,9 @@ case class DfiDdrPhy(config: DfiDdrPhyConfig) extends Component {
   io.status.temperature := 0
   io.status.frequencyRatio := 0
 
-  io.debug.dfiAdapter := EmptyDebug()
-  io.debug.standardAdapter := EmptyDebug()
-  io.debug.timingGenerator := EmptyDebug()
-  io.debug.dataPath := EmptyDebug()
-  io.debug.calibrationEngine := EmptyDebug()
-  io.debug.initializationManager := EmptyDebug()
+  io.debug.unifiedAdapter := unifiedAdapter.io.debug
+  io.debug.dataManager := dataManager.io.debug
+  io.debug.controlManager := controlManager.io.debug
 }
 
 /**
@@ -103,17 +98,20 @@ case class DfiDdrPhyConfig(
     features: DfiDdrPhyFeatures = DfiDdrPhyFeatures()
 ) {
 
-  // 子模块配置
-  val dfiAdapterConfig = DfiAdapterConfig(
+  // 子模块配置 - 新的3模块架构
+  val unifiedAdapterConfig = UnifiedAdapterConfig(
     dfiConfig = dfiConfig,
+    sdramConfig = sdramConfig,
+    ddrStandard = ddrStandard,
     features = features
   )
 
-  val standardAdapterConfig = StandardAdapterConfig(
-    ddrStandard = ddrStandard,
+  val dataManagerConfig = DataManagerConfig(
     dfiConfig = dfiConfig,
     sdramConfig = sdramConfig,
-    features = features
+    features = features,
+    timingConfig = timingConfig,
+    ddrStandard = ddrStandard
   )
 
   // 运行时配置接口
@@ -129,31 +127,11 @@ case class DfiDdrPhyConfig(
     tRFC = sdramConfig.tRFC
   )
 
-  val timingGeneratorConfig = TimingGeneratorConfig(
-    ddrStandard = ddrStandard,
-    dfiConfig = dfiConfig,
-    sdramConfig = sdramConfig,
-    timingConfig = timingConfig
-  )
-
-  val dataPathConfig = DataPathConfig(
-    ddrStandard = ddrStandard,
-    dfiConfig = dfiConfig,
-    sdramConfig = sdramConfig,
-    features = features
-  )
-
-  val calibrationConfig = CalibrationConfig(
+  val controlConfig = ControlConfig(
       ddrStandard = ddrStandard,
       dfiConfig = dfiConfig,
       sdramConfig = sdramConfig,
       features = features
-  )
-
-  val initializationConfig = InitializationConfig(
-      ddrStandard = ddrStandard,
-      dfiConfig = dfiConfig,
-      sdramConfig = sdramConfig
   )
 }
 
@@ -192,12 +170,9 @@ case class DfiDdrPhyStatus() extends Bundle {
  * PHY调试接口
  */
 case class DfiDdrPhyDebug() extends Bundle {
-  val dfiAdapter = EmptyDebug()
-  val standardAdapter = EmptyDebug()
-  val timingGenerator = EmptyDebug()
-  val dataPath = EmptyDebug()
-  val calibrationEngine = EmptyDebug()
-  val initializationManager = EmptyDebug()
+  val unifiedAdapter = UnifiedAdapterDebug()
+  val dataManager = DataManagerDebug()
+  val controlManager = ControlManagerDebug()
 }
 
 /**
