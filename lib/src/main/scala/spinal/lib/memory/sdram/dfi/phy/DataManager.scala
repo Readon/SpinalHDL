@@ -41,7 +41,7 @@ case class DataManager(config: DataManagerConfig) extends Component {
 
   // DDR接口生成器 - 生成最终的DDR信号
   val ddrInterfaceGenerator = DdrInterfaceGenerator(config, timingController.timingCommand, dataProcessor.processedData)
-  io.ddr := ddrInterfaceGenerator.ddr
+  io.ddr << ddrInterfaceGenerator.ddr
 
   // 校准接口连接 - 从DataPath合并
   io.calibration := dataProcessor.calibration
@@ -81,8 +81,8 @@ case class TimingController(config: DataManagerConfig,
 
   // 命令调度器
   val scheduler = DataManagerCommandScheduler(config, command, timingConfig)
-  timing := scheduler.timing
-  timingCommand := scheduler.scheduledCommand
+  timing << scheduler.timing
+  timingCommand << scheduler.scheduledCommand
 
   // 调试信号
   debug.commandCount := scheduler.debug.commandCount
@@ -141,13 +141,14 @@ case class DataProcessor(config: DataManagerConfig,
   processedData.write.dqs_n := writeBuffer.io.pop.payload.dqs_n
   writeBuffer.io.pop.ready := processedData.write.valid
 
-  processedData.read.ready := readBuffer.io.pop.ready
+  // 修复组合环路：processedData.read.ready 应该是外部输入，表示下游准备好接收数据
+  // readBuffer.io.pop.ready 基于时序控制和下游准备状态
   processedData.read.data := readBuffer.io.pop.payload.data
   processedData.read.valid := readBuffer.io.pop.valid && timing.dataValid
   processedData.read.last := readBuffer.io.pop.payload.last
   processedData.read.dqs := readBuffer.io.pop.payload.dqs
   processedData.read.dqs_n := readBuffer.io.pop.payload.dqs_n
-  readBuffer.io.pop.ready := processedData.read.ready
+  readBuffer.io.pop.ready := processedData.read.ready && timing.dataValid
 
   // 数据格式转换器 - 从DataPath合并
   // TODO: 需要实现DataFormatter和DataPathConfig
@@ -179,6 +180,7 @@ case class DdrInterfaceGenerator(config: DataManagerConfig,
   ddr.cas_n := True
   ddr.we_n := True
   ddr.addr := 0
+  ddr.ba := B"0".resized // 默认bank地址为0，使用resized确保位宽匹配
 
   // 根据命令设置控制信号
   when(timingCommand.valid) {
@@ -232,7 +234,6 @@ case class DdrInterfaceGenerator(config: DataManagerConfig,
   ddr.dm := processedData.write.mask
 
   // 其他信号默认值 - 使用条件生成
-  ddr.ba := B"0".resized // 默认bank地址为0，使用resized确保位宽匹配
   if (config.sdramConfig.bgWidth > 0) {
     ddr.bg := B"0"
   }
@@ -273,15 +274,15 @@ case class DataManagerCommandScheduler(config: DataManagerConfig,
   val canSchedule = queueValid(queueHead) && checkTimingConstraints(currentCommand)
 
   timing.cmdValid := canSchedule
-  timing.cmdReady := !queueValid.orR || canSchedule
+  // timing.cmdReady := !queueValid.orR || canSchedule
   timing.dataValid := False // 根据数据状态设置
-  timing.dataReady := True
+  // timing.dataReady := True
   timing.busy := !timing.cmdReady
   timing.idle := timing.cmdReady && !canSchedule
 
   // 调度命令输出
-  scheduledCommand := currentCommand
   scheduledCommand.valid := canSchedule
+  scheduledCommand.assignUnassignedByName(currentCommand)
 
   // 出队逻辑
   when(canSchedule) {

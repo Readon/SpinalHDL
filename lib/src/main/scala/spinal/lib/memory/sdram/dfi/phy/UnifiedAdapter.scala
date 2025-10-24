@@ -47,10 +47,23 @@ case class UnifiedAdapter(config: UnifiedAdapterConfig) extends Component {
   trainingProcessor.training.caResp := io.internal.training.caTraining.resp
   io.internal.init << initProcessor.init
 
+  // 驱动DFI读输出以避免"NO DRIVER"错误
+  // TODO: 实现完整的读数据路径时替换为实际数据
+  for (i <- 0 until config.dfiConfig.frequencyRatio) {
+    io.dfi.read.rd(i).rddataValid := False
+    io.dfi.read.rd(i).rddata := 0
+  }
+
   // 调试信号聚合 - 符合REQ-CS-018：使用直接对象访问
   io.debug.commandCount := commandParser.debug.commandCount
   io.debug.dataCount := commandParser.debug.dataCount
-  io.debug.trainingCount := CountOne(Seq(io.dfi.rdTraining.rdlvlReq.orR, io.dfi.wrTraining.wrlvlReq.orR, io.dfi.caTraining.calvlReq.orR)).resize(32)
+  io.debug.trainingCount := {
+    val reqs = Seq.newBuilder[Bool]
+    if (config.dfiConfig.useRdlvlReq) reqs += io.dfi.rdTraining.rdlvlReq.orR
+    if (config.dfiConfig.useWrlvlReq) reqs += io.dfi.wrTraining.wrlvlReq.orR
+    if (config.dfiConfig.useCalvlReq) reqs += io.dfi.caTraining.calvlReq.orR
+    CountOne(reqs.result()).resize(32)
+  }
   io.debug.errorCount := commandParser.debug.errorCount
 }
 
@@ -116,7 +129,7 @@ case class UnifiedCommandParser(config: UnifiedAdapterConfig,
   parsedData.writeData := rawWriteData(config.sdramConfig.dataWidth - 1 downto 0)
   val rawWriteMask = if (config.dfiConfig.dataSlice == 1) dfiWrite.wr.head.wrdataMask else dfiWrite.wr.map(_.wrdataMask).reduce(_ ## _)
   parsedData.writeMask := rawWriteMask(config.sdramConfig.dataWidth / 8 - 1 downto 0)
-  parsedData.readReady := True
+  
   val rawReadData = if (config.dfiConfig.dataSlice == 1) dfiRead.rd.head.rddata else dfiRead.rd.map(_.rddata).reduce(_ ## _)
   parsedData.readData := rawReadData(config.sdramConfig.dataWidth - 1 downto 0)
   parsedData.readValid := dfiRead.rd.map(rd => if (config.dfiConfig.useRddataDnv) rd.rddataDnv.orR else False).reduce(_ || _)
@@ -193,21 +206,21 @@ case class UnifiedTrainingProcessor(config: UnifiedAdapterConfig,
   }
 
   // 训练响应信号 - 使用条件生成检查
-  if (config.dfiConfig.useRdlvlResp) {
-    training.readResp := dfiRdTraining.rdlvlResp.orR ? dfiRdTraining.rdlvlResp | B"0"
-  } else {
-    training.readResp := B"0".resized
-  }
-  if (config.dfiConfig.useWrlvlResp) {
-    training.writeResp := dfiWrTraining.wrlvlResp.orR ? dfiWrTraining.wrlvlResp | B"0"
-  } else {
-    training.writeResp := B"0".resized
-  }
-  if (config.dfiConfig.useCalvlResp) {
-    training.caResp := dfiCaTraining.calvlResp.orR ? dfiCaTraining.calvlResp | B"0"
-  } else {
-    training.caResp := B"0".resized
-  }
+  // if (config.dfiConfig.useRdlvlResp) {
+  //   training.readResp := dfiRdTraining.rdlvlResp.orR ? dfiRdTraining.rdlvlResp | B"0"
+  // } else {
+  //   training.readResp := B"0".resized
+  // }
+  // if (config.dfiConfig.useWrlvlResp) {
+  //   training.writeResp := dfiWrTraining.wrlvlResp.orR ? dfiWrTraining.wrlvlResp | B"0"
+  // } else {
+  //   training.writeResp := B"0".resized
+  // }
+  // if (config.dfiConfig.useCalvlResp) {
+  //   training.caResp := dfiCaTraining.calvlResp.orR ? dfiCaTraining.calvlResp | B"0"
+  // } else {
+  //   training.caResp := B"0".resized
+  // }
 
   // 调试信号 - 符合REQ-CS-018：使用直接对象访问
   debug.trainingCount := CountOne(Seq(training.readReq, training.writeReq, training.caReq)).resize(32)
@@ -227,10 +240,10 @@ case class UnifiedInitProcessor(config: UnifiedAdapterConfig,
   // 初始化信号处理 - 使用条件生成检查
   if (config.dfiConfig.useInitStart) {
     init.initStart := dfiStatus.initStart
-    init.initComplete := dfiStatus.initComplete
+    // init.initComplete := dfiStatus.initComplete
   } else {
     init.initStart := False
-    init.initComplete := True
+    // init.initComplete := True
   }
   init.powerUp := True
   init.modeRegisterSet := Vec(False, False, False, False)

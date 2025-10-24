@@ -562,3 +562,39 @@ Configuration class names MUST follow standardized naming patterns for consisten
 - **WHEN** a class's name ends with "Config" **THEN** it should be considered a configuration class
 - **WHEN** naming a configuration class **THEN** it must end with "Config"
 - **WHEN** a configuration class does not end with "Config" **THEN** it should be flagged as naming violation
+
+#### REQ-CS-034: Conditional Signal Access Safety
+All conditionally generated signals MUST be checked for their corresponding configuration conditions before use to prevent NullPointerException and other runtime errors.
+
+**Rationale**: Conditionally generated signals (such as those created via `config.useXxx generate`) are not instantiated when configuration flags are false, leading to null pointer exceptions on direct access. Mandatory checking ensures code robustness and maintainability.
+
+**Requirements**:
+- Check corresponding configuration flags before each access to conditionally generated signals
+- Use conditional checking pattern: `if (config.useFlag) { signal.operation() } else { defaultLogic }`
+- Apply the same checking pattern for debug and statistics code
+- Avoid direct access to potentially null signals outside condition checks
+- Provide default values or alternative logic when conditions are not met
+
+**Example**:
+```scala
+case class UnifiedAdapter(config: UnifiedAdapterConfig) extends Component {
+  // ✓ Correct: Safe usage after condition check
+  io.debug.trainingCount := {
+    val reqs = Seq.newBuilder[Bool]
+    if (config.dfiConfig.useRdlvlReq) reqs += io.dfi.rdTraining.rdlvlReq.orR
+    if (config.dfiConfig.useWrlvlReq) reqs += io.dfi.wrTraining.wrlvlReq.orR
+    if (config.dfiConfig.useCalvlReq) reqs += io.dfi.caTraining.calvlReq.orR
+    CountOne(reqs.result()).resize(32)
+  }
+
+  // ✗ Incorrect: Direct access to potentially null signals
+  // io.debug.trainingCount := CountOne(Seq(io.dfi.rdTraining.rdlvlReq.orR, ...))
+}
+```
+
+**Scenarios**:
+- **WHEN** accessing conditionally generated signals **THEN** check configuration flags first
+- **WHEN** configuration flag is false **THEN** provide alternative logic or default values
+- **WHEN** direct access to conditional signals occurs without check **THEN** it must be flagged as safety violation
+- **WHEN** implementing debug or monitoring logic **THEN** use conditional checks for all training signals
+- **WHEN** a NullPointerException occurs from conditional signal access **THEN** add proper condition checks
