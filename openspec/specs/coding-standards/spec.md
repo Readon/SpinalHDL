@@ -563,6 +563,55 @@ Configuration class names MUST follow standardized naming patterns for consisten
 - **WHEN** naming a configuration class **THEN** it must end with "Config"
 - **WHEN** a configuration class does not end with "Config" **THEN** it should be flagged as naming violation
 
+#### REQ-CS-035: Signal Assignment and Initialization Standards
+Signal assignment MUST follow strict initialization and conditional assignment patterns to ensure correct hardware generation and prevent unintended latches or combinational loops.
+
+**Rationale**: SpinalHDL signals (especially Reg types) require proper initialization and conditional assignment to match hardware semantics. Initialization ensures registers have defined reset values, while conditional assignments prevent direct overwrites that could violate sequential logic rules.
+
+**Requirements**:
+- Initialization statements: Reg signals CAN be initialized using `init()` during declaration, or using assignment after declaration. Comb signals MUST be initialized using assignment after declaration.
+- After initialization, all direct assginment to signals is prohibited; all subsequent assignments MUST be placed within `when`, `switch`, or similar hardware related conditional constructs
+- Initialization statements MUST be positioned before any conditional assignment code to maintain proper hardware synthesis order
+- Avoid mixing initialization and conditional assignments in the same Comb signal declaration
+
+**Example**:
+```scala
+case class SignalAssignmentExample() extends Component {
+  val io = new Bundle {
+    val condition = in Bool()
+    val output = out UInt(32 bits)
+  }
+
+  // ✓ Correct: Reg initialization before conditional code
+  val myReg = Reg(UInt(32 bits)) init(0)
+  when(io.condition) {
+    myReg := myReg + 1  // Conditional assignment in when block
+  }
+
+  // ✓ Correct: Comb signal with complete assignment
+  val myComb = UInt(32 bits)
+  myComb := 0  // Default assignment outside conditional
+  when(io.condition) {
+    myComb := 42
+  }
+
+  // ✗ Incorrect: Direct assignment to Reg after initialization
+  // myReg := 5  // Prohibited: Direct assignment outside conditional
+
+  // ✗ Incorrect: Initialization after conditional code
+  // when(io.condition) { myReg := 1 }
+  // val myReg = Reg(UInt(32 bits)) init(0)  // Wrong order
+}
+```
+
+**Scenarios**:
+- **WHEN** declaring signals **THEN** initialize before any conditional assignments on itself
+- **WHEN** assigning to signals after initialization **THEN** place assignments in `when`/`switch` blocks only
+- **WHEN** declaring signals with conditional assignments **THEN** provide default assignments ahead of conditionals to prevent latches
+- **WHEN** initialization occurs after conditional code **THEN** it must be flagged as initialization order violation
+- **WHEN** direct `:=` assignment to singal occurs outside conditionals and not an initialization **THEN** it must be flagged as assignment violation
+- **WHEN** signals do not have initialized **THEN** add default assignments/initialization to ensure completeness
+
 #### REQ-CS-034: Conditional Signal Access Safety
 All conditionally generated signals MUST be checked for their corresponding configuration conditions before use to prevent NullPointerException and other runtime errors.
 
