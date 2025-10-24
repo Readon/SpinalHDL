@@ -21,6 +21,22 @@ case class DfiControlInterface(config: DfiConfig) extends Bundle with IMasterSla
   override def asMaster(): Unit = {
     out(address, bank, rasN, casN, weN, csN, actN, bg, cid, cke, odt, resetN)
   }
+
+  def <<(that: DfiControlInterface): Unit = {
+    this.address := that.address
+    if (config.useBank) this.bank := that.bank
+    if (config.useRasN) this.rasN := that.rasN
+    if (config.useCasN) this.casN := that.casN
+    if (config.useWeN) this.weN := that.weN
+    this.csN := that.csN
+    if (config.useAckN) this.actN := that.actN
+    if (config.useBg) this.bg := that.bg
+    if (config.useCid) this.cid := that.cid
+    this.cke := that.cke
+    if (config.useOdt) this.odt := that.odt
+    if (config.useResetN) this.resetN := that.resetN
+  }
+  def >>(that: DfiControlInterface): Unit = that << this
 }
 
 case class DfiWr(config: DfiConfig) extends Bundle {
@@ -36,6 +52,11 @@ case class DfiWriteInterface(config: DfiConfig) extends Bundle with IMasterSlave
   override def asMaster(): Unit = {
     out(wr)
   }
+
+  def <<(that: DfiWriteInterface): Unit = {
+    this.wr := that.wr
+  }
+  def >>(that: DfiWriteInterface): Unit = that << this
 }
 
 case class DfiRd(config: DfiConfig) extends Bundle {
@@ -57,6 +78,13 @@ case class DfiReadInterface(config: DfiConfig) extends Bundle with IMasterSlave 
     out(rdCs, rden)
     in(rd)
   }
+
+  def <<(that: DfiReadInterface): Unit = {
+    this.rden := that.rden
+    this.rdCs := that.rdCs
+    that.rd := this.rd
+  }
+  def >>(that: DfiReadInterface): Unit = that << this
 }
 
 case class DfiUpdateInterface(config: DfiConfig) extends Bundle with IMasterSlave {
@@ -69,6 +97,15 @@ case class DfiUpdateInterface(config: DfiConfig) extends Bundle with IMasterSlav
     out(ctrlupdReq, phyupdAck)
     in(ctrlupdAck, phyupdReq, phyupdType)
   }
+
+  def <<(that: DfiUpdateInterface): Unit = {
+    if (config.useCtrlupdReq) this.ctrlupdAck := that.ctrlupdAck
+    if (config.useCtrlupdAck) this.ctrlupdReq := that.ctrlupdReq
+    if (config.usePhyupdAck) this.phyupdAck := that.phyupdAck
+    if (config.usePhyupdReq) this.phyupdReq := that.phyupdReq
+    if (config.usePhyupdType) this.phyupdType := that.phyupdType
+  }
+  def >>(that: DfiUpdateInterface): Unit = that << this
 }
 
 case class DfiStatusInterface(config: DfiConfig) extends Bundle with IMasterSlave {
@@ -83,6 +120,17 @@ case class DfiStatusInterface(config: DfiConfig) extends Bundle with IMasterSlav
     out(dataByteDisable, dramClkDisable, freqRatio, initStart, parityIn)
     in(initComplete, alertN)
   }
+
+  def <<(that: DfiStatusInterface): Unit = {
+    if (config.useAlertN) this.alertN := that.alertN
+    if (config.useDataByteDisable) this.dataByteDisable := that.dataByteDisable
+    if (config.useStatusSignals) this.dramClkDisable := that.dramClkDisable
+    if (config.useFreqRatio) this.freqRatio := that.freqRatio
+    if (config.useInitStart) this.initComplete := that.initComplete
+    if (config.useInitStart) this.initStart := that.initStart
+    if (config.useParityIn) this.parityIn := that.parityIn
+  }
+  def >>(that: DfiStatusInterface): Unit = that << this
 }
 
 case class DfiReadTrainingInterface(config: DfiConfig) extends Bundle with IMasterSlave {
@@ -98,6 +146,17 @@ case class DfiReadTrainingInterface(config: DfiConfig) extends Bundle with IMast
     out(rdlvlEn, rdlvlGateEn)
     in(rdlvlReq, phyRdlvlCsN, rdlvlResp, rdlvlGateReq, phyRdlvlGateCsN)
   }
+
+  def <<(that: DfiReadTrainingInterface): Unit = {
+    if (config.useRdlvlReq) this.rdlvlReq := that.rdlvlReq
+    if (config.usePhyRdlvlCsN) this.phyRdlvlCsN := that.phyRdlvlCsN
+    if (config.useRdlvlEn) this.rdlvlEn := that.rdlvlEn
+    if (config.useRdlvlResp) this.rdlvlResp := that.rdlvlResp
+    if (config.useRdlvlGateReq) this.rdlvlGateReq := that.rdlvlGateReq
+    if (config.usePhyRdlvlGateCsN) this.phyRdlvlGateCsN := that.phyRdlvlGateCsN
+    if (config.useRdlvlGateEn) this.rdlvlGateEn := that.rdlvlGateEn
+  }
+  def >>(that: DfiReadTrainingInterface): Unit = that << this
 }
 
 case class DfiWriteTrainingInterface(config: DfiConfig) extends Bundle with IMasterSlave {
@@ -110,6 +169,15 @@ case class DfiWriteTrainingInterface(config: DfiConfig) extends Bundle with IMas
     out(wrlvlEn, wrlvlStrobe)
     in(wrlvlReq, wrlvlResp, phyWrlvlCsN)
   }
+
+  def <<(that: DfiWriteTrainingInterface): Unit = {
+    if (config.useWrlvlReq) this.wrlvlReq := that.wrlvlReq
+    if (config.usePhyWrlvlCsN) this.phyWrlvlCsN := that.phyWrlvlCsN
+    if (config.useWrlvlEn) this.wrlvlEn := that.wrlvlEn
+    if (config.useWrlvlStrobe) this.wrlvlStrobe := that.wrlvlStrobe
+    if (config.useWrlvlResp) this.wrlvlResp := that.wrlvlResp
+  }
+  def >>(that: DfiWriteTrainingInterface): Unit = that << this
 }
 
 case class DfiCATrainingInterface(config: DfiConfig) extends Bundle with IMasterSlave {
@@ -122,6 +190,15 @@ case class DfiCATrainingInterface(config: DfiConfig) extends Bundle with IMaster
     out(calvlCapture, calvlEn)
     in(phyCalvlCsN, calvlReq, calvlResp)
   }
+
+  def <<(that: DfiCATrainingInterface): Unit = {
+    if (config.useCalvlReq) this.calvlReq := that.calvlReq
+    if (config.usePhyCalvlCsN) this.phyCalvlCsN := that.phyCalvlCsN
+    if (config.useCalvlEn) this.calvlEn := that.calvlEn
+    if (config.useCalvlCapture) this.calvlCapture := that.calvlCapture
+    if (config.useCalvlResp) this.calvlResp := that.calvlResp
+  }
+  def >>(that: DfiCATrainingInterface): Unit = that << this
 }
 
 case class DfiLevelingTrainingInterface(config: DfiConfig) extends Bundle with IMasterSlave {
@@ -130,6 +207,12 @@ case class DfiLevelingTrainingInterface(config: DfiConfig) extends Bundle with I
   override def asMaster(): Unit = {
     out(lvlPattern, lvlPeriodic)
   }
+
+  def <<(that: DfiLevelingTrainingInterface): Unit = {
+    if (config.useLvlPattern) this.lvlPattern := that.lvlPattern
+    if (config.useLvlPeriodic) this.lvlPeriodic := that.lvlPeriodic
+  }
+  def >>(that: DfiLevelingTrainingInterface): Unit = that << this
 }
 
 case class DfiPhyRequesetedTrainingInterface(config: DfiConfig) extends Bundle with IMasterSlave {
@@ -140,6 +223,12 @@ case class DfiPhyRequesetedTrainingInterface(config: DfiConfig) extends Bundle w
     out(phylvlReqCsN)
     in(phylvlAckCsN)
   }
+
+  def <<(that: DfiPhyRequesetedTrainingInterface): Unit = {
+    if (config.usePhylvlReqCsN) this.phylvlReqCsN := that.phylvlReqCsN
+    if (config.usePhylvlAckCsN) this.phylvlAckCsN := that.phylvlAckCsN
+  }
+  def >>(that: DfiPhyRequesetedTrainingInterface): Unit = that << this
 }
 
 case class DfiLowPowerControlInterface(config: DfiConfig) extends Bundle with IMasterSlave {
@@ -151,6 +240,14 @@ case class DfiLowPowerControlInterface(config: DfiConfig) extends Bundle with IM
     out(lpCtrlReq, lpDataReq, lpWakeUp)
     in(lpAck)
   }
+
+  def <<(that: DfiLowPowerControlInterface): Unit = {
+    if (config.useLpCtrlReq) this.lpCtrlReq := that.lpCtrlReq
+    if (config.useLpDataReq) this.lpDataReq := that.lpDataReq
+    if (config.useLpWakeUp) this.lpWakeUp := that.lpWakeUp
+    if (config.useLpAck) this.lpAck := that.lpAck
+  }
+  def >>(that: DfiLowPowerControlInterface): Unit = that << this
 }
 
 case class DfiErrorInterface(config: DfiConfig) extends Bundle with IMasterSlave {
@@ -159,35 +256,59 @@ case class DfiErrorInterface(config: DfiConfig) extends Bundle with IMasterSlave
   override def asMaster(): Unit = {
     in(error, error_info)
   }
+
+  def <<(that: DfiErrorInterface): Unit = {
+    if (config.useError) this.error := that.error
+    if (config.useErrorInfo) this.error_info := that.error_info
+  }
+  def >>(that: DfiErrorInterface): Unit = that << this
 }
 
 case class Dfi(config: DfiConfig) extends Bundle with IMasterSlave {
-  val control = DfiControlInterface(config)
-  val write = DfiWriteInterface(config)
-  val read = DfiReadInterface(config)
-  val update = DfiUpdateInterface(config)
-  val status = DfiStatusInterface(config)
-  val rdTraining = DfiReadTrainingInterface(config)
-  val wrTraining = DfiWriteTrainingInterface(config)
-  val caTraining = DfiCATrainingInterface(config)
-  val levelingTraining = DfiLevelingTrainingInterface(config)
-  val phyRequesetedTraining = DfiPhyRequesetedTrainingInterface(config)
-  val lowPowerControl = DfiLowPowerControlInterface(config)
-  val error = DfiErrorInterface(config)
-  override def asMaster(): Unit = {
-    master(
-      control,
-      read,
-      status,
-      write,
-      update,
-      rdTraining,
-      wrTraining,
-      caTraining,
-      levelingTraining,
-      phyRequesetedTraining,
-      lowPowerControl,
-      error
-    )
-  }
-}
+   val control = DfiControlInterface(config)
+   val write = DfiWriteInterface(config)
+   val read = DfiReadInterface(config)
+   val update = DfiUpdateInterface(config)
+   val status = DfiStatusInterface(config)
+   val rdTraining = DfiReadTrainingInterface(config)
+   val wrTraining = DfiWriteTrainingInterface(config)
+   val caTraining = DfiCATrainingInterface(config)
+   val levelingTraining = DfiLevelingTrainingInterface(config)
+   val phyRequesetedTraining = DfiPhyRequesetedTrainingInterface(config)
+   val lowPowerControl = DfiLowPowerControlInterface(config)
+   val error = DfiErrorInterface(config)
+
+   override def asMaster(): Unit = {
+     master(
+       control,
+       read,
+       status,
+       write,
+       update,
+       rdTraining,
+       wrTraining,
+       caTraining,
+       levelingTraining,
+       phyRequesetedTraining,
+       lowPowerControl,
+       error
+     )
+   }
+
+   def <<(that: Dfi): Unit = {
+     this.control << that.control
+     this.write << that.write
+     this.read << that.read
+     this.update << that.update
+     this.status << that.status
+     this.rdTraining << that.rdTraining
+     this.wrTraining << that.wrTraining
+     this.caTraining << that.caTraining
+     this.levelingTraining << that.levelingTraining
+     this.phyRequesetedTraining << that.phyRequesetedTraining
+     this.lowPowerControl << that.lowPowerControl
+     this.error << that.error
+   }
+
+   def >>(that: Dfi): Unit = that << this
+ }

@@ -158,8 +158,8 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
 
   val refreshStream = Event
   val refresher = Refresher(taskConfig, dfiConfig)
-  refresher.io.refresh.valid <> io.halt
-  refresher.io.refresh <> refreshStream
+  refresher.io.refresh.valid := io.halt
+  refresher.io.refresh := refreshStream
 
   val selectedAddress = io.output.address
   val loader = new Area {

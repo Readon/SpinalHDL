@@ -19,16 +19,17 @@ case class DfiInternal(config: DfiConfig) extends Bundle with IMasterSlave {
   val read = DfiInternalRead(config)
 
   override def asMaster(): Unit = {
-    out(command)
-    out(write)
-    in(read)
+    master(command)
+    master(write)
+    slave(read)
   }
 
-  override def asSlave(): Unit = {
-    in(command)
-    in(write)
-    out(read)
+  def <<(that: DfiInternal): Unit = {
+    this.command << that.command
+    this.write << that.write
+    that.read << this.read
   }
+  def >>(that: DfiInternal): Unit = that << this
 }
 
 /**
@@ -49,11 +50,16 @@ case class DfiInternalCommand(config: DfiConfig) extends Bundle with IMasterSlav
     if(config.useCid) out(cid)
   }
 
-  override def asSlave(): Unit = {
-    in(valid, address, bank, chipSelect, command)
-    if(config.useBg) in(bg)
-    if(config.useCid) in(cid)
+  def <<(that: DfiInternalCommand): Unit = {
+    this.valid := that.valid
+    this.address := that.address
+    this.bank := that.bank
+    this.chipSelect := that.chipSelect
+    this.command := that.command
+    if(config.useBg) this.bg := that.bg
+    if(config.useCid) this.cid := that.cid
   }
+  def >>(that: DfiInternalCommand): Unit = that << this
 }
 
 /**
@@ -76,9 +82,13 @@ case class DfiInternalWrite(config: DfiConfig) extends Bundle with IMasterSlave 
     out(valid, data, mask, last)
   }
 
-  override def asSlave(): Unit = {
-    in(valid, data, mask, last)
+  def <<(that: DfiInternalWrite): Unit = {
+    this.valid := that.valid
+    this.data := that.data
+    this.mask := that.mask
+    this.last := that.last
   }
+  def >>(that: DfiInternalWrite): Unit = that << this
 }
 
 /**
@@ -95,10 +105,13 @@ case class DfiInternalRead(config: DfiConfig) extends Bundle with IMasterSlave {
     out(data, valid, last)
   }
 
-  override def asSlave(): Unit = {
-    out(ready)
-    in(data, valid, last)
+  def <<(that: DfiInternalRead): Unit = {
+    that.ready := this.ready
+    this.data := that.data
+    this.valid := that.valid
+    this.last := that.last
   }
+  def >>(that: DfiInternalRead): Unit = that << this
 }
 
 /**
@@ -110,12 +123,15 @@ case class DfiTrainingInterface(config: DfiConfig) extends Bundle with IMasterSl
   val caTraining = DfiCaTrainingInternal(config)
 
   override def asMaster(): Unit = {
-    out(readTraining, writeTraining, caTraining)
+    master(readTraining, writeTraining, caTraining)
   }
 
-  override def asSlave(): Unit = {
-    in(readTraining, writeTraining, caTraining)
+  def <<(that: DfiTrainingInterface): Unit = {
+    this.readTraining << that.readTraining
+    this.writeTraining << that.writeTraining
+    this.caTraining << that.caTraining
   }
+  def >>(that: DfiTrainingInterface): Unit = that << this
 }
 
 /**
@@ -130,6 +146,14 @@ case class DdrCalibrationInterface(config: SdramConfig) extends Bundle with IMas
   override def asMaster(): Unit = {
     out(writeData, writeMask, readData, valid)
   }
+
+  def <<(that: DdrCalibrationInterface): Unit = {
+    this.writeData := that.writeData
+    this.writeMask := that.writeMask
+    this.readData := that.readData
+    this.valid := that.valid
+  }
+  def >>(that: DdrCalibrationInterface): Unit = that << this
 }
 
 /**
@@ -145,6 +169,14 @@ case class DfiReadTrainingInternal(config: DfiConfig) extends Bundle with IMaste
     out(req, gateReq)
     in(resp, gateResp)
   }
+
+  def <<(that: DfiReadTrainingInternal): Unit = {
+    this.req := that.req
+    this.gateReq := that.gateReq
+    that.resp := this.resp
+    that.gateResp := this.gateResp
+  }
+  def >>(that: DfiReadTrainingInternal): Unit = that << this
 }
 
 /**
@@ -158,6 +190,12 @@ case class DfiWriteTrainingInternal(config: DfiConfig) extends Bundle with IMast
     out(req)
     in(resp)
   }
+
+  def <<(that: DfiWriteTrainingInternal): Unit = {
+    this.req := that.req
+    that.resp := this.resp
+  }
+  def >>(that: DfiWriteTrainingInternal): Unit = that << this
 }
 
 /**
@@ -172,4 +210,11 @@ case class DfiCaTrainingInternal(config: DfiConfig) extends Bundle with IMasterS
     out(req, capture)
     in(resp)
   }
+
+  def <<(that: DfiCaTrainingInternal): Unit = {
+    this.req := that.req
+    this.capture := that.capture
+    that.resp := this.resp
+  }
+  def >>(that: DfiCaTrainingInternal): Unit = that << this
 }

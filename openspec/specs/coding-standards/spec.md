@@ -5,16 +5,20 @@ This specification defines the global coding standards for SpinalHDL library dev
 
 ## Requirements
 
-#### REQ-CS-001: Component IO Bundle Access
-All Component class input/output signals MUST be accessed through the `io` named Bundle, and internal signals MUST be properly encapsulated.
+#### REQ-CS-001: Component IO Bundle Access and Naming Standards
+All Component class input/output signals MUST be accessed through the `io` named Bundle, and internal signals MUST be properly encapsulated. Area objects MUST NOT define Bundles named "io"; instead, use more descriptive names that clearly indicate the Bundle's purpose and context.
 
-**Rationale**: SpinalHDL Components encapsulate hardware modules, and all external interfaces must go through the dedicated `io` Bundle to maintain proper encapsulation and prevent direct signal access. Additionally, proper signal assignment completeness ensures all hardware signals have defined connections.
+**Rationale**: SpinalHDL Components encapsulate hardware modules, and all external interfaces must go through the dedicated `io` Bundle to maintain proper encapsulation and prevent direct signal access. Area objects provide encapsulation for related logic and signals. Using generic names like "io" reduces code readability and makes it harder to understand the purpose of different Bundles within an Area. Descriptive naming improves maintainability and makes the design intent clearer. Additionally, proper signal assignment completeness ensures all hardware signals have defined connections.
 
 **Requirements**:
 - Component classes MUST define a `val io = new Bundle { ... }` field
 - All input/output signals MUST be defined within the `io` Bundle
 - External objects MUST NOT directly access internal Component signals
 - Internal signals MAY be accessed within the Component for logic implementation
+- Area objects MUST NOT define any Bundle with the name "io"
+- Bundle names MUST be descriptive and indicate their specific purpose
+- Bundle names SHOULD reflect the signals they contain or their functional role
+- Avoid generic names that don't provide context about the Bundle's usage
 - When creating hardware signals in transformations, all Bundle fields MUST be explicitly assigned using `assignUnassignedByName()` after custom assignments
 - Use direct object access for Bundle field assignments instead of method chaining
 
@@ -34,36 +38,37 @@ case class MyComponent(config: MyConfig) extends Component {
   val processed = cloneOf(io.input.payload)
   processed.data := io.input.payload.data + 1        // Custom processing
   processed.assignUnassignedByName(io.input.payload)  // Connect all unassigned fields
+
+  val processingArea = new Area {
+    // ✓ Correct: Descriptive Bundle names in Area
+    val controlSignals = new Bundle {
+      val enable = Bool()
+      val reset = Bool()
+    }
+
+    val dataSignals = new Bundle {
+      val inputData = UInt(32 bits)
+      val outputData = UInt(32 bits)
+    }
+
+    // ✗ Incorrect: Avoid "io" in Area objects
+    // val io = new Bundle { ... }  // Not allowed in Area
+  }
 }
 ```
 
-##### Scenario: Valid Component Encapsulation
-- **WHEN** defining a Component
-- **THEN** all IO must go through the `io` Bundle and internal signals are properly encapsulated
-
-##### Scenario: Complete Signal Assignment
-- **WHEN** creating hardware signals in transformations
-- **THEN** all Bundle fields must be explicitly assigned using `assignUnassignedByName()`
-
-##### Scenario: Direct Object Access
-- **WHEN** assigning Bundle fields
-- **THEN** use direct object access instead of method chaining
-
-##### Scenario: Invalid Direct Signal Access
-- **WHEN** external code accesses Component internal signals
-- **THEN** it must be flagged as encapsulation violation
-
-##### Scenario: Valid AXI4 Interface Definition
-- **WHEN** defining an AXI4 interface
-- **THEN** the configuration and bundle must follow standards
-
-##### Scenario: Invalid Bundle with Scala Types
-- **WHEN** a Bundle contains Scala types
-- **THEN** compilation must fail with clear error
-
-##### Scenario: Configuration Class with Hardware Types
-- **WHEN** a configuration class contains hardware types
-- **THEN** it should be flagged as design error
+**Scenarios**:
+- **WHEN** defining a Component **THEN** all IO must go through the `io` Bundle and internal signals are properly encapsulated
+- **WHEN** defining Bundles within Area objects **THEN** use descriptive names instead of "io"
+- **WHEN** naming Bundles in Area objects **THEN** choose names that reflect their purpose and content
+- **WHEN** using generic names like "io" in Area objects **THEN** it must be flagged as naming violation
+- **WHEN** designing Area objects **THEN** ensure Bundle names enhance code readability and maintainability
+- **WHEN** creating hardware signals in transformations **THEN** all Bundle fields must be explicitly assigned using `assignUnassignedByName()`
+- **WHEN** assigning Bundle fields **THEN** use direct object access instead of method chaining
+- **WHEN** external code accesses Component internal signals **THEN** it must be flagged as encapsulation violation
+- **WHEN** defining an AXI4 interface **THEN** the configuration and bundle must follow standards
+- **WHEN** a Bundle contains Scala types **THEN** compilation must fail with clear error
+- **WHEN** a configuration class contains hardware types **THEN** it should be flagged as design error
 
 #### REQ-CS-008: Bundle and Interface Direction Management
 Bundle inheritance and IMasterSlave interface implementation MUST follow standardized patterns for signal direction management to ensure flexibility and prevent conflicts.
@@ -77,21 +82,11 @@ Bundle inheritance and IMasterSlave interface implementation MUST follow standar
 - Directions MUST be managed uniformly through the IMasterSlave trait's asMaster() method
 - This prevents unnecessary constraints, potential interface conflicts, and ensures consistent interface behavior
 
-##### Scenario: Valid Bundle Inheritance
-- **WHEN** creating new interface types through Bundle inheritance
-- **THEN** signal directions must not be specified in signal definitions and should be managed via IMasterSlave.asMaster()
-
-##### Scenario: Valid IMasterSlave Implementation
-- **WHEN** implementing IMasterSlave interface
-- **THEN** signal directions must be specified only in asMaster function
-
-##### Scenario: Invalid Direction Specification in Bundle
-- **WHEN** signal directions are specified in Bundle inheritance
-- **THEN** it must be flagged as design error
-
-##### Scenario: Invalid Direction Specification Outside asMaster
-- **WHEN** signal directions are specified outside asMaster function
-- **THEN** it must be flagged as implementation error
+**Scenarios**:
+- **WHEN** creating new interface types through Bundle inheritance **THEN** signal directions must not be specified in signal definitions and should be managed via IMasterSlave.asMaster()
+- **WHEN** implementing IMasterSlave interface **THEN** signal directions must be specified only in asMaster function
+- **WHEN** signal directions are specified in Bundle inheritance **THEN** it must be flagged as design error
+- **WHEN** signal directions are specified outside asMaster function **THEN** it must be flagged as implementation error
 
 #### REQ-CS-002: Basic Data Type Usage Standards
 Basic data types MUST be used according to their intended semantics and proper initialization patterns.
@@ -107,21 +102,11 @@ Basic data types MUST be used according to their intended semantics and proper i
 - Initialize all registers with proper reset values
 - Use appropriate bit-width selection for operations
 
-##### Scenario: Proper Bool Type Usage
-- **WHEN** declaring single-bit logical signals
-- **THEN** use `Bool()` type with `True`/`False` constants and edge detection methods
-
-##### Scenario: Proper Bits Type Usage
-- **WHEN** working with raw bit data
-- **THEN** use `Bits(n bits)` with binary/hexadecimal literals and bit manipulation operations
-
-##### Scenario: Proper Integer Arithmetic
-- **WHEN** performing arithmetic operations
-- **THEN** use `UInt` for unsigned and `SInt` for signed arithmetic with proper type constants
-
-##### Scenario: Valid Bool Type Usage
-- **WHEN** using Bool types for single-bit signals
-- **THEN** proper initialization and edge detection must be used
+**Scenarios**:
+- **WHEN** declaring single-bit logical signals **THEN** use `Bool()` type with `True`/`False` constants and edge detection methods
+- **WHEN** working with raw bit data **THEN** use `Bits(n bits)` with binary/hexadecimal literals and bit manipulation operations
+- **WHEN** performing arithmetic operations **THEN** use `UInt` for unsigned and `SInt` for signed arithmetic with proper type constants
+- **WHEN** using Bool types for single-bit signals **THEN** proper initialization and edge detection must be used
 
 #### REQ-CS-003: Sequential Logic Design Patterns
 Sequential logic MUST use proper register instantiation and timing control patterns.
@@ -136,14 +121,9 @@ Sequential logic MUST use proper register instantiation and timing control patte
 - Avoid combinational loops through proper register usage
 - Ensure complete assignment in conditional blocks to prevent latches
 
-##### Scenario: Register Instantiation Patterns
-- **WHEN** creating sequential logic elements
-- **THEN** use appropriate register types with proper initialization
-
-##### Scenario: Memory Design Patterns
-- **WHEN** implementing memory elements
-- **THEN** use `Mem()` for RAM and ROM with proper read/write interfaces
-
+**Scenarios**:
+- **WHEN** creating sequential logic elements **THEN** use appropriate register types with proper initialization
+- **WHEN** implementing memory elements **THEN** use `Mem()` for RAM and ROM with proper read/write interfaces
 
 #### REQ-CS-004: Clock Domain Management Principles
 Multi-clock domain designs MUST use proper clock domain crossing and synchronization techniques.
@@ -157,14 +137,9 @@ Multi-clock domain designs MUST use proper clock domain crossing and synchroniza
 - Avoid direct signal connections between different clock domains
 - Use appropriate reset synchronization for multi-clock designs
 
-##### Scenario: Single Clock Domain Design
-- **WHEN** designing with single clock domain
-- **THEN** use default clock domain with proper reset handling
-
-##### Scenario: Multi Clock Domain Design
-- **WHEN** designing with multiple clock domains
-- **THEN** use proper clock domain crossing synchronization with `BufferCC`
-
+**Scenarios**:
+- **WHEN** designing with single clock domain **THEN** use default clock domain with proper reset handling
+- **WHEN** designing with multiple clock domains **THEN** use proper clock domain crossing synchronization with `BufferCC`
 
 #### REQ-CS-005: Advanced Design Patterns
 Complex designs MUST use appropriate advanced patterns for state machines and pipelining.
@@ -178,14 +153,9 @@ Complex designs MUST use appropriate advanced patterns for state machines and pi
 - Implement resource sharing for common operations to optimize area
 - Consider timing constraints during pipeline design
 
-##### Scenario: State Machine Implementation
-- **WHEN** implementing finite state machines
-- **THEN** use `StateMachine` class with `whenIsActive` and `goto` methods
-
-##### Scenario: Pipeline Design
-- **WHEN** designing high-throughput circuits
-- **THEN** use multiple pipeline stages with proper register balancing
-
+**Scenarios**:
+- **WHEN** implementing finite state machines **THEN** use `StateMachine` class with `whenIsActive` and `goto` methods
+- **WHEN** designing high-throughput circuits **THEN** use multiple pipeline stages with proper register balancing
 
 #### REQ-CS-006: Debugging and Optimization Guidelines
 Hardware designs MUST include proper verification constructs and optimization techniques.
@@ -199,14 +169,9 @@ Hardware designs MUST include proper verification constructs and optimization te
 - Use conditional compilation for debug features in production code
 - Implement performance optimization techniques for critical paths
 
-##### Scenario: Design Verification
-- **WHEN** implementing hardware components
-- **THEN** include assertions for critical design constraints
-
-##### Scenario: Performance Optimization
-- **WHEN** optimizing performance-critical circuits
-- **THEN** use pipelining, resource sharing, and balanced operations
-
+**Scenarios**:
+- **WHEN** implementing hardware components **THEN** include assertions for critical design constraints
+- **WHEN** optimizing performance-critical circuits **THEN** use pipelining, resource sharing, and balanced operations
 
 #### REQ-CS-007: Simulation and Testing Best Practices
 Test code MUST follow established patterns for reliable verification and maintainability, including DUT definition, SimConfig usage, doSim block logic, simulator support, clock domain management, and assertions.
@@ -228,45 +193,17 @@ Test code MUST follow established patterns for reliable verification and maintai
 - Ensure test coverage includes functional, timing, boundary, and error conditions
 - Distinguish simulation assignments (`#=`) from hardware assignments (`:=`) to avoid compilation errors
 
-##### Scenario: Test Class Organization
-- **WHEN** creating test classes
-- **THEN** follow naming conventions and place in appropriate directory structure
-
-##### Scenario: Simulation Signal Assignment
-- **WHEN** assigning signals during simulation
-- **THEN** use explicit indexing for collections and proper data types
-
-##### Scenario: Test Execution
-- **WHEN** executing tests
-- **THEN** use standardized sbt commands with proper class names
-
-##### Scenario: Valid Test Stimulus Generation
-- **WHEN** creating test suites
-- **THEN** use random data generation with controlled seeds
-
-##### Scenario: Valid Test Coverage
-- **WHEN** implementing test suites
-- **THEN** achieve comprehensive coverage of design functionality
-
-##### Scenario: DUT Definition and Compilation
-- **WHEN** defining a DUT for testing
-- **THEN** use a Component class with io Bundle and compile via SimConfig
-
-##### Scenario: doSim Block Logic
-- **WHEN** implementing test logic
-- **THEN** use fork for concurrency, waitSampling for timing control, and assertions for validation
-
-##### Scenario: Simulator Support
-- **WHEN** running simulations
-- **THEN** support Verilator, GHDL, IVerilog with appropriate SimConfig settings
-
-##### Scenario: Clock Domain Management
-- **WHEN** testing multi-clock designs
-- **THEN** use forkStimulus and ClockDomain for proper timing
-
-##### Scenario: Assertion and Validation
-- **WHEN** validating outputs
-- **THEN** use assert or shouldBe with descriptive messages
+**Scenarios**:
+- **WHEN** creating test classes **THEN** follow naming conventions and place in appropriate directory structure
+- **WHEN** assigning signals during simulation **THEN** use explicit indexing for collections and proper data types
+- **WHEN** executing tests **THEN** use standardized sbt commands with proper class names
+- **WHEN** creating test suites **THEN** use random data generation with controlled seeds
+- **WHEN** implementing test suites **THEN** achieve comprehensive coverage of design functionality
+- **WHEN** defining a DUT for testing **THEN** use a Component class with io Bundle and compile via SimConfig
+- **WHEN** implementing test logic **THEN** use fork for concurrency, waitSampling for timing control, and assertions for validation
+- **WHEN** running simulations **THEN** support Verilator, GHDL, IVerilog with appropriate SimConfig settings
+- **WHEN** testing multi-clock designs **THEN** use forkStimulus and ClockDomain for proper timing
+- **WHEN** validating outputs **THEN** use assert or shouldBe with descriptive messages
 
 #### REQ-CS-013: Stream-Based Design Pattern
 Data processing components SHOULD use Stream infrastructure for flow control and backpressure.
@@ -299,14 +236,64 @@ case class StreamProcessor(config: Config) extends Component {
 }
 ```
 
-##### Scenario: Valid Stream-Based Component
-- **WHEN** implementing data processing components
-- **THEN** Stream infrastructure should be used for flow control with complete signal assignment
+**Scenarios**:
+- **WHEN** implementing data processing components **THEN** Stream infrastructure should be used for flow control with complete signal assignment
+- **WHEN** using complex state machines for data flow **THEN** it should be flagged as potential Stream candidate
 
-##### Scenario: Invalid State Machine Instead of Stream
-- **WHEN** using complex state machines for data flow
-- **THEN** it should be flagged as potential Stream candidate
+#### REQ-CS-027: Hardware Description Syntax Purity
+Hardware description MUST use only SpinalHDL constructs and avoid mixing Scala runtime syntax to ensure correct hardware generation and prevent type mismatches.
 
+**Rationale**: SpinalHDL provides specific constructs for hardware description, and mixing Scala runtime syntax (like conditional expressions) with hardware signals leads to type errors and incorrect behavior. Hardware logic must be described using SpinalHDL's declarative syntax to maintain synthesis compatibility and predictability.
+
+**Requirements**:
+- Prohibit the use of Scala conditional expressions (e.g., `cond ? a : b`) in hardware description contexts, as `cond` is a `Bool` hardware signal and Scala `? :` expects `Boolean`
+- Use `when() {} otherwise {}` statements for conditional hardware logic
+- Use SpinalHDL assignment operators (`:=`) exclusively for hardware signal assignments
+- Avoid Scala runtime constructs in Component bodies and Area classes
+- Ensure all hardware logic is described using SpinalHDL's built-in constructs
+
+**Valid Examples**:
+```scala
+case class HardwareLogic(config: Config) extends Component {
+  val io = new Bundle {
+    val input = in Bool()
+    val output = out Bits(32 bits)
+  }
+
+  // ✓ Correct: Use when() for conditional logic
+  when(io.input) {
+    io.output := B"32'hFFFFFFFF"
+  } otherwise {
+    io.output := B"32'h00000000"
+  }
+
+  // ✓ Correct: SpinalHDL assignment
+  val signal = Bits(32 bits)
+  signal := io.input ? B"32'hAAAAAAAA" | B"32'hBBBBBBBB"  // Valid SpinalHDL mux operator
+}
+```
+
+**Invalid Examples**:
+```scala
+case class HardwareLogic(config: Config) extends Component {
+  val io = new Bundle {
+    val input = in Bool()
+    val output = out Bits(32 bits)
+  }
+
+  // ✗ Incorrect: Scala conditional expression with hardware signal
+  val result = io.input ? B"32'hFFFFFFFF" : B"32'h00000000"  // Type error: Bool vs Boolean
+
+  // ✗ Incorrect: Mixing Scala syntax in hardware context
+  io.output := if (io.input) B"32'hFFFFFFFF" else B"32'h00000000"  // Scala if in hardware
+}
+```
+
+**Scenarios**:
+- **WHEN** implementing conditional hardware logic **THEN** use `when() {} otherwise {}` statements
+- **WHEN** using conditional assignments **THEN** use SpinalHDL mux operators like `? |` for hardware signals
+- **WHEN** using Scala `? :` with hardware signals **THEN** it must be flagged as type error
+- **WHEN** using Scala `if` or other runtime syntax with hardware signals as condition **THEN** it should be flagged as hardware description violation
 
 #### REQ-CS-026: Test Signal Assignment Patterns
 Test signal assignments during simulation MUST follow consistent patterns for different data types, strictly using `#=` in doSim blocks and avoiding `:=` which is reserved for hardware logic.
@@ -323,7 +310,6 @@ Test signal assignments during simulation MUST follow consistent patterns for di
 - Group related assignments and use comments to explain test phases
 - Ensure assignments propagate via `waitSampling()` calls
 
-
 **Valid Examples**:
 ```scala
 // ✓ Correct: #= for simulation assignments in doSim
@@ -339,37 +325,109 @@ for (i <- 0 until dut.io.dfi.read.rd.length) {
 // dut.io.input := 5  // Wrong: := is for hardware logic
 ```
 
-##### Scenario: Boolean Signal Assignment
-- **WHEN** assigning boolean signals in tests
-- **THEN** use `#=` operator with `Boolean` values and explicit indexing
+**Scenarios**:
+- **WHEN** assigning boolean signals in tests **THEN** use `#=` operator with `Boolean` values and explicit indexing
+- **WHEN** assigning integer or bits signals in tests **THEN** use `#=` operator with proper data types and explicit indexing
+- **WHEN** assigning signals to collections in tests **THEN** use `foreach(_ #= value)` patterns for Vec, List, and similar container types' assignment.
+- **WHEN** using `:=` in doSim blocks **THEN** it must be flagged as compilation error since `:=` is for hardware logic
 
-##### Scenario: Integer/Bits Signal Assignment
-- **WHEN** assigning integer or bits signals in tests
-- **THEN** use `#=` operator with proper data types and explicit indexing
+#### REQ-CS-028: Signal Connection Standards
+Signal connections MUST follow proper operator usage to ensure correctness and consistency, preventing unintended cross-component connections.
 
-##### Scenario: Collection Signal Assignment
-- **WHEN** assigning signals to collections in tests
-- **THEN** use `foreach(_ #= value)` patterns for Vec, List, and similar container types' assignment.
+**Rationale**: Proper signal connection practices ensure hardware correctness and maintain design integrity. The "<>" operator is designed for automatic signal connection within the same component or bundle initialization context, while cross-component connections require explicit assignment operators to avoid accidental connections and maintain clear design intent.
 
-##### Scenario: Invalid Hardware Assignment in Simulation
-- **WHEN** using `:=` in doSim blocks
-- **THEN** it must be flagged as compilation error since `:=` is for hardware logic
+**Requirements**:
+- The "<>" operator MUST be used only for signal connections within the same Component or Bundle initialization block
+- The "<>" operator MUST NOT be used for connections between parent and child modules, even within the same Component or Area. Use explicit assignment operators like ":=" for such connections to maintain design clarity
+- Cross-component signal connections MUST NOT use the "<>" operator and SHOULD use ":=" or other appropriate assignment operators
+- All signal connections MUST be explicit and intentional to prevent unintended connections
+- Connection patterns MUST be consistent across the codebase to ensure maintainability
 
-## Implementation Notes
+**Example**:
+```scala
+case class MyComponent(config: MyConfig) extends Component {
+  val io = new Bundle {
+    val input = in UInt(32 bits)
+    val output = out UInt(32 bits)
+  }
 
-### Tool Integration
-- Static analysis tools should check Bundle definitions
-- Build process should include type validation
-- IDE plugins should provide real-time feedback
-- Component encapsulation validators should be implemented
+  // ✓ Correct: <> for internal bundle connections
+  val internalBundle = new Bundle {
+    val data = UInt(32 bits)
+    val valid = Bool()
+  }
+  internalBundle <> io.input  // Valid within same component
 
-### Migration Strategy
-- Existing code should be gradually migrated
-- Automated refactoring tools may be developed
-- Backward compatibility maintained during transition
+  // ✓ Correct: := for cross-component connections
+  io.output := internalBundle.data + 1
+}
 
-### Testing
-- Unit tests for type validation
-- Integration tests for code generation
-- Regression tests for existing patterns
-- Component encapsulation tests
+case class TopLevel() extends Component {
+  val comp1 = new MyComponent(config1)
+  val comp2 = new MyComponent(config2)
+
+  // ✓ Correct: Explicit assignment for cross-component
+  comp2.io.input := comp1.io.output
+
+  // ✗ Incorrect: Using <> for cross-component (compilation error)
+  // comp2.io <> comp1.io  // Invalid: <> not allowed across components
+}
+```
+
+**Scenarios**:
+- **WHEN** connecting signals within the same Component or Bundle initialization **THEN** use "<>" operator for automatic connection
+- **WHEN** connecting signals between parent and child modules **THEN** use explicit assignment operators like ":=" and MUST NOT use "<>" operator
+- **WHEN** connecting signals between different Components **THEN** use explicit assignment operators like ":=" to maintain design clarity
+- **WHEN** using "<>" operator across Components **THEN** it must be flagged as connection violation
+- **WHEN** using "<>" operator between parent and child modules **THEN** it must be flagged as connection violation
+- **WHEN** designing hierarchical components **THEN** ensure connection patterns are consistent and explicit
+
+#### REQ-CS-029: IMasterSlave Interface Connection Functions
+IMasterSlave interfaces SHOULD implement << and >> functions for standardized bidirectional connections with proper signal direction handling.
+
+**Rationale**: Connection functions provide symmetric interface operations, enabling flexible signal routing while ensuring type safety and consistent connection patterns across interface types.
+
+**Requirements**:
+- IMasterSlave interfaces SHOULD implement << function for forward connections with proper signal direction handling
+- Interfaces implementing << MUST also implement >> function that calls << with reversed arguments for symmetry
+- Both functions MUST ensure type safety and prevent invalid signal connections based on master/slave configuration
+- Functions MUST support interface composition and chaining for flexible signal routing
+- Connect signals defined with << and >> functions with those functions as possible
+
+**Example**:
+```scala
+trait MyInterface extends Bundle with IMasterSlave {
+  val data = UInt(32 bits)
+  val valid = Bool()
+  val ready = Bool()
+
+  def asMaster(): Unit = {
+    out(data, valid)
+    in(ready)
+  }
+
+  def <<(that: MyInterface) : Unit = {
+    this.data := that.data // treat that as master, so that.data is output.
+    this.valid := that.valid
+    that.ready := this.ready // that's input signals would be assigned.
+  }
+
+  def >>(that: MyInterface) : MyInterface = that << this // Reverse operation via << call
+}
+
+case class MyComponent() extends Component {
+  val io = new Bundle {
+    val input = slave(MyInterface())
+    val output = master(MyInterface())
+  }
+
+  io.output << io.input  // Forward connection
+  io.input >> io.output  // Reverse connection
+}
+```
+
+**Scenarios**:
+- **WHEN** designing IMasterSlave interfaces **THEN** implement both << and >> functions for bidirectional connections
+- **WHEN** connecting interfaces **THEN** use << or >> functions for consistent, type-safe signal routing
+- **WHEN** chaining interfaces **THEN** leverage function composition for flexible signal paths
+- **WHEN** connecting signals defined with << and >> functions **THEN** use those functions for connections

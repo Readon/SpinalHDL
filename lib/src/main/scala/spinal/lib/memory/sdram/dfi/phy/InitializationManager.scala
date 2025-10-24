@@ -29,17 +29,17 @@ case class InitializationManager(config: InitializationConfig) extends Component
 
   // 初始化状态机
   val initFsm = InitializationFsm(config)
-  initFsm.io.dfiInit <> io.init
-  initFsm.io.ddrInit <> io.initializationInterface
+  initFsm.io.dfiInit := io.init
+  initFsm.io.ddrInit := io.initializationInterface
 
   // DDR接口控制器
   val ddrInterfaceController = DdrInterfaceController(config)
-  ddrInterfaceController.io.initCommand <> initFsm.io.ddrCommand
-  io.sdram <> ddrInterfaceController.io.sdram
+  ddrInterfaceController.io.initCommand := initFsm.io.ddrCommand
+  io.sdram := ddrInterfaceController.io.sdram
 
   // 模式寄存器控制器
   val modeRegisterController = ModeRegisterController(config)
-  modeRegisterController.io.mrCommand <> initFsm.io.mrCommand
+  modeRegisterController.io.mrCommand := initFsm.io.mrCommand
 
   // 调试信号 - 符合REQ-CS-018：使用直接对象访问
   io.debug.initCount := initFsm.io.debug.initCount
@@ -50,7 +50,7 @@ case class InitializationManager(config: InitializationConfig) extends Component
  * 初始化配置
  */
 case class InitializationConfig(
-    ddrStandard: DdrStandard.C,
+    ddrStandard: DdrStandard.E,
     dfiConfig: DfiConfig,
     sdramConfig: SdramConfig
 )

@@ -44,23 +44,23 @@ case class DfiAdapter(config: DfiAdapterConfig) extends Component {
 
   // DFI信号解析逻辑
   val dfiParser = DfiParser(config)
-  dfiParser.io.dfi <> io.dfi
+  dfiParser.io.dfi << io.dfi
 
   // 内部接口生成
-  io.dfiInternal <> dfiParser.io.dfiInternal
+  io.dfiInternal << dfiParser.io.dfiInternal
 
   // 训练接口处理
   val trainingHandler = DfiTrainingHandler(config)
-  trainingHandler.io.dfiRdTraining <> io.dfi.rdTraining
-  trainingHandler.io.dfiWrTraining <> io.dfi.wrTraining
-  trainingHandler.io.dfiCaTraining <> io.dfi.caTraining
-  io.training <> trainingHandler.io.training
+  trainingHandler.io.dfiRdTraining << io.dfi.rdTraining
+  trainingHandler.io.dfiWrTraining << io.dfi.wrTraining
+  trainingHandler.io.dfiCaTraining << io.dfi.caTraining
+  io.training << trainingHandler.io.training
 
   // 初始化接口处理
   val initHandler = DfiInitHandler(config)
-  initHandler.io.dfiStatus <> io.dfi.status
-  initHandler.io.dfiUpdate <> io.dfi.update
-  io.init <> initHandler.io.init
+  initHandler.io.dfiStatus << io.dfi.status
+  initHandler.io.dfiUpdate << io.dfi.update
+  io.init << initHandler.io.init
 
   // 调试信号 - 符合REQ-CS-018：使用直接对象访问
   io.debug.commandCount := dfiParser.io.debug.commandCount
@@ -90,18 +90,18 @@ case class DfiParser(config: DfiAdapterConfig) extends Area {
 
   // 命令解析逻辑
   val commandParser = DfiCommandParser(config)
-  commandParser.io.dfiControl <> io.dfi.control
-  io.dfiInternal.command <> commandParser.io.command
+  commandParser.io.dfiControl << io.dfi.control
+  io.dfiInternal.command << commandParser.io.command
 
   // 写数据解析逻辑
   val writeParser = DfiWriteParser(config)
-  writeParser.io.dfiWrite <> io.dfi.write
-  io.dfiInternal.write <> writeParser.io.write
+  writeParser.io.dfiWrite << io.dfi.write
+  io.dfiInternal.write << writeParser.io.write
 
   // 读数据生成逻辑
   val readGenerator = DfiReadGenerator(config)
-  readGenerator.io.dfiRead <> io.dfi.read
-  io.dfiInternal.read <> readGenerator.io.read
+  readGenerator.io.dfiRead << io.dfi.read
+  io.dfiInternal.read << readGenerator.io.read
 
   // 调试信号 - 符合REQ-CS-018：使用直接对象访问
   io.debug.commandCount := commandParser.io.debug.commandCount
@@ -122,8 +122,8 @@ case class DfiCommandParser(config: DfiAdapterConfig) extends Area {
 
   // 命令解码逻辑
   val commandDecoder = DfiCommandDecoder(config)
-  commandDecoder.io.dfiControl <> io.dfiControl
-  io.command <> commandDecoder.io.command
+  commandDecoder.io.dfiControl << io.dfiControl
+  io.command << commandDecoder.io.command
 
   // 调试信号 - 符合REQ-CS-018：使用直接对象访问
   io.debug.commandCount := commandDecoder.io.debug.commandCount
@@ -180,8 +180,8 @@ case class DfiCommandDecoder(config: DfiAdapterConfig) extends Area {
 
   // 命令解码状态机
   val commandFsm = DfiCommandFsm(config)
-  commandFsm.io.dfiControl <> io.dfiControl
-  io.command <> commandFsm.io.command
+  commandFsm.io.dfiControl << io.dfiControl
+  io.command << commandFsm.io.command
 
   // 调试信号 - 符合REQ-CS-018：使用直接对象访问
   io.debug.commandCount := commandFsm.io.debug.commandCount
@@ -247,29 +247,57 @@ case class DfiTrainingHandler(config: DfiAdapterConfig) extends Area {
     val training = master(DfiTrainingInterface(config.dfiConfig))
   }
 
-  // 训练接口直通
-  val rdReq = io.dfiRdTraining.rdlvlReq.orR ? io.dfiRdTraining.rdlvlReq | B"0"
-  val rdGateReq = io.dfiRdTraining.rdlvlGateReq.orR ? io.dfiRdTraining.rdlvlGateReq | B"0"
-  val rdResp = io.dfiRdTraining.rdlvlResp.orR ? io.dfiRdTraining.rdlvlResp | B"0"
+  // 训练接口直通 - 条件访问以避免不存在字段的错误
+  if(config.dfiConfig.useRdlvlReq) {
+    io.training.readTraining.req := io.dfiRdTraining.rdlvlReq.orR
+  } else {
+    io.training.readTraining.req := False
+  }
 
-  io.training.readTraining.req := rdReq.orR
-  io.training.readTraining.gateReq := rdGateReq.orR
+  if(config.dfiConfig.useRdlvlGateReq) {
+    io.training.readTraining.gateReq := io.dfiRdTraining.rdlvlGateReq.orR
+  } else {
+    io.training.readTraining.gateReq := False
+  }
+
+  val rdResp = Bits(config.dfiConfig.readLevelingResponseWidth bits)
+  if(config.dfiConfig.useRdlvlResp) {
+    rdResp := io.dfiRdTraining.rdlvlResp.orR ? io.dfiRdTraining.rdlvlResp | B"0"
+  } else {
+    rdResp := B"0"
+  }
   io.training.readTraining.resp := rdResp
   io.training.readTraining.gateResp := rdResp
 
-  val wrReq = io.dfiWrTraining.wrlvlReq.orR ? io.dfiWrTraining.wrlvlReq | B"0"
-  val wrResp = io.dfiWrTraining.wrlvlResp.orR ? io.dfiWrTraining.wrlvlResp | B"0"
+  if(config.dfiConfig.useWrlvlReq) {
+    io.training.writeTraining.req := io.dfiWrTraining.wrlvlReq.orR
+  } else {
+    io.training.writeTraining.req := False
+  }
 
-  io.training.writeTraining.req := wrReq.orR
-  io.training.writeTraining.resp := wrResp
+  if(config.dfiConfig.useWrlvlResp) {
+    io.training.writeTraining.resp := io.dfiWrTraining.wrlvlResp.orR ? io.dfiWrTraining.wrlvlResp | B"0"
+  } else {
+    io.training.writeTraining.resp := B"0"
+  }
 
-  val caReq = io.dfiCaTraining.calvlReq.orR ? io.dfiCaTraining.calvlReq | B"0"
-  val caCapture = io.dfiCaTraining.calvlCapture.orR ? io.dfiCaTraining.calvlCapture | B"0"
-  val caResp = io.dfiCaTraining.calvlResp.orR ? io.dfiCaTraining.calvlResp | B"0"
+  if(config.dfiConfig.useCalvlReq) {
+    io.training.caTraining.req := io.dfiCaTraining.calvlReq.orR
+  } else {
+    io.training.caTraining.req := False
+  }
 
-  io.training.caTraining.req := caReq.orR
-  io.training.caTraining.capture := caCapture
-  io.training.caTraining.resp := caResp
+  if(config.dfiConfig.useCalvlCapture) {
+    io.training.caTraining.capture := io.dfiCaTraining.calvlCapture.orR ? io.dfiCaTraining.calvlCapture | B"0"
+  } else {
+    io.training.caTraining.capture := B"0"
+  }
+
+  if(config.dfiConfig.useCalvlResp) {
+    io.training.caTraining.resp := io.dfiCaTraining.calvlResp.orR ? io.dfiCaTraining.calvlResp | B"0"
+  } else {
+    io.training.caTraining.resp := B"0"
+  }
 }
 
 /**
@@ -295,16 +323,26 @@ case class DfiInitHandler(config: DfiAdapterConfig) extends Area {
     )))
   }
 
-  // 初始化接口直通
-  val initStart = io.dfiStatus.initStart
-  val initComplete = io.dfiStatus.initComplete
-  val freqRatio = io.dfiStatus.freqRatio
-  val dramClkDisable = io.dfiStatus.dramClkDisable
+  // 初始化接口直通 - 条件访问以避免不存在字段的错误
+  if(config.dfiConfig.useInitStart) {
+    io.init.initStart := io.dfiStatus.initStart
+    io.init.initComplete := io.dfiStatus.initComplete
+  } else {
+    io.init.initStart := False
+    io.init.initComplete := False
+  }
 
-  io.init.initStart := initStart
-  io.init.initComplete := initComplete
-  io.init.freqRatio := freqRatio
-  io.init.dramClkDisable := dramClkDisable
+  if(config.dfiConfig.useFreqRatio) {
+    io.init.freqRatio := io.dfiStatus.freqRatio
+  } else {
+    io.init.freqRatio := B"00"
+  }
+
+  if(config.dfiConfig.useStatusSignals) {
+    io.init.dramClkDisable := io.dfiStatus.dramClkDisable
+  } else {
+    io.init.dramClkDisable := B"0"
+  }
 }
 
 /**

@@ -50,32 +50,32 @@ case class DfiDdrPhy(config: DfiDdrPhyConfig) extends Component {
   val initializationManager = InitializationManager(config.initializationConfig)
 
   // DFI适配器连接
-  dfiAdapter.io.dfi <> io.dfi
+  dfiAdapter.io.dfi << io.dfi
 
   // 标准适配器连接
-  standardAdapter.io.dfiInternal <> dfiAdapter.io.dfiInternal
+  standardAdapter.io.dfiInternal << dfiAdapter.io.dfiInternal
 
   // 时序生成器连接
-  timingGenerator.io.command <> standardAdapter.io.command
-  // timingGenerator.io.timingConfig <> config.timingConfig
+  timingGenerator.io.command << standardAdapter.io.command
+  // timingGenerator.io.timingConfig := config.timingConfig
 
   // 数据路径连接
-  dataPath.io.timing <> timingGenerator.io.timing
-  dataPath.io.data <> standardAdapter.io.data
+  dataPath.io.timing << timingGenerator.io.timing
+  dataPath.io.data << standardAdapter.io.data
 
   // 校准引擎连接
-  calibrationEngine.io.training <> dfiAdapter.io.training
-  calibrationEngine.io.calibrationInterface <> dataPath.io.calibration
+  calibrationEngine.io.training << dfiAdapter.io.training
+  calibrationEngine.io.calibrationInterface << dataPath.io.calibration
 
   // 训练接口连接 - 暴露到顶层
   if(config.features.trainingSupport) {
-    io.training <> dfiAdapter.io.training
+    io.training << dfiAdapter.io.training
   }
 
   // 初始化管理器连接
-  initializationManager.io.init <> dfiAdapter.io.init
-  initializationManager.io.initializationInterface <> standardAdapter.io.init
-  initializationManager.io.sdram <> io.sdram
+  initializationManager.io.init << dfiAdapter.io.init
+  initializationManager.io.initializationInterface << standardAdapter.io.init
+  io.sdram << initializationManager.io.sdram
 
   // 状态和调试信号连接 - 符合REQ-CS-018：使用直接对象访问
   io.status.initialized := True
@@ -97,7 +97,7 @@ case class DfiDdrPhy(config: DfiDdrPhyConfig) extends Component {
  * PHY配置类
  */
 case class DfiDdrPhyConfig(
-    ddrStandard: DdrStandard.C,
+    ddrStandard: DdrStandard.E,
     dfiConfig: DfiConfig,
     sdramConfig: SdramConfig,
     features: DfiDdrPhyFeatures = DfiDdrPhyFeatures()
@@ -114,6 +114,19 @@ case class DfiDdrPhyConfig(
     dfiConfig = dfiConfig,
     sdramConfig = sdramConfig,
     features = features
+  )
+
+  // 运行时配置接口
+  val timingConfig = TimingConfig(
+    tCK = sdramConfig.ddrMHZ,
+    tRCD = sdramConfig.tRCD,
+    tRP = sdramConfig.tRP,
+    tRAS = sdramConfig.tRAS,
+    tWR = sdramConfig.tWR,
+    tRTP = sdramConfig.tRTP,
+    tWTR = sdramConfig.tWTR,
+    tREFI = sdramConfig.tREF,
+    tRFC = sdramConfig.tRFC
   )
 
   val timingGeneratorConfig = TimingGeneratorConfig(
@@ -141,19 +154,6 @@ case class DfiDdrPhyConfig(
       ddrStandard = ddrStandard,
       dfiConfig = dfiConfig,
       sdramConfig = sdramConfig
-  )
-
-  // 运行时配置接口
-  val timingConfig = TimingConfig(
-    tCK = sdramConfig.ddrMHZ,
-    tRCD = sdramConfig.tRCD,
-    tRP = sdramConfig.tRP,
-    tRAS = sdramConfig.tRAS,
-    tWR = sdramConfig.tWR,
-    tRTP = sdramConfig.tRTP,
-    tWTR = sdramConfig.tWTR,
-    tREFI = sdramConfig.tREF,
-    tRFC = sdramConfig.tRFC
   )
 }
 

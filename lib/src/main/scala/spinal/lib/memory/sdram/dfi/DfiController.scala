@@ -14,12 +14,12 @@ case class DfiController(bmbp: BmbParameter, task: TaskParameter, dfiConfig: Dfi
   val taskConfig = BmbAdapter.taskConfig(bmbp, dfiConfig, task)
 
   val bmbBridge = BmbBridge(bmbp, taskConfig, dfiConfig, addrMap)
-  bmbBridge.io.bmb <> io.bmb
+  bmbBridge.io.bmb := io.bmb
 
   val control = Control(taskConfig, dfiConfig)
-  control.io.input <> bmbBridge.io.taskPort
+  control.io.input := bmbBridge.io.taskPort
 
   val alignment = Alignment(dfiConfig)
-  alignment.io.input <> control.io.output
-  alignment.io.output <> io.dfi
+  alignment.io.input := control.io.output
+  alignment.io.output := io.dfi
 }

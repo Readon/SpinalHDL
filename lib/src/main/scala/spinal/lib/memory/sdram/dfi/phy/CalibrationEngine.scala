@@ -26,8 +26,8 @@ case class CalibrationEngine(config: CalibrationConfig) extends Component {
 
   // 校准状态机
   val calibrationFsm = CalibrationFsm(config)
-  calibrationFsm.io.training <> io.training
-  calibrationFsm.io.calibrationInterface <> io.calibrationInterface
+  calibrationFsm.io.training := io.training
+  calibrationFsm.io.calibrationInterface := io.calibrationInterface
 
   // 调试信号 - 符合REQ-CS-018：使用直接对象访问
   io.debug.calibrationCount := calibrationFsm.io.debug.calibrationCount
@@ -38,7 +38,7 @@ case class CalibrationEngine(config: CalibrationConfig) extends Component {
  * 校准配置
  */
 case class CalibrationConfig(
-    ddrStandard: DdrStandard.C,
+    ddrStandard: DdrStandard.E,
     dfiConfig: DfiConfig,
     sdramConfig: SdramConfig,
     features: DfiDdrPhyFeatures

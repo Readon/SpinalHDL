@@ -12,19 +12,19 @@ case class Alignment(config: DfiConfig) extends Component {
 
   val caAlignment = CAAlignment(config)
   caAlignment.io.cke.setAll()
-  caAlignment.io.cmd <> io.input.cmd
-  caAlignment.io.address <> io.input.address
-  caAlignment.io.output <> io.output.control
+  caAlignment.io.cmd := io.input.cmd
+  caAlignment.io.address := io.input.address
+  caAlignment.io.output := io.output.control
 
   val wrAlignment = WrAlignment(config)
-  wrAlignment.io.input <> io.input.wrData
-  if (config.useWrdataCsN) wrAlignment.io.inputCs <> io.input.wrCs
-  wrAlignment.io.output <> io.output.write
+  wrAlignment.io.input := io.input.wrData
+  if (config.useWrdataCsN) wrAlignment.io.inputCs := io.input.wrCs
+  wrAlignment.io.output := io.output.write
 
   val rdAlignment = RdAlignment(config)
-  rdAlignment.io.input <> io.input.rdData
-  if (config.useRddataCsN) rdAlignment.io.inputCs <> io.input.rdCs
-  rdAlignment.io.inputEn <> io.input.rdEn
-  rdAlignment.io.output <> io.output.read
+  rdAlignment.io.input := io.input.rdData
+  if (config.useRddataCsN) rdAlignment.io.inputCs := io.input.rdCs
+  rdAlignment.io.inputEn := io.input.rdEn
+  rdAlignment.io.output := io.output.read
   rdAlignment.io.phaseClear := False
 }

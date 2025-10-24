@@ -25,26 +25,17 @@ case class TimingGenerator(config: TimingGeneratorConfig) extends Component {
   }
 
   // 时序参数寄存器
-  val timingRegs = TimingRegs(config)
-  timingRegs.io.config.tCK := U(config.timingConfig.tCK, 16 bits)
-  timingRegs.io.config.tRCD := U(config.timingConfig.tRCD, 8 bits)
-  timingRegs.io.config.tRP := U(config.timingConfig.tRP, 8 bits)
-  timingRegs.io.config.tRAS := U(config.timingConfig.tRAS, 8 bits)
-  timingRegs.io.config.tWR := U(config.timingConfig.tWR, 8 bits)
-  timingRegs.io.config.tRTP := U(config.timingConfig.tRTP, 8 bits)
-  timingRegs.io.config.tWTR := U(config.timingConfig.tWTR, 8 bits)
-  timingRegs.io.config.tREFI := U(config.timingConfig.tREFI, 16 bits)
-  timingRegs.io.config.tRFC := U(config.timingConfig.tRFC, 8 bits)
+  val timingRegs = new TimingRegs(config)
 
   // 命令时序控制器
   val commandTimingController = CommandTimingController(config)
-  commandTimingController.io.command <> io.command
-  commandTimingController.io.timingParams <> timingRegs.io.params
+  commandTimingController.io.command := io.command
+  commandTimingController.io.timingParams := timingRegs.params
 
   // 时序接口生成器
   val timingInterfaceGenerator = TimingInterfaceGenerator(config)
-  timingInterfaceGenerator.io.commandTiming <> commandTimingController.io.timing
-  io.timing <> timingInterfaceGenerator.io.timing
+  timingInterfaceGenerator.io.commandTiming := commandTimingController.io.timing
+  io.timing := timingInterfaceGenerator.io.timing
 
   // 调试信号 - 符合REQ-CS-018：使用直接对象访问
   io.debug.commandCount := commandTimingController.io.debug.commandCount
@@ -55,7 +46,7 @@ case class TimingGenerator(config: TimingGeneratorConfig) extends Component {
  * 时序生成器配置
  */
 case class TimingGeneratorConfig(
-    ddrStandard: DdrStandard.C,
+    ddrStandard: DdrStandard.E,
     dfiConfig: DfiConfig,
     sdramConfig: SdramConfig,
     timingConfig: TimingConfig
@@ -67,52 +58,27 @@ case class TimingGeneratorConfig(
  */
 case class TimingRegs(config: TimingGeneratorConfig) extends Area {
 
-  val io = new Bundle {
-    val config = TimingConfig(
-      tCK = 0,
-      tRCD = 0,
-      tRP = 0,
-      tRAS = 0,
-      tWR = 0,
-      tRTP = 0,
-      tWTR = 0,
-      tREFI = 0,
-      tRFC = 0
-    )
-    val params = master(TimingParams())
-  }
-
   // 时序参数寄存器
-  val tRCD = Reg(UInt(8 bits)) init 0
-  val tRP = Reg(UInt(8 bits)) init 0
-  val tRAS = Reg(UInt(8 bits)) init 0
-  val tWR = Reg(UInt(8 bits)) init 0
-  val tRTP = Reg(UInt(8 bits)) init 0
-  val tWTR = Reg(UInt(8 bits)) init 0
-  val tREFI = Reg(UInt(16 bits)) init 0
-  val tRFC = Reg(UInt(8 bits)) init 0
-
-  // 更新时序参数
-  when(True) {
-    tRCD := io.config.tRCD
-    tRP := io.config.tRP
-    tRAS := io.config.tRAS
-    tWR := io.config.tWR
-    tRTP := io.config.tRTP
-    tWTR := io.config.tWTR
-    tREFI := io.config.tREFI
-    tRFC := io.config.tRFC
-  }
+  val tCK = Reg(UInt(16 bits)) init config.timingConfig.tCK
+  val tRCD = Reg(UInt(8 bits)) init config.timingConfig.tRCD
+  val tRP = Reg(UInt(8 bits)) init config.timingConfig.tRP
+  val tRAS = Reg(UInt(8 bits)) init config.timingConfig.tRAS
+  val tWR = Reg(UInt(8 bits)) init config.timingConfig.tWR
+  val tRTP = Reg(UInt(8 bits)) init config.timingConfig.tRTP
+  val tWTR = Reg(UInt(8 bits)) init config.timingConfig.tWTR
+  val tREFI = Reg(UInt(16 bits)) init config.timingConfig.tREFI
+  val tRFC = Reg(UInt(8 bits)) init config.timingConfig.tRFC
 
   // 输出时序参数
-  io.params.tRCD := tRCD
-  io.params.tRP := tRP
-  io.params.tRAS := tRAS
-  io.params.tWR := tWR
-  io.params.tRTP := tRTP
-  io.params.tWTR := tWTR
-  io.params.tREFI := tREFI
-  io.params.tRFC := tRFC
+  val params = TimingParams()
+  params.tRCD := tRCD
+  params.tRP := tRP
+  params.tRAS := tRAS
+  params.tWR := tWR
+  params.tRTP := tRTP
+  params.tWTR := tWTR
+  params.tREFI := tREFI
+  params.tRFC := tRFC
 }
 
 /**
@@ -147,9 +113,9 @@ case class CommandTimingController(config: TimingGeneratorConfig) extends Area {
 
   // 命令时序状态机
   val commandScheduler = CommandScheduler(config)
-  commandScheduler.io.command <> io.command
-  commandScheduler.io.timingParams <> io.timingParams
-  io.timing <> commandScheduler.io.timing
+  commandScheduler.io.command := io.command
+  commandScheduler.io.timingParams := io.timingParams
+  io.timing := commandScheduler.io.timing
 
   // 调试信号 - 符合REQ-CS-018：使用直接对象访问
   io.debug.commandCount := commandScheduler.io.debug.commandCount

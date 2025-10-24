@@ -587,6 +587,6 @@ class USPhy(dfiConfig: DfiConfig) extends Component {
 
   // Instantiate TrainingController
   val trainingCtrl = new TrainingController(dfiConfig)
-  trainingCtrl.io.dfi <> io.dfi
+  trainingCtrl.io.dfi := io.dfi
   trainingCtrl.io.status.initDone := io.ctrl.initDone
 }

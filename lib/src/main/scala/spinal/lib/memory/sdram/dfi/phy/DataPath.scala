@@ -29,21 +29,21 @@ case class DataPath(config: DataPathConfig) extends Component {
 
   // 数据缓冲器
   val writeBuffer = WriteDataBuffer(config)
-  writeBuffer.io.timing <> io.timing
-  writeBuffer.io.writeData <> io.data.write
+  writeBuffer.io.timing := io.timing
+  writeBuffer.io.writeData := io.data.write
 
   // 读数据处理器
   val readProcessor = ReadDataProcessor(config)
-  readProcessor.io.timing <> io.timing
-  readProcessor.io.readData <> io.data.read
+  readProcessor.io.timing := io.timing
+  readProcessor.io.readData := io.data.read
 
   // 数据格式转换器
   val dataFormatter = DataFormatter(config)
-  dataFormatter.io.writeBuffer <> writeBuffer.io.formattedWrite
-  dataFormatter.io.readProcessor <> readProcessor.io.formattedRead
+  dataFormatter.io.writeBuffer := writeBuffer.io.formattedWrite
+  dataFormatter.io.readProcessor := readProcessor.io.formattedRead
 
   // 校准接口连接
-  io.calibration <> dataFormatter.io.calibration
+  io.calibration := dataFormatter.io.calibration
 
   // 调试信号 - 符合REQ-CS-018：使用直接对象访问
   io.debug.writeCount := writeBuffer.io.debug.writeCount
@@ -54,7 +54,7 @@ case class DataPath(config: DataPathConfig) extends Component {
  * 数据路径配置
  */
 case class DataPathConfig(
-    ddrStandard: DdrStandard.C,
+    ddrStandard: DdrStandard.E,
     dfiConfig: DfiConfig,
     sdramConfig: SdramConfig,
     features: DfiDdrPhyFeatures

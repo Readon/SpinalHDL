@@ -21,6 +21,14 @@ case class DdrFormattedWriteInterface(config: SdramConfig) extends Bundle with I
   override def asMaster(): Unit = {
     out(valid, data, mask, last)
   }
+
+  def <<(that: DdrFormattedWriteInterface): Unit = {
+    this.valid := that.valid
+    this.data := that.data
+    this.mask := that.mask
+    this.last := that.last
+  }
+  def >>(that: DdrFormattedWriteInterface): Unit = that << this
 }
 
 /**
@@ -36,6 +44,14 @@ case class DdrFormattedReadInterface(config: SdramConfig) extends Bundle with IM
     in(ready)
     out(data, valid, last)
   }
+
+  def <<(that: DdrFormattedReadInterface): Unit = {
+    that.ready := this.ready
+    this.data := that.data
+    this.valid := that.valid
+    this.last := that.last
+  }
+  def >>(that: DdrFormattedReadInterface): Unit = that << this
 }
 
 /**
@@ -52,6 +68,16 @@ case class DdrWriteDataInterface(config: SdramConfig) extends Bundle with IMaste
   override def asMaster(): Unit = {
     out(valid, data, mask, last, dqs, dqs_n)
   }
+
+  def <<(that: DdrWriteDataInterface): Unit = {
+    this.valid := that.valid
+    this.data := that.data
+    this.mask := that.mask
+    this.last := that.last
+    this.dqs := that.dqs
+    this.dqs_n := that.dqs_n
+  }
+  def >>(that: DdrWriteDataInterface): Unit = that << this
 }
 
 /**
@@ -69,6 +95,16 @@ case class DdrReadDataInterface(config: SdramConfig) extends Bundle with IMaster
     in(ready)
     out(data, valid, last, dqs, dqs_n)
   }
+
+  def <<(that: DdrReadDataInterface): Unit = {
+    that.ready := this.ready
+    this.data := that.data
+    this.valid := that.valid
+    this.last := that.last
+    this.dqs := that.dqs
+    this.dqs_n := that.dqs_n
+  }
+  def >>(that: DdrReadDataInterface): Unit = that << this
 }
 
 /**
@@ -106,6 +142,27 @@ case class DdrInterface(config: SdramConfig) extends Bundle with IMasterSlave {
   override def asMaster(): Unit = {
     out(clk, clk_n, cke, cs_n, ras_n, cas_n, we_n, addr, ba, bg, cid, dq, dqs, dqs_n, dm, odt, reset_n)
   }
+
+  def <<(that: DdrInterface): Unit = {
+    this.clk := that.clk
+    this.clk_n := that.clk_n
+    this.cke := that.cke
+    this.cs_n := that.cs_n
+    this.ras_n := that.ras_n
+    this.cas_n := that.cas_n
+    this.we_n := that.we_n
+    this.addr := that.addr
+    this.ba := that.ba
+    if (config.bgWidth > 0) this.bg := that.bg
+    if (config.cidWidth > 0) this.cid := that.cid
+    this.dq := that.dq
+    this.dqs := that.dqs
+    this.dqs_n := that.dqs_n
+    this.dm := that.dm
+    this.odt := that.odt
+    this.reset_n := that.reset_n
+  }
+  def >>(that: DdrInterface): Unit = that << this
 }
 case class DdrDataInterface(config: SdramConfig) extends Bundle with IMasterSlave {
   val write = DdrWriteDataInterface(config)
@@ -114,4 +171,10 @@ case class DdrDataInterface(config: SdramConfig) extends Bundle with IMasterSlav
   override def asMaster(): Unit = {
     master(write, read)
   }
+
+  def <<(that: DdrDataInterface): Unit = {
+    this.write << that.write
+    this.read << that.read
+  }
+  def >>(that: DdrDataInterface): Unit = that << this
 }

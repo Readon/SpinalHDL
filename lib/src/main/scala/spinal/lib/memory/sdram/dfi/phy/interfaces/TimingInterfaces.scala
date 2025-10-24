@@ -21,6 +21,14 @@ case class CommandTimingInterface() extends Bundle with IMasterSlave {
   override def asMaster(): Unit = {
     out(scheduled, ready, delay, priority)
   }
+
+  def <<(that: CommandTimingInterface): Unit = {
+    this.scheduled := that.scheduled
+    this.ready := that.ready
+    this.delay := that.delay
+    this.priority := that.priority
+  }
+  def >>(that: CommandTimingInterface): Unit = that << this
 }
 
 /**
@@ -56,4 +64,14 @@ case class DdrTimingInterface(config: SdramConfig) extends Bundle with IMasterSl
     out(cmdValid, dataValid, busy, idle)
     in(cmdReady, dataReady)
   }
+
+  def <<(that: DdrTimingInterface): Unit = {
+    this.cmdValid := that.cmdValid
+    that.cmdReady := this.cmdReady
+    this.dataValid := that.dataValid
+    that.dataReady := this.dataReady
+    this.busy := that.busy
+    this.idle := that.idle
+  }
+  def >>(that: DdrTimingInterface): Unit = that << this
 }

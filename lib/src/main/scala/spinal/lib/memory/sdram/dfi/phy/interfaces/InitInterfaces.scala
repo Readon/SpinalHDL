@@ -21,6 +21,13 @@ case class DdrInitCommandInterface() extends Bundle with IMasterSlave {
     out(valid, cmd)
     in(done)
   }
+
+  def <<(that: DdrInitCommandInterface): Unit = {
+    this.valid := that.valid
+    this.cmd := that.cmd
+    that.done := this.done
+  }
+  def >>(that: DdrInitCommandInterface): Unit = that << this
 }
 
 /**
@@ -38,6 +45,16 @@ case class ModeRegisterCommandInterface() extends Bundle with IMasterSlave {
     out(valid, mr0, mr1, mr2, mr3)
     in(done)
   }
+
+  def <<(that: ModeRegisterCommandInterface): Unit = {
+    this.valid := that.valid
+    this.mr0 := that.mr0
+    this.mr1 := that.mr1
+    this.mr2 := that.mr2
+    this.mr3 := that.mr3
+    that.done := this.done
+  }
+  def >>(that: ModeRegisterCommandInterface): Unit = that << this
 }
 
 /**
@@ -56,6 +73,18 @@ case class DdrCommandInterface(config: SdramConfig) extends Bundle with IMasterS
   override def asMaster(): Unit = {
     out(valid, cmd, addr, ba, bg, cid, autoPrecharge, burstLength)
   }
+
+  def <<(that: DdrCommandInterface): Unit = {
+    this.valid := that.valid
+    this.cmd := that.cmd
+    this.addr := that.addr
+    this.ba := that.ba
+    if (config.bgWidth > 0) this.bg := that.bg
+    if (config.cidWidth > 0) this.cid := that.cid
+    this.autoPrecharge := that.autoPrecharge
+    this.burstLength := that.burstLength
+  }
+  def >>(that: DdrCommandInterface): Unit = that << this
 }
 
 /**
@@ -78,6 +107,19 @@ case class DdrStandardInterface(config: SdramConfig) extends Bundle with IMaster
   override def asMaster(): Unit = {
     out(cmd, addr, ba, bg, cid, cke, cs_n, odt, reset_n)
   }
+
+  def <<(that: DdrStandardInterface): Unit = {
+    this.cmd := that.cmd
+    this.addr := that.addr
+    this.ba := that.ba
+    if (config.bgWidth > 0) this.bg := that.bg
+    if (config.cidWidth > 0) this.cid := that.cid
+    this.cke := that.cke
+    this.cs_n := that.cs_n
+    this.odt := that.odt
+    this.reset_n := that.reset_n
+  }
+  def >>(that: DdrStandardInterface): Unit = that << this
 }
 
 /**
@@ -96,4 +138,15 @@ case class DdrInitInterface(config: SdramConfig) extends Bundle with IMasterSlav
     out(initStart, powerUp, modeRegisterSet, zqCalibration, freqRatio, dramClkDisable)
     in(initComplete)
   }
+
+  def <<(that: DdrInitInterface): Unit = {
+    this.initStart := that.initStart
+    that.initComplete := this.initComplete
+    this.powerUp := that.powerUp
+    this.modeRegisterSet := that.modeRegisterSet
+    this.zqCalibration := that.zqCalibration
+    this.freqRatio := that.freqRatio
+    this.dramClkDisable := that.dramClkDisable
+  }
+  def >>(that: DdrInitInterface): Unit = that << this
 }

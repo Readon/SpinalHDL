@@ -35,25 +35,25 @@ case class StandardAdapter(config: StandardAdapterConfig) extends Component {
 
   // 标准特定的命令编码器
   val commandEncoder = DdrCommandEncoder(config)
-  commandEncoder.io.dfiCommand <> io.dfiInternal.command
-  io.command <> commandEncoder.io.command
+  commandEncoder.io.dfiCommand := io.dfiInternal.command
+  io.command := commandEncoder.io.command
 
   // 数据适配器
   val dataAdapter = DdrDataAdapter(config)
-  dataAdapter.io.dfiWrite <> io.dfiInternal.write
-  dataAdapter.io.dfiRead <> io.dfiInternal.read
-  io.data <> dataAdapter.io.data
+  dataAdapter.io.dfiWrite := io.dfiInternal.write
+  dataAdapter.io.dfiRead := io.dfiInternal.read
+  io.data := dataAdapter.io.data
 
   // 标准接口生成器
   val standardInterfaceGenerator = DdrStandardInterfaceGenerator(config)
-  standardInterfaceGenerator.io.command <> io.command
-  standardInterfaceGenerator.io.data <> io.data
-  io.standardInterface <> standardInterfaceGenerator.io.standardInterface
+  standardInterfaceGenerator.io.command := io.command
+  standardInterfaceGenerator.io.data := io.data
+  io.standardInterface := standardInterfaceGenerator.io.standardInterface
 
   // 初始化接口生成器
   val initInterfaceGenerator = DdrInitInterfaceGenerator(config)
-  initInterfaceGenerator.io.dfiInternal <> io.dfiInternal
-  io.init <> initInterfaceGenerator.io.init
+  initInterfaceGenerator.io.dfiInternal := io.dfiInternal
+  io.init := initInterfaceGenerator.io.init
 
   // 调试信号 - 符合REQ-CS-018：使用直接对象访问
   io.debug.commandCount := commandEncoder.io.debug.commandCount
@@ -64,7 +64,7 @@ case class StandardAdapter(config: StandardAdapterConfig) extends Component {
  * 标准适配器配置
  */
 case class StandardAdapterConfig(
-    ddrStandard: DdrStandard.C,
+    ddrStandard: DdrStandard.E,
     dfiConfig: DfiConfig,
     sdramConfig: SdramConfig,
     features: DfiDdrPhyFeatures
