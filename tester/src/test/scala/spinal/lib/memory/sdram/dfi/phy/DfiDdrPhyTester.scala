@@ -505,7 +505,7 @@ class DfiDdrPhyTester extends SpinalAnyFunSuite {
         dut.clockDomain.waitSampling(10)
 
         // 验证训练接口响应
-        println(s"写训练请求状态: ${dut.io.training.writeTraining.req.toBoolean}")
+        println(s"写训练请求状态: ${dut.io.dfi.wrTraining.wrlvlReq(0).toBoolean}")
 
         // 测试读电平训练请求
         for (i <- 0 until dut.io.dfi.wrTraining.wrlvlReq.getWidth) {
@@ -516,7 +516,7 @@ class DfiDdrPhyTester extends SpinalAnyFunSuite {
         }
         dut.clockDomain.waitSampling(10)
 
-        println(s"读训练请求状态: ${dut.io.training.readTraining.req.toBoolean}")
+        println(s"读训练请求状态: ${dut.io.dfi.rdTraining.rdlvlReq(0).toBoolean}")
 
         dut.clockDomain.waitSampling(TEST_FINAL_WAIT_CYCLES)
         simSuccess()

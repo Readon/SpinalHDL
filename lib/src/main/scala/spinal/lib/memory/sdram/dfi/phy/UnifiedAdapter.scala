@@ -50,8 +50,8 @@ case class UnifiedAdapter(config: UnifiedAdapterConfig) extends Component {
   // 调试信号聚合 - 符合REQ-CS-018：使用直接对象访问
   io.debug.commandCount := commandParser.debug.commandCount
   io.debug.dataCount := commandParser.debug.dataCount
-  io.debug.trainingCount := trainingProcessor.debug.trainingCount
-  io.debug.errorCount := commandParser.debug.errorCount + trainingProcessor.debug.errorCount
+  io.debug.trainingCount := CountOne(Seq(io.dfi.rdTraining.rdlvlReq.orR, io.dfi.wrTraining.wrlvlReq.orR, io.dfi.caTraining.calvlReq.orR)).resize(32)
+  io.debug.errorCount := commandParser.debug.errorCount
 }
 
 /**
@@ -112,11 +112,14 @@ case class UnifiedCommandParser(config: UnifiedAdapterConfig,
   // 数据解析 - 根据dataSlice配置处理数据
   parsedData.writeValid := dfiWrite.wr.map(_.wrdataEn).reduce(_ || _)
   // 当dataSlice=1时，只使用第一个数据片段；否则拼接所有片段
-  parsedData.writeData := (if (config.dfiConfig.dataSlice == 1) dfiWrite.wr.head.wrdata else dfiWrite.wr.map(_.wrdata).reduce(_ ## _)).resized
-  parsedData.writeMask := (if (config.dfiConfig.dataSlice == 1) dfiWrite.wr.head.wrdataMask else dfiWrite.wr.map(_.wrdataMask).reduce(_ ## _)).resized
+  val rawWriteData = if (config.dfiConfig.dataSlice == 1) dfiWrite.wr.head.wrdata else dfiWrite.wr.map(_.wrdata).reduce(_ ## _)
+  parsedData.writeData := rawWriteData(config.sdramConfig.dataWidth - 1 downto 0)
+  val rawWriteMask = if (config.dfiConfig.dataSlice == 1) dfiWrite.wr.head.wrdataMask else dfiWrite.wr.map(_.wrdataMask).reduce(_ ## _)
+  parsedData.writeMask := rawWriteMask(config.sdramConfig.dataWidth / 8 - 1 downto 0)
   parsedData.readReady := True
-  parsedData.readData := (if (config.dfiConfig.dataSlice == 1) dfiRead.rd.head.rddata else dfiRead.rd.map(_.rddata).reduce(_ ## _)).resized
-  parsedData.readValid := dfiRead.rd.map(_.rddataValid).reduce(_ || _)
+  val rawReadData = if (config.dfiConfig.dataSlice == 1) dfiRead.rd.head.rddata else dfiRead.rd.map(_.rddata).reduce(_ ## _)
+  parsedData.readData := rawReadData(config.sdramConfig.dataWidth - 1 downto 0)
+  parsedData.readValid := dfiRead.rd.map(rd => if (config.dfiConfig.useRddataDnv) rd.rddataDnv.orR else False).reduce(_ || _)
 
   // 调试信号 - 符合REQ-CS-018：使用直接对象访问
   debug.commandCount := CountOne(Seq(parsedCommand.valid)).resize(32)
@@ -152,7 +155,7 @@ case class UnifiedStandardAdapter(config: UnifiedAdapterConfig,
   data.write.dqs := 0 // 根据DDR标准生成
   data.write.dqs_n := 0
 
-  data.read.ready := parsedData.readReady
+  parsedData.readReady := data.read.ready
   data.read.data := parsedData.readData
   data.read.valid := parsedData.readValid
   data.read.last := False // 根据需要设置

@@ -30,9 +30,6 @@ case class DfiDdrPhy(config: DfiDdrPhyConfig) extends Component {
     // val config = in(DfiDdrPhyConfig(DdrStandard.DDR3, config.dfiConfig, config.sdramConfig))
     val status = out(DfiDdrPhyStatus())
 
-    // 训练接口 - 从内部适配器暴露
-    val training = master(DfiTrainingInterface(config.dfiConfig))
-
     // 测试和调试接口
     val testMode = in Bool() default False
     val debug = out(DfiDdrPhyDebug())
@@ -69,11 +66,6 @@ case class DfiDdrPhy(config: DfiDdrPhyConfig) extends Component {
 
   // DDR接口连接 - 从ControlManager输出
   io.sdram << controlManager.io.sdram
-
-  // 训练接口连接 - 暴露到顶层
-  if(config.features.trainingSupport) {
-    io.training << unifiedAdapter.io.internal.training
-  }
 
   // 状态和调试信号连接 - 符合REQ-CS-018：使用直接对象访问
   io.status.initialized := True

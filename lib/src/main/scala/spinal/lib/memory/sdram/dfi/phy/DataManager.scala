@@ -124,7 +124,7 @@ case class DataProcessor(config: DataManagerConfig,
   )
 
   // 读数据格式转换
-  readBuffer.io.push.payload.ready := data.read.ready
+  data.read.ready := readBuffer.io.push.ready
   readBuffer.io.push.payload.data := data.read.data
   readBuffer.io.push.payload.valid := data.read.valid
   readBuffer.io.push.payload.last := data.read.last
@@ -178,6 +178,7 @@ case class DdrInterfaceGenerator(config: DataManagerConfig,
   ddr.ras_n := True
   ddr.cas_n := True
   ddr.we_n := True
+  ddr.addr := 0
 
   // 根据命令设置控制信号
   when(timingCommand.valid) {
@@ -231,6 +232,7 @@ case class DdrInterfaceGenerator(config: DataManagerConfig,
   ddr.dm := processedData.write.mask
 
   // 其他信号默认值 - 使用条件生成
+  ddr.ba := B"0".resized // 默认bank地址为0，使用resized确保位宽匹配
   if (config.sdramConfig.bgWidth > 0) {
     ddr.bg := B"0"
   }

@@ -323,15 +323,25 @@ class DfiDdrPhyDfiInterfaceTester extends SpinalAnyFunSuite {
         dfiDdrPhy.io.dfi <> dfiController.io.dfi
 
         val io = new Bundle {
-          val bmb = slave(Bmb(bmbParameter))
-          val phyStatus = out(dfiDdrPhy.io.status)
-          // 暴露训练接口信号用于验证
-          val trainingInterface = out(dfiDdrPhy.io.training)
-        }
+           val bmb = slave(Bmb(bmbParameter))
+           val phyStatus = out(dfiDdrPhy.io.status)
+           // 暴露训练接口信号用于验证
+           val trainingInterface = new Bundle {
+             val rdTraining = out(DfiReadTrainingInterface(dfiConfig))
+             val wrTraining = out(DfiWriteTrainingInterface(dfiConfig))
+             val caTraining = out(DfiCATrainingInterface(dfiConfig))
+             val levelingTraining = out(DfiLevelingTrainingInterface(dfiConfig))
+             val phyRequesetedTraining = out(DfiPhyRequesetedTrainingInterface(dfiConfig))
+           }
+         }
 
-        io.bmb <> dfiController.io.bmb
-        io.phyStatus := dfiDdrPhy.io.status
-        io.trainingInterface := dfiDdrPhy.io.training
+         io.bmb <> dfiController.io.bmb
+         io.phyStatus := dfiDdrPhy.io.status
+         io.trainingInterface.rdTraining := dfiDdrPhy.io.dfi.rdTraining
+         io.trainingInterface.wrTraining := dfiDdrPhy.io.dfi.wrTraining
+         io.trainingInterface.caTraining := dfiDdrPhy.io.dfi.caTraining
+         io.trainingInterface.levelingTraining := dfiDdrPhy.io.dfi.levelingTraining
+         io.trainingInterface.phyRequesetedTraining := dfiDdrPhy.io.dfi.phyRequesetedTraining
       }
       dut
     }

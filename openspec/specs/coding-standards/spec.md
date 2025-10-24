@@ -113,10 +113,12 @@ Sequential logic MUST use proper register instantiation and timing control patte
 - Use `RegNextWhen()` for conditional sampling
 - Avoid combinational loops through proper register usage
 - Ensure complete assignment in conditional blocks to prevent latches
+- For combinational logic signals that are conditionally assigned in `when`/`switch` blocks, provide default assignments outside these blocks to prevent latches
 
 **Scenarios**:
 - **WHEN** creating sequential logic elements **THEN** use appropriate register types with proper initialization
 - **WHEN** implementing memory elements **THEN** use `Mem()` for RAM and ROM with proper read/write interfaces
+- **WHEN** designing combinational logic with conditional assignments **THEN** provide default assignments outside `when`/`switch` blocks to prevent latches
 
 #### REQ-CS-004: Clock Domain Management Principles
 Multi-clock domain designs MUST use proper clock domain crossing and synchronization techniques.
@@ -161,10 +163,12 @@ Hardware designs MUST include proper verification constructs and optimization te
 - Enable design checks for combinatorial loops and latch detection
 - Use conditional compilation for debug features in production code
 - Implement performance optimization techniques for critical paths
+- For combinational signals conditionally assigned in `when`/`switch` blocks, provide default assignments outside these blocks to prevent latches
 
 **Scenarios**:
 - **WHEN** implementing hardware components **THEN** include assertions for critical design constraints
 - **WHEN** optimizing performance-critical circuits **THEN** use pipelining, resource sharing, and balanced operations
+- **WHEN** detecting latch warnings **THEN** add default assignments outside conditional blocks to resolve the issue
 
 #### REQ-CS-007: Simulation and Testing Best Practices
 Test code MUST follow established patterns for reliable verification and maintainability, including DUT definition, SimConfig usage, doSim block logic, simulator support, clock domain management, and assertions.

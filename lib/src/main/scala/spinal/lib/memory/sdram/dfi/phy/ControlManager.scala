@@ -86,6 +86,20 @@ case class ControlFsm(config: ControlConfig,
   val initTimer = Reg(UInt(16 bits)) init 0
   val initDelay = Reg(UInt(16 bits)) init 0
 
+  // 默认赋值以避免latch
+  mrCommand.valid := False
+  mrCommand.mr0 := B"16'h0000"
+  mrCommand.mr1 := B"16'h0000"
+  mrCommand.mr2 := B"16'h0000"
+  mrCommand.mr3 := B"16'h0000"
+  ddrCommand.valid := False
+  ddrCommand.cmd := DdrCommand.NOP
+
+  // 默认训练响应赋值 - 作为slave接口，需要驱动resp信号
+  training.readTraining.resp := B"1'b1" // 默认成功
+  training.writeTraining.resp := B"1'b1" // 默认成功
+  training.caTraining.resp := B"2'b11" // 默认成功
+
   // 状态机逻辑 - 合并初始化序列和校准训练
   switch(currentState) {
     is(ControlState.IDLE) {
@@ -174,7 +188,8 @@ case class ControlFsm(config: ControlConfig,
 
     is(ControlState.CA_TRAINING) {
       // 执行CA训练
-      when(training.caTraining.resp.orR) {
+      when(training.caTraining.req) {
+        training.caTraining.resp := B"2'b11" // 设置训练成功响应
         currentState := ControlState.DONE
         calibrationCount := calibrationCount + 1
       }
@@ -275,6 +290,9 @@ case class ControlDdrInterfaceController(config: ControlConfig,
       }
     }
   }
+
+  // 添加 done 信号驱动
+  initCommand.done := initCommand.valid
 }
 
 /**
