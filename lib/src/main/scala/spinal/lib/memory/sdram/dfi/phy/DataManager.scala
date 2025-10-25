@@ -139,7 +139,10 @@ case class DataProcessor(config: DataManagerConfig,
   processedData.write.last := writeBuffer.io.pop.payload.last
   processedData.write.dqs := writeBuffer.io.pop.payload.dqs
   processedData.write.dqs_n := writeBuffer.io.pop.payload.dqs_n
-  writeBuffer.io.pop.ready := processedData.write.valid
+  // 避免组合环路：使用寄存器来缓冲valid信号
+  val writeValidReg = Reg(Bool()) init False
+  writeValidReg := processedData.write.valid
+  writeBuffer.io.pop.ready := writeValidReg
 
   // 修复组合环路：processedData.read.ready 应该是外部输入，表示下游准备好接收数据
   // readBuffer.io.pop.ready 基于时序控制和下游准备状态
@@ -148,7 +151,10 @@ case class DataProcessor(config: DataManagerConfig,
   processedData.read.last := readBuffer.io.pop.payload.last
   processedData.read.dqs := readBuffer.io.pop.payload.dqs
   processedData.read.dqs_n := readBuffer.io.pop.payload.dqs_n
-  readBuffer.io.pop.ready := processedData.read.ready && timing.dataValid
+  // 避免组合环路：使用寄存器来缓冲ready信号
+  val readReadyReg = Reg(Bool()) init False
+  readReadyReg := processedData.read.ready
+  readBuffer.io.pop.ready := readReadyReg && timing.dataValid
 
   // 数据格式转换器 - 从DataPath合并
   // TODO: 需要实现DataFormatter和DataPathConfig
@@ -277,8 +283,8 @@ case class DataManagerCommandScheduler(config: DataManagerConfig,
   // timing.cmdReady := !queueValid.orR || canSchedule
   timing.dataValid := False // 根据数据状态设置
   // timing.dataReady := True
-  timing.busy := !timing.cmdReady
-  timing.idle := timing.cmdReady && !canSchedule
+  timing.busy := False // 简化处理，避免组合环路
+  timing.idle := !canSchedule
 
   // 调度命令输出
   scheduledCommand.valid := canSchedule

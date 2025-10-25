@@ -90,6 +90,19 @@ case class DfiDdrPhyConfig(
     features: DfiDdrPhyFeatures = DfiDdrPhyFeatures()
 ) {
 
+  // 运行时配置接口
+  val timingConfig = TimingConfig(
+    tCK = sdramConfig.ddrMHZ,
+    tRCD = sdramConfig.tRCD,
+    tRP = sdramConfig.tRP,
+    tRAS = sdramConfig.tRAS,
+    tWR = sdramConfig.tWR,
+    tRTP = sdramConfig.tRTP,
+    tWTR = sdramConfig.tWTR,
+    tREFI = sdramConfig.tREF,
+    tRFC = sdramConfig.tRFC
+  )
+
   // 子模块配置 - 新的3模块架构
   val unifiedAdapterConfig = UnifiedAdapterConfig(
     dfiConfig = dfiConfig,
@@ -104,19 +117,6 @@ case class DfiDdrPhyConfig(
     features = features,
     timingConfig = timingConfig,
     ddrStandard = ddrStandard
-  )
-
-  // 运行时配置接口
-  val timingConfig = TimingConfig(
-    tCK = sdramConfig.ddrMHZ,
-    tRCD = sdramConfig.tRCD,
-    tRP = sdramConfig.tRP,
-    tRAS = sdramConfig.tRAS,
-    tWR = sdramConfig.tWR,
-    tRTP = sdramConfig.tRTP,
-    tWTR = sdramConfig.tWTR,
-    tREFI = sdramConfig.tREF,
-    tRFC = sdramConfig.tRFC
   )
 
   val controlConfig = ControlConfig(

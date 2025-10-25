@@ -96,9 +96,16 @@ case class ControlFsm(config: ControlConfig,
   ddrCommand.cmd := DdrCommand.NOP
 
   // 默认训练响应赋值 - 作为slave接口，需要驱动resp信号
-  training.readTraining.resp := B"1'b1" // 默认成功
-  training.writeTraining.resp := B"1'b1" // 默认成功
-  training.caTraining.resp := B"2'b11" // 默认成功
+  // 使用条件检查避免访问不可访问的信号
+  if (training.readTraining.resp != null) {
+    training.readTraining.resp := B"1'b1" // 默认成功
+  }
+  if (training.writeTraining.resp != null) {
+    training.writeTraining.resp := B"1'b1" // 默认成功
+  }
+  if (training.caTraining.resp != null) {
+    training.caTraining.resp := B"2'b11" // 默认成功
+  }
 
   // 状态机逻辑 - 合并初始化序列和校准训练
   switch(currentState) {
@@ -189,7 +196,9 @@ case class ControlFsm(config: ControlConfig,
     is(ControlState.CA_TRAINING) {
       // 执行CA训练
       when(training.caTraining.req) {
-        training.caTraining.resp := B"2'b11" // 设置训练成功响应
+        if (training.caTraining.resp != null) {
+          training.caTraining.resp := B"2'b11" // 设置训练成功响应
+        }
         currentState := ControlState.DONE
         calibrationCount := calibrationCount + 1
       }
