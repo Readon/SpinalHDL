@@ -170,10 +170,10 @@ Hardware designs MUST include proper verification constructs and optimization te
 - **WHEN** optimizing performance-critical circuits **THEN** use pipelining, resource sharing, and balanced operations
 - **WHEN** detecting latch warnings **THEN** add default assignments outside conditional blocks to resolve the issue
 
-#### REQ-CS-007: Simulation and Testing Best Practices
-Test code MUST follow established patterns for reliable verification and maintainability, including DUT definition, SimConfig usage, doSim block logic, simulator support, clock domain management, and assertions.
+#### REQ-CS-007: Verification, Simulation and Testing Standards
+Test code MUST follow established patterns for reliable verification and maintainability, including DUT definition, SimConfig usage, doSim block logic, simulator support, clock domain management, and assertions. All verification work MUST be completed in SpinalAnyFunSuite or SpinalSimFunSuite test suites, not within the hardware design components.
 
-**Rationale**: Consistent simulation patterns ensure reliable test results and maintainable test code that clearly separates verification logic from hardware design. Comprehensive testing covers DUT instantiation, configuration, execution, and validation across supported simulators.
+**Rationale**: Consistent simulation patterns ensure reliable test results and maintainable test code that clearly separates verification logic from hardware design. Hardware components should focus solely on functional implementation, while all assertions, checks, and validation logic belong exclusively in dedicated test suites. Comprehensive testing covers DUT instantiation, configuration, execution, and validation across supported simulators.
 
 **Requirements**:
 - Use `SpinalAnyFunSuite` or `SpinalSimFunSuite` (for multi-simulator support) as base classes for test suites
@@ -189,6 +189,11 @@ Test code MUST follow established patterns for reliable verification and maintai
 - Group related test assignments logically with descriptive comments
 - Ensure test coverage includes functional, timing, boundary, and error conditions
 - Distinguish simulation assignments (`#=`) from hardware assignments (`:=`) to avoid compilation errors
+- All verification constructs (assertions, assumptions, covers, etc.) MUST be placed in test suites extending SpinalAnyFunSuite or SpinalSimFunSuite
+- Hardware design components MUST NOT contain verification logic or test-specific constructs
+- Verification logic MUST NOT be embedded within Component classes, Area objects, or any hardware description code
+- Test suites MUST be organized in the `tester/src/test/scala/` directory hierarchy
+- Design components MUST remain pure hardware descriptions without any verification dependencies
 
 **Scenarios**:
 - **WHEN** creating test classes **THEN** follow naming conventions and place in appropriate directory structure
@@ -201,6 +206,11 @@ Test code MUST follow established patterns for reliable verification and maintai
 - **WHEN** running simulations **THEN** support Verilator, GHDL, IVerilog with appropriate SimConfig settings
 - **WHEN** testing multi-clock designs **THEN** use forkStimulus and ClockDomain for proper timing
 - **WHEN** validating outputs **THEN** use assert or shouldBe with descriptive messages
+- **WHEN** implementing verification logic **THEN** place it exclusively in SpinalAnyFunSuite or SpinalSimFunSuite test suites
+- **WHEN** adding assertions or checks **THEN** ensure they are in test files, not design components
+- **WHEN** verification logic is found in hardware components **THEN** it must be flagged as architecture violation
+- **WHEN** designing hardware components **THEN** keep them free of any verification constructs
+- **WHEN** organizing test code **THEN** use proper test suite classes and directory structure
 
 #### REQ-CS-013: Stream-Based Design Pattern
 Data processing components SHOULD use Stream infrastructure for flow control and backpressure.
