@@ -192,7 +192,6 @@ Test code MUST follow established patterns for reliable verification and maintai
 - All verification constructs (assertions, assumptions, covers, etc.) MUST be placed in test suites extending SpinalAnyFunSuite or SpinalSimFunSuite
 - Hardware design components MUST NOT contain verification logic or test-specific constructs
 - Verification logic MUST NOT be embedded within Component classes, Area objects, or any hardware description code
-- Test suites MUST be organized in the `tester/src/test/scala/` directory hierarchy
 - Design components MUST remain pure hardware descriptions without any verification dependencies
 
 **Scenarios**:
