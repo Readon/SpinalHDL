@@ -572,6 +572,59 @@ Configuration class names MUST follow standardized naming patterns for consisten
 - **WHEN** naming a configuration class **THEN** it must end with "Config"
 - **WHEN** a configuration class does not end with "Config" **THEN** it should be flagged as naming violation
 
+#### REQ-CS-036: Area and Composite Component Definition Order Standards
+Area and Composite objects MUST ensure that all sub-components are defined before they are referenced or used to maintain proper dependency resolution and prevent runtime errors.
+
+**Rationale**: In SpinalHDL, Area and Composite constructs allow encapsulation of related logic and signals. However, improper definition order can lead to undefined references, compilation failures, or unexpected behavior. Explicitly requiring components to be defined before use ensures hardware correctness, improves code maintainability, and prevents issues like NullPointerException in conditional logic.
+
+**Requirements**:
+- When using `new Area` or Composite constructs, all sub-components (signals, bundles, or nested areas) MUST be defined before any reference to them in assignments, connections, or logic expressions
+- Analyze and document component dependency relationships explicitly to avoid circular dependencies or forward references
+- Sub-components MUST be instantiated in the order of their usage dependencies
+- Avoid forward declarations or lazy initialization that could defer definition until after usage
+- For conditional component creation (e.g., via `generate`), ensure the condition is evaluated and components are defined before any dependent logic
+
+**Example**:
+```scala
+case class MyComponent(config: MyConfig) extends Component {
+  val io = new Bundle {
+    val input = in UInt(32 bits)
+    val output = out UInt(32 bits)
+  }
+
+  val processingArea = new Area {
+    // ✓ Correct: Define sub-components before usage
+    val enableSignal = Bool()
+    val dataBuffer = Reg(UInt(32 bits)) init(0)
+
+    // Usage after definition
+    when(enableSignal) {
+      dataBuffer := io.input + 1
+    }
+    io.output := dataBuffer
+
+    // ✗ Incorrect: Usage before definition (compilation error)
+    // io.output := undefinedBuffer  // undefinedBuffer not yet defined
+    // val undefinedBuffer = Reg(UInt(32 bits)) init(0)
+  }
+
+  // For Composite (assuming similar construct)
+  val compositeLogic = new Composite {
+    val subComp1 = Reg(Bool()) init(false)  // Define first
+    val subComp2 = Reg(Bool()) init(false)
+
+    subComp2 := subComp1  // Usage after definition
+  }
+}
+```
+
+**Scenarios**:
+- **WHEN** creating an Area object **THEN** define all sub-components before any assignments or references to maintain dependency order
+- **WHEN** using Composite constructs **THEN** ensure sub-components are instantiated in usage order to prevent undefined references
+- **WHEN** a sub-component is referenced before definition **THEN** it must be flagged as definition order violation
+- **WHEN** analyzing component dependencies **THEN** document relationships to avoid circular references
+- **WHEN** conditional component creation is used **THEN** verify definitions occur before dependent logic execution
+
 #### REQ-CS-035: Signal Assignment and Initialization Standards
 Signal assignment MUST follow strict initialization and conditional assignment patterns to ensure correct hardware generation and prevent unintended latches or combinational loops.
 
