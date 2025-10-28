@@ -5,7 +5,7 @@ This specification defines the global coding standards for SpinalHDL library dev
 
 ## Requirements
 
-#### REQ-CS-001: Component IO Bundle Access and Naming Standards
+### Requirement: REQ-CS-001: Component IO Bundle Access and Naming Standards
 All Component class input/output signals MUST be accessed through the `io` named Bundle, and internal signals MUST be properly encapsulated.
 
 **Rationale**: SpinalHDL Components encapsulate hardware modules, and all external interfaces must go through the dedicated `io` Bundle to maintain proper encapsulation and prevent direct signal access. Additionally, proper signal assignment completeness ensures all hardware signals have defined connections.
@@ -54,16 +54,28 @@ case class MyComponent(config: MyConfig) extends Component {
 }
 ```
 
-**Scenarios**:
+#### Scenario: Component IO Bundle Access
 - **WHEN** defining a Component **THEN** all IO must go through the `io` Bundle and internal signals are properly encapsulated
+
+#### Scenario: Hardware Signal Assignment in Transformations
 - **WHEN** creating hardware signals in transformations **THEN** all Bundle fields must be explicitly assigned using `assignUnassignedByName()`
+
+#### Scenario: Bundle Field Assignment
 - **WHEN** assigning Bundle fields **THEN** use direct object access instead of method chaining
+
+#### Scenario: Component Encapsulation
 - **WHEN** external code accesses Component internal signals **THEN** it must be flagged as encapsulation violation
+
+#### Scenario: AXI4 Interface Definition
 - **WHEN** defining an AXI4 interface **THEN** the configuration and bundle must follow standards
+
+#### Scenario: Bundle Type Validation
 - **WHEN** a Bundle contains Scala types **THEN** compilation must fail with clear error
+
+#### Scenario: Configuration Class Type Validation
 - **WHEN** a configuration class contains hardware types **THEN** it should be flagged as design error
 
-#### REQ-CS-008: Bundle and Interface Direction Management
+### Requirement: REQ-CS-008: Bundle and Interface Direction Management
 Bundle inheritance and IMasterSlave interface implementation MUST follow standardized patterns for signal direction management to ensure flexibility and prevent conflicts.
 
 **Rationale**: When creating new interface types through Bundle inheritance or implementing IMasterSlave interfaces, signal directions should not be specified in signal definitions to avoid unnecessary constraints and potential interface conflicts. Directions must be uniformly managed through the IMasterSlave trait's asMaster() method to maintain interface flexibility and standardization.
@@ -75,13 +87,19 @@ Bundle inheritance and IMasterSlave interface implementation MUST follow standar
 - Directions MUST be managed uniformly through the IMasterSlave trait's asMaster() method
 - This prevents unnecessary constraints, potential interface conflicts, and ensures consistent interface behavior
 
-**Scenarios**:
+#### Scenario: Bundle Inheritance Interface Creation
 - **WHEN** creating new interface types through Bundle inheritance **THEN** signal directions must not be specified in signal definitions and should be managed via IMasterSlave.asMaster()
+
+#### Scenario: IMasterSlave Interface Implementation
 - **WHEN** implementing IMasterSlave interface **THEN** signal directions must be specified only in asMaster function
+
+#### Scenario: Bundle Inheritance Direction Validation
 - **WHEN** signal directions are specified in Bundle inheritance **THEN** it must be flagged as design error
+
+#### Scenario: IMasterSlave Direction Validation
 - **WHEN** signal directions are specified outside asMaster function **THEN** it must be flagged as implementation error
 
-#### REQ-CS-002: Basic Data Type Usage Standards
+### Requirement: REQ-CS-002: Basic Data Type Usage Standards
 Basic data types MUST be used according to their intended semantics and proper initialization patterns.
 
 **Rationale**: SpinalHDL provides specific data types for hardware description, and proper usage ensures correct hardware generation and predictable behavior.
@@ -95,13 +113,19 @@ Basic data types MUST be used according to their intended semantics and proper i
 - Initialize all registers with proper reset values
 - Use appropriate bit-width selection for operations
 
-**Scenarios**:
+#### Scenario: Single-bit Logical Signal Declaration
 - **WHEN** declaring single-bit logical signals **THEN** use `Bool()` type with `True`/`False` constants and edge detection methods
+
+#### Scenario: Raw Bit Data Processing
 - **WHEN** working with raw bit data **THEN** use `Bits(n bits)` with binary/hexadecimal literals and bit manipulation operations
+
+#### Scenario: Arithmetic Operations
 - **WHEN** performing arithmetic operations **THEN** use `UInt` for unsigned and `SInt` for signed arithmetic with proper type constants
+
+#### Scenario: Bool Type Usage
 - **WHEN** using Bool types for single-bit signals **THEN** proper initialization and edge detection must be used
 
-#### REQ-CS-003: Sequential Logic Design Patterns
+### Requirement: REQ-CS-003: Sequential Logic Design Patterns
 Sequential logic MUST use proper register instantiation and timing control patterns.
 
 **Rationale**: Proper sequential logic design ensures correct timing behavior and prevents common hardware errors like combinational loops and unintended latches.
@@ -115,12 +139,16 @@ Sequential logic MUST use proper register instantiation and timing control patte
 - Ensure complete assignment in conditional blocks to prevent latches
 - For combinational logic signals that are conditionally assigned in `when`/`switch` blocks, provide default assignments outside these blocks to prevent latches
 
-**Scenarios**:
+#### Scenario: Sequential Logic Element Creation
 - **WHEN** creating sequential logic elements **THEN** use appropriate register types with proper initialization
+
+#### Scenario: Memory Element Implementation
 - **WHEN** implementing memory elements **THEN** use `Mem()` for RAM and ROM with proper read/write interfaces
+
+#### Scenario: Combinational Logic Design
 - **WHEN** designing combinational logic with conditional assignments **THEN** provide default assignments outside `when`/`switch` blocks to prevent latches
 
-#### REQ-CS-004: Clock Domain Management Principles
+### Requirement: REQ-CS-004: Clock Domain Management Principles
 Multi-clock domain designs MUST use proper clock domain crossing and synchronization techniques.
 
 **Rationale**: Proper clock domain management prevents metastability and timing violations in designs with multiple clock domains.
@@ -132,11 +160,13 @@ Multi-clock domain designs MUST use proper clock domain crossing and synchroniza
 - Avoid direct signal connections between different clock domains
 - Use appropriate reset synchronization for multi-clock designs
 
-**Scenarios**:
+#### Scenario: Single Clock Domain Design
 - **WHEN** designing with single clock domain **THEN** use default clock domain with proper reset handling
+
+#### Scenario: Multi-clock Domain Design
 - **WHEN** designing with multiple clock domains **THEN** use proper clock domain crossing synchronization with `BufferCC`
 
-#### REQ-CS-005: Advanced Design Patterns
+### Requirement: REQ-CS-005: Advanced Design Patterns
 Complex designs MUST use appropriate advanced patterns for state machines and pipelining.
 
 **Rationale**: Advanced design patterns improve code readability, maintainability, and performance for complex hardware implementations.
@@ -148,11 +178,13 @@ Complex designs MUST use appropriate advanced patterns for state machines and pi
 - Implement resource sharing for common operations to optimize area
 - Consider timing constraints during pipeline design
 
-**Scenarios**:
+#### Scenario: Finite State Machine Implementation
 - **WHEN** implementing finite state machines **THEN** use `StateMachine` class with `whenIsActive` and `goto` methods
+
+#### Scenario: High-throughput Circuit Design
 - **WHEN** designing high-throughput circuits **THEN** use multiple pipeline stages with proper register balancing
 
-#### REQ-CS-006: Debugging and Optimization Guidelines
+### Requirement: REQ-CS-006: Debugging and Optimization Guidelines
 Hardware designs MUST include proper verification constructs and optimization techniques.
 
 **Rationale**: Design verification prevents common hardware errors and optimization techniques improve circuit performance and resource utilization.
@@ -165,12 +197,16 @@ Hardware designs MUST include proper verification constructs and optimization te
 - Implement performance optimization techniques for critical paths
 - For combinational signals conditionally assigned in `when`/`switch` blocks, provide default assignments outside these blocks to prevent latches
 
-**Scenarios**:
+#### Scenario: Hardware Component Implementation
 - **WHEN** implementing hardware components **THEN** include assertions for critical design constraints
+
+#### Scenario: Performance-critical Circuit Optimization
 - **WHEN** optimizing performance-critical circuits **THEN** use pipelining, resource sharing, and balanced operations
+
+#### Scenario: Latch Warning Resolution
 - **WHEN** detecting latch warnings **THEN** add default assignments outside conditional blocks to resolve the issue
 
-#### REQ-CS-007: Verification, Simulation and Testing Standards
+### Requirement: REQ-CS-007: Verification, Simulation and Testing Standards
 Test code MUST follow established patterns for reliable verification and maintainability, including DUT definition, SimConfig usage, doSim block logic, simulator support, clock domain management, and assertions. All verification work MUST be completed in SpinalAnyFunSuite or SpinalSimFunSuite test suites, not within the hardware design components.
 
 **Rationale**: Consistent simulation patterns ensure reliable test results and maintainable test code that clearly separates verification logic from hardware design. Hardware components should focus solely on functional implementation, while all assertions, checks, and validation logic belong exclusively in dedicated test suites. Comprehensive testing covers DUT instantiation, configuration, execution, and validation across supported simulators.
@@ -194,25 +230,53 @@ Test code MUST follow established patterns for reliable verification and maintai
 - Verification logic MUST NOT be embedded within Component classes, Area objects, or any hardware description code
 - Design components MUST remain pure hardware descriptions without any verification dependencies
 
-**Scenarios**:
+#### Scenario: Test Class Creation
 - **WHEN** creating test classes **THEN** follow naming conventions and place in appropriate directory structure
+
+#### Scenario: Simulation Signal Assignment
 - **WHEN** assigning signals during simulation **THEN** use explicit indexing for collections and proper data types
+
+#### Scenario: Test Execution
 - **WHEN** executing tests **THEN** use standardized sbt commands with proper class names
+
+#### Scenario: Test Suite Creation
 - **WHEN** creating test suites **THEN** use random data generation with controlled seeds
+
+#### Scenario: Test Coverage Implementation
 - **WHEN** implementing test suites **THEN** achieve comprehensive coverage of design functionality
+
+#### Scenario: DUT Definition
 - **WHEN** defining a DUT for testing **THEN** use a Component class with io Bundle and compile via SimConfig
+
+#### Scenario: Test Logic Implementation
 - **WHEN** implementing test logic **THEN** use fork for concurrency, waitSampling for timing control, and assertions for validation
+
+#### Scenario: Multi-simulator Support
 - **WHEN** running simulations **THEN** support Verilator, GHDL, IVerilog with appropriate SimConfig settings
+
+#### Scenario: Multi-clock Design Testing
 - **WHEN** testing multi-clock designs **THEN** use forkStimulus and ClockDomain for proper timing
+
+#### Scenario: Output Validation
 - **WHEN** validating outputs **THEN** use assert or shouldBe with descriptive messages
+
+#### Scenario: Verification Logic Placement
 - **WHEN** implementing verification logic **THEN** place it exclusively in SpinalAnyFunSuite or SpinalSimFunSuite test suites
+
+#### Scenario: Assertion Placement
 - **WHEN** adding assertions or checks **THEN** ensure they are in test files, not design components
+
+#### Scenario: Hardware Component Purity
 - **WHEN** verification logic is found in hardware components **THEN** it must be flagged as architecture violation
+
+#### Scenario: Verification-free Hardware Design
 - **WHEN** designing hardware components **THEN** keep them free of any verification constructs
+
+#### Scenario: Test Code Organization
 - **WHEN** organizing test code **THEN** use proper test suite classes and directory structure
 
-#### REQ-CS-013: Stream-Based Design Pattern
-Data processing components SHOULD use Stream infrastructure for flow control and backpressure.
+### Requirement: REQ-CS-013: Stream-Based Design Pattern
+Data processing components SHALL use Stream infrastructure for flow control and backpressure.
 
 **Rationale**: Stream-based design improves code readability, maintainability, and reusability by replacing complex state machines with declarative flow control. Complete signal assignment ensures all hardware signals have proper connections.
 
@@ -242,11 +306,13 @@ case class StreamProcessor(config: Config) extends Component {
 }
 ```
 
-**Scenarios**:
+#### Scenario: Stream-based Data Processing
 - **WHEN** implementing data processing components **THEN** Stream infrastructure should be used for flow control with complete signal assignment
+
+#### Scenario: State Machine to Stream Conversion
 - **WHEN** using complex state machines for data flow **THEN** it should be flagged as potential Stream candidate
 
-#### REQ-CS-027: Hardware Description Syntax Purity
+### Requirement: REQ-CS-027: Hardware Description Syntax Purity
 Hardware description MUST use only SpinalHDL constructs and avoid mixing Scala runtime syntax to ensure correct hardware generation and prevent type mismatches.
 
 **Rationale**: SpinalHDL provides specific constructs for hardware description, and mixing Scala runtime syntax (like conditional expressions) with hardware signals leads to type errors and incorrect behavior. Hardware logic must be described using SpinalHDL's declarative syntax to maintain synthesis compatibility and predictability.
@@ -295,13 +361,19 @@ case class HardwareLogic(config: Config) extends Component {
 }
 ```
 
-**Scenarios**:
+#### Scenario: Conditional hardware logic
 - **WHEN** implementing conditional hardware logic **THEN** use `when() {} otherwise {}` statements
+
+#### Scenario: Conditional assignments
 - **WHEN** using conditional assignments **THEN** use SpinalHDL mux operators like `? |` for hardware signals
+
+#### Scenario: Scala ternary misuse
 - **WHEN** using Scala `? :` with hardware signals **THEN** it must be flagged as type error
+
+#### Scenario: Scala runtime condition misuse
 - **WHEN** using Scala `if` or other runtime syntax with hardware signals as condition **THEN** it should be flagged as hardware description violation
 
-#### REQ-CS-026: Test Signal Assignment Patterns
+### Requirement: REQ-CS-026: Test Signal Assignment Patterns
 Test signal assignments during simulation MUST follow consistent patterns for different data types, strictly using `#=` in doSim blocks and avoiding `:=` which is reserved for hardware logic.
 
 **Rationale**: Consistent assignment patterns improve test code readability and reduce errors in simulation-based testing. Explicit collection indexing prevents ambiguous assignments and improves maintainability. Distinguishing simulation assignments from hardware assignments prevents compilation errors.
@@ -331,13 +403,19 @@ for (i <- 0 until dut.io.dfi.read.rd.length) {
 // dut.io.input := 5  // Wrong: := is for hardware logic
 ```
 
-**Scenarios**:
+#### Scenario: Boolean signal simulation assignment
 - **WHEN** assigning boolean signals in tests **THEN** use `#=` operator with `Boolean` values and explicit indexing
+
+#### Scenario: Integer/bits signal simulation assignment
 - **WHEN** assigning integer or bits signals in tests **THEN** use `#=` operator with proper data types and explicit indexing
+
+#### Scenario: Collection assignment in simulation
 - **WHEN** assigning signals to collections in tests **THEN** use `foreach(_ #= value)` patterns for Vec, List, and similar container types' assignment.
+
+#### Scenario: Forbidden hardware assignment in simulation
 - **WHEN** using `:=` in doSim blocks **THEN** it must be flagged as compilation error since `:=` is for hardware logic
 
-#### REQ-CS-028: Signal Connection Standards
+### Requirement: REQ-CS-028: Signal Connection Standards
 Signal connections MUST follow proper operator usage to ensure correctness and consistency, preventing unintended cross-component connections.
 
 **Rationale**: Proper signal connection practices ensure hardware correctness and maintain design integrity. The "<>" operator is designed for automatic signal connection within the same component or bundle initialization context, while cross-component connections require explicit assignment operators to avoid accidental connections and maintain clear design intent.
@@ -380,16 +458,26 @@ case class TopLevel() extends Component {
 }
 ```
 
-**Scenarios**:
+#### Scenario: Internal Signal Connection
 - **WHEN** connecting signals within the same Component or Bundle initialization **THEN** use "<>" operator for automatic connection
+
+#### Scenario: Parent-child Module Connection
 - **WHEN** connecting signals between parent and child modules **THEN** use explicit assignment operators like ":=" and MUST NOT use "<>" operator
+
+#### Scenario: Cross-component Connection
 - **WHEN** connecting signals between different Components **THEN** use explicit assignment operators like ":=" to maintain design clarity
+
+#### Scenario: Cross-component Connection Validation
 - **WHEN** using "<>" operator across Components **THEN** it must be flagged as connection violation
+
+#### Scenario: Parent-child Connection Validation
 - **WHEN** using "<>" operator between parent and child modules **THEN** it must be flagged as connection violation
+
+#### Scenario: Hierarchical Component Design
 - **WHEN** designing hierarchical components **THEN** ensure connection patterns are consistent and explicit
 
-#### REQ-CS-029: IMasterSlave Interface Connection Functions
-IMasterSlave interfaces SHOULD implement << and >> functions for standardized bidirectional connections with proper signal direction handling.
+### Requirement: REQ-CS-029: IMasterSlave Interface Connection Functions
+IMasterSlave interfaces MUST implement << and >> functions for standardized bidirectional connections with proper signal direction handling.
 
 **Rationale**: Connection functions provide symmetric interface operations, enabling flexible signal routing while ensuring type safety and consistent connection patterns across interface types.
 
@@ -443,17 +531,29 @@ case class MyComponent() extends Component {
 }
 ```
 
-**Scenarios**:
+#### Scenario: IMasterSlave Interface Design
 - **WHEN** designing IMasterSlave interfaces **THEN** implement both << and >> functions for bidirectional connections
+
+#### Scenario: Interface Connection
 - **WHEN** connecting interfaces **THEN** use << or >> functions for consistent, type-safe signal routing
+
+#### Scenario: Interface Chaining
 - **WHEN** chaining interfaces **THEN** leverage function composition for flexible signal paths
+
+#### Scenario: Function-based Signal Connection
 - **WHEN** connecting signals defined with << and >> functions **THEN** use those functions for connections
+
+#### Scenario: Mandatory Function Usage
 - **WHEN** an IMasterSlave interface implements << and >> functions **THEN** connections to that interface MUST use those functions instead of manual signal assignments
+
+#### Scenario: Manual Assignment Validation
 - **WHEN** manually assigning individual signals between IMasterSlave interfaces **THEN** it should be flagged as connection pattern violation if << and >> functions are available
+
+#### Scenario: Connection Logic Design
 - **WHEN** designing connection logic **THEN** prefer << and >> functions over := assignments for interface connections to improve maintainability
 
-#### REQ-CS-030: Configuration Class Hardware Syntax Prohibition
-Configuration classes MUST NOT use hardware description syntax to maintain type safety and design clarity.
+### Requirement: REQ-CS-030: Configuration Class Hardware Syntax Prohibition
+Configuration classes SHALL NOT use hardware description syntax to maintain type safety and design clarity.
 
 **Rationale**: Configuration classes should remain pure Scala constructs to avoid type mismatches and ensure they serve only as parameter containers without hardware logic.
 
@@ -462,11 +562,13 @@ Configuration classes MUST NOT use hardware description syntax to maintain type 
 - Configuration classes MUST NOT use hardware description syntax (e.g., `:=`, `when`, `<>`)
 - Configuration classes SHOULD contain only pure Scala types and methods
 
-**Scenarios**:
+#### Scenario: Configuration Class Definition
 - **WHEN** defining a configuration class **THEN** it must not contain hardware types
+
+#### Scenario: Configuration Class Hardware Syntax Validation
 - **WHEN** a configuration class contains hardware syntax **THEN** it should be flagged as design error
 
-#### REQ-CS-032: Area Object Signal Direction Restrictions
+### Requirement: REQ-CS-032: Area Object Signal Direction Restrictions
 Area objects MUST use only directionless signals to maintain proper encapsulation and avoid interface confusion.
 
 **Rationale**: Area objects provide encapsulation for related logic and signals. Direction signals in Area can break encapsulation and make interfaces unclear. Additionally, minimizing Bundle creation in Area objects improves code simplicity and readability.
@@ -498,12 +600,16 @@ case class MyComponent(config: MyConfig) extends Component {
 }
 ```
 
-**Scenarios**:
+#### Scenario: Area Signal Definition
 - **WHEN** defining signals in Area objects **THEN** avoid direction specifiers to maintain encapsulation
+
+#### Scenario: Area Direction Validation
 - **WHEN** a signal in Area has direction **THEN** it must be flagged as encapsulation violation
+
+#### Scenario: Area Design Simplicity
 - **WHEN** designing Area objects **THEN** prefer direct signal definitions over new Bundles for simplicity
 
-#### REQ-CS-033: General Naming Conventions
+### Requirement: REQ-CS-033: General Naming Conventions
 All identifiers (classes, components, bundles, signals, variables, etc.) MUST follow consistent naming patterns to improve code readability and maintainability.
 
 **Rationale**: Consistent and descriptive naming makes code self-documenting, reduces cognitive load, and facilitates understanding of design intent across the codebase.
@@ -550,15 +656,25 @@ case class MyModule(config: MyConfig) extends Component {
 }
 ```
 
-**Scenarios**:
+#### Scenario: Identifier Naming
 - **WHEN** naming any identifier **THEN** it must be descriptive and indicate its specific purpose
+
+#### Scenario: Generic Name Validation
 - **WHEN** a name is generic or lacks context **THEN** it must be flagged as naming violation
+
+#### Scenario: Configuration Class Naming
 - **WHEN** naming configuration classes **THEN** they must end with "Config"
+
+#### Scenario: Test Class Naming
 - **WHEN** naming test classes **THEN** they must end with "Tester" or "Test"
+
+#### Scenario: Bundle Naming
 - **WHEN** naming bundles **THEN** they must clearly indicate their interface purpose
+
+#### Scenario: Signal Naming
 - **WHEN** naming signals **THEN** they must describe their function or data content
 
-#### REQ-CS-031: Configuration Class Naming Convention
+### Requirement: REQ-CS-031: Configuration Class Naming Convention
 Configuration class names MUST follow standardized naming patterns for consistency and readability.
 
 **Rationale**: Uniform naming conventions improve code maintainability and make configuration classes easily identifiable.
@@ -567,12 +683,16 @@ Configuration class names MUST follow standardized naming patterns for consisten
 - Configuration class names MUST end with "Config"
 - Configuration class names MUST follow general naming conventions (see REQ-CS-033)
 
-**Scenarios**:
+#### Scenario: Configuration Class Identification
 - **WHEN** a class's name ends with "Config" **THEN** it should be considered a configuration class
+
+#### Scenario: Configuration Class Naming Requirement
 - **WHEN** naming a configuration class **THEN** it must end with "Config"
+
+#### Scenario: Configuration Class Naming Validation
 - **WHEN** a configuration class does not end with "Config" **THEN** it should be flagged as naming violation
 
-#### REQ-CS-036: Area and Composite Component Definition Order Standards
+### Requirement: REQ-CS-036: Area and Composite Component Definition Order Standards
 Area and Composite objects MUST ensure that all sub-components are defined before they are referenced or used to maintain proper dependency resolution and prevent runtime errors.
 
 **Rationale**: In SpinalHDL, Area and Composite constructs allow encapsulation of related logic and signals. However, improper definition order can lead to undefined references, compilation failures, or unexpected behavior. Explicitly requiring components to be defined before use ensures hardware correctness, improves code maintainability, and prevents issues like NullPointerException in conditional logic.
@@ -618,21 +738,29 @@ case class MyComponent(config: MyConfig) extends Component {
 }
 ```
 
-**Scenarios**:
+#### Scenario: Area Object Creation
 - **WHEN** creating an Area object **THEN** define all sub-components before any assignments or references to maintain dependency order
+
+#### Scenario: Composite Construct Usage
 - **WHEN** using Composite constructs **THEN** ensure sub-components are instantiated in usage order to prevent undefined references
+
+#### Scenario: Definition Order Validation
 - **WHEN** a sub-component is referenced before definition **THEN** it must be flagged as definition order violation
+
+#### Scenario: Component Dependency Analysis
 - **WHEN** analyzing component dependencies **THEN** document relationships to avoid circular references
+
+#### Scenario: Conditional Component Creation
 - **WHEN** conditional component creation is used **THEN** verify definitions occur before dependent logic execution
 
-#### REQ-CS-035: Signal Assignment and Initialization Standards
+### Requirement: REQ-CS-035: Signal Assignment and Initialization Standards
 Signal assignment MUST follow strict initialization and conditional assignment patterns to ensure correct hardware generation and prevent unintended latches or combinational loops.
 
 **Rationale**: SpinalHDL signals (especially Reg types) require proper initialization and conditional assignment to match hardware semantics. Initialization ensures registers have defined reset values, while conditional assignments prevent direct overwrites that could violate sequential logic rules.
 
 **Requirements**:
 - Initialization statements: Reg signals CAN be initialized using `init()` during declaration, or using assignment after declaration. Comb signals MUST be initialized using assignment after declaration.
-- After initialization, all direct assginment to signals is prohibited; all subsequent assignments MUST be placed within `when`, `switch`, or similar hardware related conditional constructs
+- After initialization, all direct assignment to signals is prohibited; all subsequent assignments MUST be placed within `when`, `switch`, or similar hardware related conditional constructs
 - Initialization statements MUST be positioned before any conditional assignment code to maintain proper hardware synthesis order
 - Avoid mixing initialization and conditional assignments in the same Comb signal declaration
 
@@ -666,15 +794,25 @@ case class SignalAssignmentExample() extends Component {
 }
 ```
 
-**Scenarios**:
+#### Scenario: Signal Declaration
 - **WHEN** declaring signals **THEN** initialize before any conditional assignments on itself
+
+#### Scenario: Conditional Signal Assignment
 - **WHEN** assigning to signals after initialization **THEN** place assignments in `when`/`switch` blocks only
+
+#### Scenario: Default Assignment Provision
 - **WHEN** declaring signals with conditional assignments **THEN** provide default assignments ahead of conditionals to prevent latches
+
+#### Scenario: Initialization Order Validation
 - **WHEN** initialization occurs after conditional code **THEN** it must be flagged as initialization order violation
-- **WHEN** direct `:=` assignment to singal occurs outside conditionals and not an initialization **THEN** it must be flagged as assignment violation
+
+#### Scenario: Direct Assignment Validation
+- **WHEN** direct `:=` assignment to signal occurs outside conditionals and not an initialization **THEN** it must be flagged as assignment violation
+
+#### Scenario: Signal Initialization Completeness
 - **WHEN** signals do not have initialized **THEN** add default assignments/initialization to ensure completeness
 
-#### REQ-CS-034: Conditional Signal Access Safety
+### Requirement: REQ-CS-034: Conditional Signal Access Safety
 All conditionally generated signals MUST be checked for their corresponding configuration conditions before use to prevent NullPointerException and other runtime errors.
 
 **Rationale**: Conditionally generated signals (such as those created via `config.useXxx generate`) are not instantiated when configuration flags are false, leading to null pointer exceptions on direct access. Mandatory checking ensures code robustness and maintainability.
@@ -703,9 +841,17 @@ case class UnifiedAdapter(config: UnifiedAdapterConfig) extends Component {
 }
 ```
 
-**Scenarios**:
+#### Scenario: Conditional Signal Access
 - **WHEN** accessing conditionally generated signals **THEN** check configuration flags first
+
+#### Scenario: Configuration Flag Handling
 - **WHEN** configuration flag is false **THEN** provide alternative logic or default values
+
+#### Scenario: Unsafe Access Validation
 - **WHEN** direct access to conditional signals occurs without check **THEN** it must be flagged as safety violation
+
+#### Scenario: Debug Logic Implementation
 - **WHEN** implementing debug or monitoring logic **THEN** use conditional checks for all training signals
+
+#### Scenario: NullPointerException Prevention
 - **WHEN** a NullPointerException occurs from conditional signal access **THEN** add proper condition checks
