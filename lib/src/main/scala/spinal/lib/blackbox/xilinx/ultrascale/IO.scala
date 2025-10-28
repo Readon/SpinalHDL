@@ -20,6 +20,7 @@ case class OSERDESE3(
     val IS_CLKDIV_INVERTED = if (isClkDivInverted) "1" else "0"
     val IS_RST_INVERTED = if (isRstInverted) "1" else "0"
     val SIM_DEVICE = simDevice
+    val HAS_TRISTATE = if (hasTristate) "TRUE" else "FALSE"
   }
 
   // Clock signals
@@ -34,8 +35,8 @@ case class OSERDESE3(
   val RST = in Bool ()
 
   // Tristate signals (generated when hasTristate = true)
-  val T = hasTristate generate in Bool ()
-  val T_OUT = hasTristate generate out Bool ()
+  val T = hasTristate generate (in Bool ())
+  val T_OUT = hasTristate generate (out Bool ())
 }
 
 /** Enhanced ODELAYE3 with 9-bit delay resolution
@@ -222,9 +223,9 @@ case class ISERDESE3(
   }
 
   // FIFO related ports
-  val FIFO_EMPTY = fifoEnable generate out Bool ()
-  val FIFO_RD_CLK = fifoEnable generate in Bool ()
-  val FIFO_RD_EN = fifoEnable generate in Bool ()
+  val FIFO_EMPTY = fifoEnable generate (out Bool ())
+  val FIFO_RD_CLK = fifoEnable generate (in Bool ())
+  val FIFO_RD_EN = fifoEnable generate (in Bool ())
 
   // Clock signals
   val CLK = in Bool ()

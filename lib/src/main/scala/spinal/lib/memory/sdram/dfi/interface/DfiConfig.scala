@@ -187,6 +187,11 @@ class DDR3SignalConfig(groupConfig: DfiFunctionConfig, useCrc: Boolean) extends 
   override val useWrlvlEn = groupConfig.useTrainingSignals
   override val useWrlvlStrobe = groupConfig.useTrainingSignals
   override val useWrlvlResp = groupConfig.useTrainingSignals
+  override val useCalvlReq = groupConfig.useTrainingSignals
+  override val usePhyCalvlCsN = groupConfig.useTrainingSignals
+  override val useCalvlEn = groupConfig.useTrainingSignals
+  override val useCalvlCapture = groupConfig.useTrainingSignals
+  override val useCalvlResp = groupConfig.useTrainingSignals
 }
 
 class DDR4SignalConfig(groupConfig: DfiFunctionConfig, useCrc: Boolean) extends DDR3SignalConfig(groupConfig, useCrc) {

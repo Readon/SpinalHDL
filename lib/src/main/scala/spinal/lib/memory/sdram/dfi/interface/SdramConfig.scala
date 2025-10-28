@@ -14,7 +14,7 @@ class SdramGeneration(
     val CCD: Int,
     val burstLength: Int,
     val dataRate: Int,
-    val dqsType: DqsType.C
+    val dqsType: DqsType.E
 )
 
 object SdramGeneration {

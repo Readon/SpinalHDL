@@ -47,12 +47,8 @@ case class UnifiedAdapter(config: UnifiedAdapterConfig) extends Component {
   trainingProcessor.training.caResp := io.internal.training.caTraining.resp
   io.internal.init << initProcessor.init
 
-  // 驱动DFI读输出以避免"NO DRIVER"错误
-  // TODO: 实现完整的读数据路径时替换为实际数据
-  for (i <- 0 until config.dfiConfig.frequencyRatio) {
-    io.dfi.read.rd(i).rddataValid := False
-    io.dfi.read.rd(i).rddata := 0
-  }
+  // DFI读输出由XilinxUSPhy驱动，避免重复赋值冲突
+  // 注释掉重复的赋值以避免ASSIGNMENT OVERLAP错误
 
   // 调试信号聚合 - 符合REQ-CS-018：使用直接对象访问
   io.debug.commandCount := commandParser.debug.commandCount
