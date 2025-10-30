@@ -855,3 +855,108 @@ case class UnifiedAdapter(config: UnifiedAdapterConfig) extends Component {
 
 #### Scenario: NullPointerException Prevention
 - **WHEN** a NullPointerException occurs from conditional signal access **THEN** add proper condition checks
+
+### Requirement: REQ-CS-037: Component and Area Type Definition Prohibition
+New type definitions (both pure Scala types and SpinalHDL types) MUST NOT be placed within Component, Area, or Composite implementations to maintain proper encapsulation and prevent type scope pollution. Only object instantiation is allowed within these hardware constructs.
+
+**Rationale**: Component, Area, and Composite constructs are designed for hardware description and signal logic, not for defining new types. Placing type definitions within these constructs leads to:
+- Type scope pollution and namespace conflicts
+- Reduced code reusability and maintainability
+- Confusion between hardware description and type definition contexts
+- Difficulty in type discovery and organization
+- Potential compilation issues due to improper type scoping
+- Deeply nested module hierarchies that are difficult to understand and maintain
+
+**Requirements**:
+- Pure Scala type definitions (classes, objects, traits, type aliases, enums) MUST NOT be defined within Component class bodies
+- Pure Scala type definitions MUST NOT be defined within Area objects or implementations
+- Pure Scala type definitions MUST NOT be defined within Composite constructs
+- SpinalHDL type definitions (Bundle, Component, Area, etc.) MUST NOT be defined within Component and Area implementations
+- Only object instantiation of existing types is allowed within Component and Area implementations
+- All type definitions MUST be placed at package level, in standalone objects, or in dedicated type definition files
+- SpinalEnum objects MUST be defined at package level or in dedicated enumeration objects
+- Case classes and Bundle definitions MUST be defined outside Component and Area scopes
+- Type definitions SHOULD be organized in logically grouped files or objects
+
+**Valid Examples**:
+```scala
+// ✓ Correct: Type definitions at package level
+object UartCtrlTxState extends SpinalEnum {
+  val IDLE, START, DATA, PARITY, STOP = newElement()
+}
+
+case class UartConfig(dataWidth: Int, stopBits: Int)
+
+class UartCtrlTx(g: UartCtrlGenerics) extends Component {
+  val io = new Bundle {
+    val write = slave Stream(Bits(g.dataWidthMax bit))
+    val txd = out Bool()
+  }
+  
+  // ✓ Correct: Object instantiation only
+  val stateMachine = new Area {
+    val state = RegInit(UartCtrlTxState.IDLE)
+    // Hardware implementation
+  }
+}
+```
+
+**Invalid Examples**:
+```scala
+class UartCtrlTx(g: UartCtrlGenerics) extends Component {
+  // ✗ Incorrect: Pure Scala object defined within Component
+  object Constants {
+    val TIMEOUT_VALUE = 1000
+  }
+  
+  // ✗ Incorrect: SpinalHDL type definition within Component
+  class InternalComponent extends Component {
+    val io = new Bundle {
+      val input = in Bool()
+      val output = out Bool()
+    }
+    // Implementation
+  }
+  
+  val io = new Bundle {
+    val write = slave Stream(Bits(g.dataWidthMax bit))
+    val txd = out Bool()
+  }
+  
+  val processingArea = new Area {
+    // ✗ Incorrect: Pure Scala case class defined within Area
+    case class InternalConfig(timeout: Int, retryCount: Int)
+    
+    // ✗ Incorrect: SpinalHDL type definition within Area
+    class InternalArea extends Area {
+      val signal = Bool()
+    }
+    
+    // ✗ Incorrect: Pure Scala trait defined within Area
+    trait ProcessingStrategy {
+      def process(data: Bits): Bits
+    }
+  }
+}
+```
+
+#### Scenario: Component Type Definition Validation
+- **WHEN** defining a Component **THEN** ensure no type definitions (Scala or SpinalHDL) are placed within the Component body
+
+#### Scenario: Area Type Definition Validation
+- **WHEN** creating an Area object **THEN** ensure no type definitions (Scala or SpinalHDL) are placed within the Area implementation
+
+#### Scenario: Object Instantiation Only
+- **WHEN** working within Component or Area **THEN** only instantiate objects of existing types, do not define new types
+
+#### Scenario: Pure Scala Type Definition Placement
+- **WHEN** defining pure Scala types (classes, objects, traits, type aliases, enums) **THEN** place them at package level or in dedicated type definition files
+
+#### Scenario: SpinalHDL Type Definition Placement
+- **WHEN** defining SpinalHDL types (Bundle, Component, Area) **THEN** place them at package level or in dedicated type definition files
+
+#### Scenario: Type Definition Organization
+- **WHEN** organizing type definitions **THEN** group related types in logically organized files or objects
+
+#### Scenario: Type Scope Pollution Prevention
+- **WHEN** type definitions are found within hardware constructs **THEN** move them to appropriate package-level locations
