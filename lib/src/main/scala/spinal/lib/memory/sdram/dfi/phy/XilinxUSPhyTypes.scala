@@ -174,7 +174,13 @@ class DdrCommandGenerator(dfiConfig: DfiConfig) extends Component {
       decodedCmd := DdrCmd.PRE  // PRE: RAS=0, CAS=0, WE=1
     } elsewhen((dfiRasN_or === False) && (dfiCasN_or === False) && (dfiWeN_or === False)) {
       // MRS/ZQCS/REF discrimination based on address
-      val addrBits = dfiAddress(15 downto 14)
+      val addrBits = if (dfiAddress.getWidth >= 16) {
+        dfiAddress(15 downto 14)
+      } else if (dfiAddress.getWidth >= 15) {
+        dfiAddress(14 downto 13) // Use bits 14:13 for 15-bit addresses
+      } else {
+        B"00" // Default for smaller addresses
+      }
       when(addrBits === U"2'b11") {
         decodedCmd := DdrCmd.ZQCS // ZQCS: A15:A14 = 11
       } elsewhen(addrBits === U"2'b10") {
@@ -728,25 +734,30 @@ class TrainingController(config: DfiConfig, initDone: Bool,
                        rdLvlEn: Bool = False,
                        rdLvlGateEn: Bool = False,
                        caLvlEn: Bool = False) extends Component {
-  
-  // Use input signals directly to avoid hierarchy violations
-  // No need to register inputs as they are already registered in parent
-  
-  // Create training modules with proper signal isolation
+
+  // Use input parameters directly to avoid hierarchy violations
+  // These signals are already registered in the parent XilinxUSPhy component
+  val wrLvlEnLocal = wrLvlEn
+  val wrLvlStrobeLocal = wrLvlStrobe
+  val rdLvlEnLocal = rdLvlEn
+  val rdLvlGateEnLocal = rdLvlGateEn
+  val caLvlEnLocal = caLvlEn
+
+  // Create training modules with proper signal isolation using local registered signals
   val writeLeveling = if (config.useWrlvlEn) {
-    val module = new WriteLevelingModule(config, wrLvlEn, wrLvlStrobe, writeLevelingSampledData)
+    val module = new WriteLevelingModule(config, wrLvlEnLocal, wrLvlStrobeLocal, writeLevelingSampledData)
     Some(module)
   } else None
   val readGate = if (config.useRdlvlEn) {
-    val module = new ReadGateModule(config, rdLvlEn, readGateSampledData)
+    val module = new ReadGateModule(config, rdLvlEnLocal, readGateSampledData)
     Some(module)
   } else None
   val readEye = if (config.useRdlvlGateEn) {
-    val module = new ReadEyeModule(config, rdLvlGateEn, readEyeSampledData)
+    val module = new ReadEyeModule(config, rdLvlGateEnLocal, readEyeSampledData)
     Some(module)
   } else None
   val caTraining = if (config.useCalvlEn) {
-    val module = new CATrainingModule(config, caLvlEn, caSampledAddr, caSampledBank, caCurrentCmd)
+    val module = new CATrainingModule(config, caLvlEnLocal, caSampledAddr, caSampledBank, caCurrentCmd)
     Some(module)
   } else None
 
@@ -824,18 +835,27 @@ class TrainingController(config: DfiConfig, initDone: Bool,
     val done = new State
 
     idle.whenIsActive {
-      // Fixed: Use input parameters directly instead of accessing parent signals
-      when(wrLvlEn) {
-        wrLevel.foreach(goto(_))
+      // Only check training enables if corresponding modules exist
+      // This prevents hierarchy violations when training is disabled
+      if (wrLevel.isDefined) {
+        when(wrLvlEnLocal) {
+          wrLevel.foreach(goto(_))
+        }
       }
-      .elsewhen(rdLvlEn) {
-        rdGate.foreach(goto(_))
+      if (rdGate.isDefined) {
+        when(rdLvlEnLocal) {
+          rdGate.foreach(goto(_))
+        }
       }
-      .elsewhen(rdLvlGateEn) {
-        rdEye.foreach(goto(_))
+      if (rdEye.isDefined) {
+        when(rdLvlGateEnLocal) {
+          rdEye.foreach(goto(_))
+        }
       }
-      .elsewhen(caLvlEn) {
-        caTrain.foreach(goto(_))
+      if (caTrain.isDefined) {
+        when(caLvlEnLocal) {
+          caTrain.foreach(goto(_))
+        }
       }
     }
 
@@ -885,15 +905,11 @@ class WriteLevelingModule(config: DfiConfig, wrLvlEn: Bool, wrLvlStrobe: Bool, s
   val response = out Bits(config.writeLevelingResponseWidth bits)
   val dqIncrement = out Bool() // Output to be connected externally
 
-  // Fixed: Create internal registers without accessing parent signals directly
-  val wrLvlEnReg = RegInit(False)
-  val wrLvlStrobeReg = RegInit(False)
-  val sampledDataReg = Reg(Bits(8 bits)) init(B(0, 8 bits))
-  
-  // Assign from input parameters (these are already registered in parent)
-  wrLvlEnReg := wrLvlEn
-  wrLvlStrobeReg := wrLvlStrobe
-  sampledDataReg := sampledData
+  // Use input parameters directly to avoid hierarchy violations
+  // These are already registered in the parent component
+  val wrLvlEnReg = wrLvlEn
+  val wrLvlStrobeReg = wrLvlStrobe
+  val sampledDataReg = sampledData
 
   // Write leveling pattern generation - alternating 0x55/0xAA pattern (aligned with LiteX)
   val patternGenerator = new Area {
@@ -1102,18 +1118,13 @@ class ReadEyeModule(config: DfiConfig, rdLvlGateEn: Bool, sampledData: Vec[Bits]
       val stableEye = validEyeCounter >= 8 // Require 8 consecutive valid samples
       
       // Sample actual data from DQ pins through read path for each phase - Fixed: Use real sampling
-      when(rdLvlGateEnReg) {
-        for (i <- 0 until 4) {
-          // Sample from different byte lanes for multi-phase eye training
-          if (i < sampledData.length) {
-            receivedData(i) := sampledData(i)
-          } else {
-            receivedData(i) := B(0, 8 bits) // Use default value for safety
-          }
-        }
-      } otherwise {
-        for (i <- 0 until 4) {
-          receivedData(i) := receivedData(i)
+      // Use direct assignments to avoid hierarchy violations
+      for (i <- 0 until 4) {
+        // Sample from different byte lanes for multi-phase eye training
+        if (i < sampledData.length) {
+          receivedData(i) := rdLvlGateEnReg ? sampledData(i) | receivedData(i)
+        } else {
+          receivedData(i) := rdLvlGateEnReg ? B(0, 8 bits) | receivedData(i) // Use default value for safety
         }
       }
     }

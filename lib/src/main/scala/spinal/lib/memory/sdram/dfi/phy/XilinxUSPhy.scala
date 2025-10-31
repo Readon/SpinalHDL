@@ -208,10 +208,8 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // During init, PHY-generated signals take precedence over DFI signals
     val padOverride = initActive && (currentState =/= InitState.DONE)
     
-    // Debug output for initialization state
-    when(initActive) {
-      println(s"XilinxUSPhy initialization active, state: ${currentState}")
-    }
+    // Debug output for initialization state - removed for production code
+    // Note: Initialization state can be monitored through io.ctrl.initDone signal
 
     // Initialization sequence control
     val initStart = !io.ctrl.reset && RegNext(io.ctrl.reset, True) // Start on reset deassertion
@@ -321,7 +319,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     initCmd := DdrCmd.NOP
     initAddr := B(0, dfiConfig.addressWidth bits)
     initBa := B(0, dfiConfig.bankWidth bits)
-    initCsN := B(0, dfiConfig.chipSelectNumber bits) // Initialize to active (0) for proper chip select
+    initCsN := B((BigInt(1) << dfiConfig.chipSelectNumber) - 1, dfiConfig.chipSelectNumber bits) // Initialize to inactive (all 1's) per JEDEC spec
     initCke := B(0, dfiConfig.chipSelectNumber bits) // Initialize to disabled (0) per JEDEC spec
     initOdt := B(0, dfiConfig.chipSelectNumber bits) // Initialize to disabled
     initResetN := B(0, dfiConfig.chipSelectNumber bits) // Initialize to reset (0) per JEDEC spec
@@ -339,7 +337,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
         initCke := B(0, dfiConfig.chipSelectNumber bits)
       }
       is(InitState.MRS_SEQUENCE) {
-        // MRS commands: CKE=1, reset_n=1
+        // MRS commands: CKE=1, reset_n=1 (aligned with LiteX)
         initCke := B((BigInt(1) << dfiConfig.chipSelectNumber) - 1, dfiConfig.chipSelectNumber bits)
         initResetN := B((BigInt(1) << dfiConfig.chipSelectNumber) - 1, dfiConfig.chipSelectNumber bits)
 
@@ -349,35 +347,40 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
             initCmd := DdrCmd.MRS
             initBa := B(2, dfiConfig.bankWidth bits)  // MR2
             initAddr := B"16'h0008".resize(dfiConfig.addressWidth)  // MR2 value: CWL=5, RttWR=60ohm
+            initCsN := B(0, dfiConfig.chipSelectNumber bits) // Activate chip select during MRS
           }
           is(MrsState.MR3) {
             initCmdValid := True
             initCmd := DdrCmd.MRS
             initBa := B(3, dfiConfig.bankWidth bits)  // MR3
             initAddr := B"16'h0000".resize(dfiConfig.addressWidth)  // MR3 value: MPR disabled
+            initCsN := B(0, dfiConfig.chipSelectNumber bits) // Activate chip select during MRS
           }
           is(MrsState.MR1) {
             initCmdValid := True
             initCmd := DdrCmd.MRS
             initBa := B(1, dfiConfig.bankWidth bits)  // MR1
             initAddr := B"16'h0004".resize(dfiConfig.addressWidth)  // MR1 value: Enable DLL, AL=0, RttNom=60ohm
+            initCsN := B(0, dfiConfig.chipSelectNumber bits) // Activate chip select during MRS
           }
           is(MrsState.MR0) {
             initCmdValid := True
             initCmd := DdrCmd.MRS
             initBa := B(0, dfiConfig.bankWidth bits)  // MR0
             initAddr := B"16'h0520".resize(dfiConfig.addressWidth)  // MR0 value: BL8, CL5, DLL Reset
+            initCsN := B(0, dfiConfig.chipSelectNumber bits) // Activate chip select during MRS
           }
         }
       }
       is(InitState.ZQ_CALIBRATION) {
-        // ZQCS command: CKE=1, reset_n=1
+        // ZQCS command: CKE=1, reset_n=1 (aligned with LiteX)
         initCke := B((BigInt(1) << dfiConfig.chipSelectNumber) - 1, dfiConfig.chipSelectNumber bits)
         initResetN := B((BigInt(1) << dfiConfig.chipSelectNumber) - 1, dfiConfig.chipSelectNumber bits)
 
         initCmdValid := True
         initCmd := DdrCmd.ZQCS
         initAddr := B"16'h400".resize(dfiConfig.addressWidth)  // ZQCS address pattern
+        initCsN := B(0, dfiConfig.chipSelectNumber bits) // Activate chip select during ZQCS
       }
       is(InitState.DONE) {
         // Normal operation: CKE=1, reset_n=1
@@ -394,7 +397,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     val writeLevelingSampledData = Bits(8 bits)
     val readGateSampledData = Bits(8 bits)
     val readEyeSampledData = Vec.fill(4)(Bits(8 bits))
-    val caSampledAddr = Bits(16 bits)
+    val caSampledAddr = Bits(dfiConfig.addressWidth bits)
     val caSampledBank = Bits(8 bits)
     val caCurrentCmd = DdrCmd()
 
@@ -413,16 +416,8 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     var controller: TrainingController = null
   }
 
-  // Initialize training status signals to avoid unassigned register errors
-  trainingCtrl.writeLevelingDone := False
-  trainingCtrl.readGateDone := False
-  trainingCtrl.readEyeDone := False
-  trainingCtrl.caTrainingDone := False
-  trainingCtrl.cdly_value_out := U(0, 9 bits)
-  trainingCtrl.readGateResponse := B(0, 1 bits)
-  trainingCtrl.readEyeResponse := B(0, 1 bits)
-  trainingCtrl.writeLevelingResponse := B(0, 1 bits)
-  trainingCtrl.caTrainingResponse := B(0, 2 bits)
+  // Training status signals are now defined globally to avoid assignment conflicts
+  // They will be assigned in the global scope below
 
   // Define training status signals outside the Area to make them accessible
   val trainingWriteLevelingDone = Bool()
@@ -435,16 +430,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
   val trainingWriteLevelingResponse = Bits(1 bits)
   val trainingCaTrainingResponse = Bits(2 bits)
 
-  // Initialize signals to avoid unassigned register errors
-  trainingWriteLevelingDone := False
-  trainingReadGateDone := False
-  trainingReadEyeDone := False
-  trainingCaTrainingDone := False
-  trainingCdlyValueOut := U(0, 9 bits)
-  trainingReadGateResponse := B(0, 1 bits)
-  trainingReadEyeResponse := B(0, 1 bits)
-  trainingWriteLevelingResponse := B(0, 1 bits)
-  trainingCaTrainingResponse := B(0, 2 bits)
+  // Training signals are now assigned later in the code to avoid conflicts
 
   // Initialization state machine integration
   // The initialization sequence is now handled by ControlManager through UnifiedAdapter
@@ -579,8 +565,6 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     serdes.D := clkPattern
     // Fixed: Add missing T signal to prevent NO DRIVER ON error
     serdes.T := False  // Always drive output (not tristate)
-    // Apply simulation-friendly defaults
-    serdes.setSimulationDefaults()
 
     // ODELAYE3 with phase control for fine timing adjustment - optimized
     val delay = new ODELAYE3(delayType = "VARIABLE")
@@ -589,7 +573,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // EN_VTC controlled by DFI interface - disabled during training
     val trainingActive = RegInit(False)
     val trainingActiveNext = Bool()
-    
+
     // Use shared training active signal to avoid assignment conflicts
     trainingActive := trainingActiveShared
     // Assign trainingActiveNext to avoid unassigned register
@@ -607,8 +591,9 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
       delay.CASC_RETURN := False // No cascade return in standalone mode
     }
     if(delay.delayType == "VAR_LOAD") delay.LOAD := False       // No load operation in VARIABLE mode
-    // Apply simulation-friendly defaults
-    delay.setSimulationDefaults()
+    // Apply simulation-friendly defaults after manual assignments to avoid overlap
+    // Note: setSimulationDefaults() calls are removed to prevent assignment overlaps
+    // The blackbox components are configured with manual assignments only
 
     // Clock enable/disable control - pipelined
     val clkGated = Reg(Bool()) init(True)
@@ -619,8 +604,9 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // Differential buffer with enable control
     val buf = new OBUFDS()
     buf.I := delay.DATAOUT & clkGated
-    // Apply simulation-friendly defaults
-    buf.setSimulationDefaults()
+    // Apply simulation-friendly defaults after manual assignments to avoid overlap
+    // Note: setSimulationDefaults() calls are removed to prevent assignment overlaps
+    // The blackbox components are configured with manual assignments only
 
     io.pads.clk_p := buf.O
     io.pads.clk_n := buf.OB
@@ -687,7 +673,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
       serdes.RST := io.ctrl.reset | sysRst
       serdes.CLK := io.clk4x
       serdes.CLKDIV := sysClk
-      
+
       // Fixed: Create local copies of DFI signals to avoid hierarchy violations
       // Don't access handler's internal signals directly
       val dfiSourceBits = Bits(8 bits)
@@ -709,7 +695,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
         dfiSourceBits := B(0, 8 bits) // Default for other signals
       }
       serdes.D := dfiSourceBits
-      
+
       // Fixed: Add missing T signal to prevent NO DRIVER ON error
       if (serdes.hasTristate) {
         serdes.T := False  // Always drive output (not tristate)
@@ -831,8 +817,8 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     val tckPeriodPs = (1e12 / sysClkFreq).toInt // Clock period in picoseconds
     val dqsInitialDelay = Math.max(1, tckPeriodPs / 4) // tck/4 as per LiteX implementation, ensure at least 1
     
-    // Debug output for timing verification
-    println(s"System clock freq: ${sysClkFreq/1e6} MHz, TCK: ${tckPeriodPs} ps, DQS initial delay: ${dqsInitialDelay} taps")
+    // Timing configuration: System clock freq: ${sysClkFreq/1e6} MHz, TCK: ${tckPeriodPs} ps, DQS initial delay: ${dqsInitialDelay} taps
+    // Note: Timing values can be monitored through phyCtrl interface for debugging
     
     val odelayVec = Seq.fill(dqsWidth)(new ODELAYE3(delayType="VARIABLE", delayValue=dqsInitialDelay, refClkFrequency = 200))
 
@@ -844,8 +830,6 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
       serdes.CLKDIV := sysClk
       serdes.D      := BitSlip(pattern.io.output, 2, io.phyCtrl.bitslip)
       serdes.T      := ~delayLine.last
-      // Apply simulation-friendly defaults
-      serdes.setSimulationDefaults()
 
       // Configure delay line with proper reset and control signals
       delay.RST := sysRst | io.ctrl.reset
@@ -853,7 +837,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
       // EN_VTC follows same control logic as clockGen delay
       val trainingActiveDqs = RegInit(False)
       val trainingActiveDqsNext = Bool()
-      
+
       // Use shared training active signal to avoid assignment conflicts
       trainingActiveDqs := trainingActiveShared
       // Assign trainingActiveDqsNext to avoid unassigned register
@@ -871,8 +855,9 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
         delay.CASC_RETURN := False // No cascade return in standalone mode
       }
       if(delay.delayType == "VAR_LOAD") delay.LOAD := False
-      // Apply simulation-friendly defaults
-      delay.setSimulationDefaults()
+      // Apply simulation-friendly defaults after manual assignments to avoid overlap
+      // Note: setSimulationDefaults() calls are removed to prevent assignment overlaps
+      // The blackbox components are configured with manual assignments only
 
       // Connect differential or single-ended buffer based on dqsType and dataRate
       assert(dfiConfig.sdram.generation.dataRate > 1, "PHY do not support signal data rate.")
@@ -880,8 +865,9 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
         val buf = new IOBUFDSE3()
         buf.I := delay.DATAOUT
         buf.T := serdes.T_OUT
-        // Apply simulation-friendly defaults
-        buf.setSimulationDefaults()
+        // Apply simulation-friendly defaults after manual assignments to avoid overlap
+        // Note: setSimulationDefaults() calls are removed to prevent assignment overlaps
+        // The blackbox components are configured with manual assignments only
 
         // Connect to pads
         io.pads.dqs_p(i) := buf.IO
@@ -997,16 +983,15 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
       osd.CLKDIV := sysClk
       osd.RST := io.ctrl.reset | sysRst
       osd.T := ~dqsPath.dq_oe // Use dqsPath's dq_oe for output enable
-      // Apply simulation-friendly defaults
-      osd.setSimulationDefaults()
 
       // Connect to IO buffer
       val buf = new IOBUF()
       buf.I := osd.OQ
       buf.T := osd.T_OUT
-      // Apply simulation-friendly defaults
-      buf.setSimulationDefaults()
       io.pads.dq(i) := buf.IO
+      // Apply simulation-friendly defaults after manual assignments to avoid overlap
+      // Note: setSimulationDefaults() calls are removed to prevent assignment overlaps
+      // The blackbox components are configured with manual assignments only
     }
 
     // Configure and connect DM OSERDES to pads - optimized
@@ -1018,8 +1003,6 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
       dmOsd.CLKDIV := sysClk
       dmOsd.RST := io.ctrl.reset | sysRst
       dmOsd.T := ~dqsPath.dq_oe // Same timing as DQ
-      // Apply simulation-friendly defaults
-      dmOsd.setSimulationDefaults()
 
       // Connect DM directly to pads (no tristate needed for DM)
       io.pads.dm(i) := dmOsd.OQ
@@ -1080,7 +1063,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // Configure read path components - optimized shared parameters
     val enVtcShared = Bool()
     val trainingActiveSharedNext = Bool()
-    
+
     // Use global training active signal to avoid assignment conflicts
     enVtcShared := io.dfi.update.ctrlupdAck && !trainingActiveShared
 
@@ -1102,9 +1085,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
         delay.CASC_RETURN := False // No cascade return in standalone mode
       }
       if(delay.delayType == "VAR_LOAD") delay.LOAD := False
-      // Apply simulation-friendly defaults
-      delay.setSimulationDefaults()
-      
+
       // Configure ISERDESE3 with DQS gating - shared parameters
       serdes.CLK := io.clk4x
       serdes.CLK_B := io.clk4xN
@@ -1115,13 +1096,9 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
       serdes.FIFO_RD_EN := dqsGate
       // Fixed: Add missing FIFO_RD_CLK to prevent NO DRIVER ON error
       serdes.FIFO_RD_CLK := sysClk  // Use the same clock as CLKDIV
-      // Apply simulation-friendly defaults
-      serdes.setSimulationDefaults()
-      
-      // Debug output for FIFO status monitoring
-      when(serdes.FIFO_EMPTY) {
-        println(s"ISERDESE3[${i}] FIFO empty detected")
-      }
+
+      // FIFO status monitoring - removed for production code
+      // Note: FIFO status can be monitored through serdes.FIFO_EMPTY signal if needed
     }
 
     // Connect read data to DFI interface with proper timing - optimized
@@ -1207,6 +1184,150 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
   // Control signals
   cmdPath.handler.padOverride := initManager.padOverride
 
+  // Direct connection of DFI control signals to pads (when not overridden by initialization)
+  when(!initManager.padOverride) {
+    // Chip select signals
+    for (i <- 0 until dfiConfig.chipSelectNumber) {
+      if (i < io.pads.cs_n.getWidth) {
+        io.pads.cs_n(i) := io.dfi.control.csN(i)
+      }
+    }
+
+    // Clock enable signals
+    for (i <- 0 until dfiConfig.chipSelectNumber) {
+      if (i < io.pads.cke.getWidth) {
+        io.pads.cke(i) := io.dfi.control.cke(i)
+      }
+    }
+
+    // ODT signals (if enabled)
+    if (dfiConfig.signalConfig.useOdt) {
+      for (i <- 0 until dfiConfig.chipSelectNumber) {
+        if (i < io.pads.odt.getWidth) {
+          io.pads.odt(i) := io.dfi.control.odt(i)
+        }
+      }
+    }
+
+    // Reset signals (if enabled)
+    if (dfiConfig.signalConfig.useResetN) {
+      for (i <- 0 until dfiConfig.chipSelectNumber) {
+        if (i < io.pads.reset_n.getWidth) {
+          io.pads.reset_n(i) := io.dfi.control.resetN(i)
+        }
+      }
+    }
+
+    // RAS, CAS, WE signals (if enabled)
+    if (dfiConfig.signalConfig.useRasN) {
+      for (i <- 0 until dfiConfig.controlWidth) {
+        if (i < io.pads.ras_n.getWidth) {
+          io.pads.ras_n(i) := io.dfi.control.rasN(i)
+        }
+      }
+    }
+
+    if (dfiConfig.signalConfig.useCasN) {
+      for (i <- 0 until dfiConfig.controlWidth) {
+        if (i < io.pads.cas_n.getWidth) {
+          io.pads.cas_n(i) := io.dfi.control.casN(i)
+        }
+      }
+    }
+
+    if (dfiConfig.signalConfig.useWeN) {
+      for (i <- 0 until dfiConfig.controlWidth) {
+        if (i < io.pads.we_n.getWidth) {
+          io.pads.we_n(i) := io.dfi.control.weN(i)
+        }
+      }
+    }
+
+    // Act_N signal (if enabled)
+    if (dfiConfig.signalConfig.useAckN) {
+      io.pads.act_n := io.dfi.control.actN.orR
+    }
+  } otherwise {
+    // During initialization, use initialization manager signals
+    io.pads.cs_n := initManager.initCsN
+    io.pads.cke := initManager.initCke
+
+    if (dfiConfig.signalConfig.useOdt) {
+      io.pads.odt := initManager.initOdt
+    }
+
+    if (dfiConfig.signalConfig.useResetN) {
+      io.pads.reset_n := initManager.initResetN
+    }
+
+    // Decode initCmd into individual control signals during initialization
+    val initRasN = RegNext(False) init(False)
+    val initCasN = RegNext(False) init(False)
+    val initWeN = RegNext(False) init(False)
+    val initActN = RegNext(False) init(False)
+
+    switch(initManager.initCmd) {
+      is(DdrCmd.ACT) {
+        initRasN := False
+        initCasN := True
+        initWeN := True
+        initActN := False
+      }
+      is(DdrCmd.READ) {
+        initRasN := True
+        initCasN := False
+        initWeN := True
+        initActN := True
+      }
+      is(DdrCmd.WRITE) {
+        initRasN := True
+        initCasN := False
+        initWeN := False
+        initActN := True
+      }
+      is(DdrCmd.PRE) {
+        initRasN := False
+        initCasN := True
+        initWeN := False
+        initActN := True
+      }
+      is(DdrCmd.REF) {
+        initRasN := False
+        initCasN := False
+        initWeN := True
+        initActN := True
+      }
+      is(DdrCmd.MRS) {
+        initRasN := False
+        initCasN := False
+        initWeN := False
+        initActN := True
+      }
+      default { // NOP
+        initRasN := True
+        initCasN := True
+        initWeN := True
+        initActN := True
+      }
+    }
+
+    if (dfiConfig.signalConfig.useRasN) {
+      io.pads.ras_n := B(initRasN, dfiConfig.controlWidth bits)
+    }
+
+    if (dfiConfig.signalConfig.useCasN) {
+      io.pads.cas_n := B(initCasN, dfiConfig.controlWidth bits)
+    }
+
+    if (dfiConfig.signalConfig.useWeN) {
+      io.pads.we_n := B(initWeN, dfiConfig.controlWidth bits)
+    }
+
+    if (dfiConfig.signalConfig.useAckN) {
+      io.pads.act_n := initActN
+    }
+  }
+
   // Now that dataPath and cmdPath are defined, complete the trainingCtrl initialization
   trainingCtrl.writeLevelingSampledData := RegNext(dataPath.rdIserdes(0).Q(7 downto 0)) init(B(0, 8 bits)) // Sample first byte lane for write leveling
   trainingCtrl.readGateSampledData := RegNext(dataPath.rdIserdes(0).Q(7 downto 0)) init(B(0, 8 bits)) // Sample first byte lane for read gate training
@@ -1218,7 +1339,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
       trainingCtrl.readEyeSampledData(i) := RegNext(dataPath.rdIserdes(0).Q(7 downto 0)) init(B(0, 8 bits)) // Use first byte lane as fallback
     }
   }
-  trainingCtrl.caSampledAddr := RegNext(cmdPath.syncedAddressOut.take(16).asBits) init(B(0, 16 bits)) // Sample lower 16 bits of address from exposed signals
+  trainingCtrl.caSampledAddr := RegNext(cmdPath.syncedAddressOut.take(dfiConfig.addressWidth).asBits.resize(dfiConfig.addressWidth)) init(B(0, dfiConfig.addressWidth bits)) // Sample address bits with proper resizing
   trainingCtrl.caSampledBank := RegNext(cmdPath.syncedBankOut.take(dfiConfig.bankWidth).asBits.resize(8)) init(B(0, 8 bits)) // Sample bank signals from exposed signals
   
   // Create local copy to avoid hierarchy violation
@@ -1240,7 +1361,14 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
   } elsewhen((dfiRasN_or === False) && (dfiCasN_or === False) && (dfiWeN_or === True)) {
     currentCmdLocal := DdrCmd.PRE
   } elsewhen((dfiRasN_or === False) && (dfiCasN_or === False) && (dfiWeN_or === False)) {
-    val addrBits = io.dfi.control.address(15 downto 14)
+    // Use the highest available bits for ZQCS/REF detection
+    val addrBits = if (dfiConfig.addressWidth >= 16) {
+      io.dfi.control.address(15 downto 14)
+    } else if (dfiConfig.addressWidth >= 15) {
+      io.dfi.control.address(14 downto 13) // Use bits 14:13 for 15-bit addresses
+    } else {
+      B"00" // Default for smaller addresses
+    }
     when(addrBits === B"11") {
       currentCmdLocal := DdrCmd.ZQCS
     } elsewhen(addrBits === B"10") {
@@ -1269,48 +1397,49 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
   val rdLvlGateEnReg = RegNext(rdLvlGateEn) init(False)
   val caLvlEnReg = RegNext(caLvlEn) init(False)
 
-  // Instantiate TrainingController now that all data is available
-  trainingCtrl.controller = new TrainingController(
-    dfiConfig,
-    initManager.initComplete,
-    trainingCtrl.writeLevelingSampledData,
-    trainingCtrl.readGateSampledData,
-    trainingCtrl.readEyeSampledData,
-    trainingCtrl.caSampledAddr,
-    trainingCtrl.caSampledBank,
-    trainingCtrl.caCurrentCmd,
-    wrLvlEnReg,
-    wrLvlStrobeReg,
-    rdLvlEnReg,
-    rdLvlGateEnReg,
-    caLvlEnReg
-  )
+  // Instantiate TrainingController only if training is enabled to avoid hierarchy violations
+  if (dfiConfig.useWrlvlEn || dfiConfig.useRdlvlEn || dfiConfig.useRdlvlGateEn || dfiConfig.useCalvlEn) {
+    trainingCtrl.controller = new TrainingController(
+      dfiConfig,
+      initManager.initComplete,
+      trainingCtrl.writeLevelingSampledData,
+      trainingCtrl.readGateSampledData,
+      trainingCtrl.readEyeSampledData,
+      trainingCtrl.caSampledAddr,
+      trainingCtrl.caSampledBank,
+      trainingCtrl.caCurrentCmd,
+      wrLvlEn,    // Use original DFI signal
+      wrLvlStrobe, // Use original DFI signal
+      rdLvlEn,    // Use original DFI signal
+      rdLvlGateEn, // Use original DFI signal
+      caLvlEn     // Use original DFI signal
+    )
+  }
 
-  // Connect training status signals to avoid hierarchy violations
-  // Convert Scala null check to SpinalHDL Bool
-  val controllerNotNull = Bool(trainingCtrl.controller != null)
-  when(controllerNotNull) {
+  // Connect training status signals - use direct assignment approach
+  // Set default values (for when training is disabled)
+  trainingWriteLevelingDone := False
+  trainingReadGateDone := False
+  trainingReadEyeDone := False
+  trainingCaTrainingDone := False
+  trainingCdlyValueOut := U(0, 9 bits)
+  trainingReadGateResponse := B(0, 1 bits)
+  trainingReadEyeResponse := B(0, 1 bits)
+  trainingWriteLevelingResponse := B(0, 1 bits)
+  trainingCaTrainingResponse := B(0, 2 bits)
+
+  // Override with controller signals only if controller exists and training is enabled
+  if (dfiConfig.useWrlvlEn || dfiConfig.useRdlvlEn || dfiConfig.useRdlvlGateEn || dfiConfig.useCalvlEn) {
+    // These assignments will override the defaults above
     trainingWriteLevelingDone := trainingCtrl.controller.writeLevelingDone
     trainingReadGateDone := trainingCtrl.controller.readGateDone
     trainingReadEyeDone := trainingCtrl.controller.readEyeDone
     trainingCaTrainingDone := trainingCtrl.controller.caTrainingDone
     trainingCdlyValueOut := trainingCtrl.controller.cdly_value_out
-
-    // Connect training response signals directly to avoid hierarchy violations
     trainingReadGateResponse := trainingCtrl.controller.readGateResponse
     trainingReadEyeResponse := trainingCtrl.controller.readEyeResponse
     trainingWriteLevelingResponse := trainingCtrl.controller.writeLevelingResponse
     trainingCaTrainingResponse := trainingCtrl.controller.caTrainingResponse
-  }.otherwise {
-    trainingWriteLevelingDone := False
-    trainingReadGateDone := False
-    trainingReadEyeDone := False
-    trainingCaTrainingDone := False
-    trainingCdlyValueOut := U(0, 9 bits)
-    trainingReadGateResponse := B(0, 1 bits)
-    trainingReadEyeResponse := B(0, 1 bits)
-    trainingWriteLevelingResponse := B(0, 1 bits)
-    trainingCaTrainingResponse := B(0, 2 bits)
   }
 
   // Connect trainingCtrl area signals to global training signals to avoid hierarchy violations
@@ -1323,6 +1452,23 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
   trainingCtrl.readEyeResponse := trainingReadEyeResponse
   trainingCtrl.writeLevelingResponse := trainingWriteLevelingResponse
   trainingCtrl.caTrainingResponse := trainingCaTrainingResponse
+
+  // Connect PHY control outputs to training controller (only if training is enabled)
+  if (dfiConfig.useWrlvlEn || dfiConfig.useRdlvlEn || dfiConfig.useRdlvlGateEn || dfiConfig.useCalvlEn) {
+    io.phyCtrl.half_sys8x_taps := trainingCtrl.controller.half_sys8x_taps
+    io.phyCtrl.dqs_inc_count := trainingCtrl.controller.dqs_inc_count
+    io.phyCtrl.training_cdly_inc := trainingCtrl.controller.training_cdly_inc
+    io.phyCtrl.training_dq_inc := trainingCtrl.controller.training_dq_inc
+    io.phyCtrl.training_bitslip := trainingCtrl.controller.training_bitslip
+    io.phyCtrl.cdly_value := trainingCtrl.controller.cdly_value_out
+  } else {
+    io.phyCtrl.half_sys8x_taps := U(0, 9 bits)
+    io.phyCtrl.dqs_inc_count := U(0, 9 bits)
+    io.phyCtrl.training_cdly_inc := False
+    io.phyCtrl.training_dq_inc := False
+    io.phyCtrl.training_bitslip := False
+    io.phyCtrl.cdly_value := U(0, 9 bits)
+  }
   
   // Training control signals already defined and registered above
 
