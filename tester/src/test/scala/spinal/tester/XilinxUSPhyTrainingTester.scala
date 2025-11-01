@@ -113,8 +113,8 @@ class XilinxUSPhyTrainingTester extends SpinalTesterGhdlBase {
     // 验证训练信号存在
     assert(dut.io.dfi.rdTraining.rdlvlGateEn != null, "Read eye training enable signal should exist")
     assert(dut.io.dfi.rdTraining.rdlvlResp != null, "Read eye training response signal should exist")
-    assert(dut.io.phyCtrl.rd_phase != null, "PHY read phase control signal should exist")
-    assert(dut.io.phyCtrl.dq_inc != null, "PHY DQ increment control signal should exist")
+    assert(dut.io.phyCtrl.rdPhase != null, "PHY read phase control signal should exist")
+    assert(dut.io.phyCtrl.dqInc != null, "PHY DQ increment control signal should exist")
     
     println("Read eye training structure validation passed")
   }
@@ -136,7 +136,7 @@ class XilinxUSPhyTrainingTester extends SpinalTesterGhdlBase {
     assert(dut.io.dfi.caTraining.calvlResp != null, "CA training response signal should exist")
     assert(dut.io.dfi.control.address != null, "DFI address control signal should exist")
     assert(dut.io.dfi.control.bank != null, "DFI bank control signal should exist")
-    assert(dut.io.phyCtrl.cdly_inc != null, "PHY delay increment control signal should exist")
+    assert(dut.io.phyCtrl.cdlyInc != null, "PHY delay increment control signal should exist")
     
     println("CA training structure validation passed")
   }

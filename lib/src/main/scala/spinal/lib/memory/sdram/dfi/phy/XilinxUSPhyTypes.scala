@@ -7,21 +7,6 @@ import spinal.lib.blackbox.xilinx.ultrascale._
 import spinal.lib.memory.sdram.dfi._
 
 // Hardware width constants (REQ-CS-013 compliance)
-object HardwareWidths {
-  val BYTE = 8
-  val PATTERN_SEL = 2
-  val COUNTER_16 = 16
-  val COUNTER_9 = 9
-  val COUNTER_8 = 8
-  val COUNTER_6 = 6
-  val COUNTER_5 = 5
-  val COUNTER_4 = 4
-  val COUNTER_3 = 3
-  val RESPONSE_1 = 1
-  val RESPONSE_2 = 2
-  val PHASE_COUNT = 4
-}
-
 // DQS pattern generator functions to avoid dangling references
 object DQSPatterns {
   def DEFAULT: Bits = B"01010101"
@@ -33,14 +18,8 @@ object DQSPatterns {
 
 // Timing constants
 object TimingConstants {
-  val STABLE_CYCLES_3 = 3
-  val STABLE_CYCLES_4 = 4
-  val STABLE_CYCLES_8 = 8
-  val GATE_POSITIONS = 32
-  val EYE_MAX_DELAY = 256
-  val CA_MAX_DELAY = 256
-  val TIMEOUT_100 = 100
-  val WRITE_TRAINING_TIMEOUT = 100  // Write leveling training timeout cycles
+  val STABLE_PATTERN_MATCH_CYCLES = 3  // Number of consecutive pattern matches required for stability
+  val WRITE_TRAINING_TIMEOUT = 100     // Write leveling training timeout cycles
 }
 
 // DDR3 JEDEC timing constants
@@ -138,18 +117,21 @@ object DdrCommandDecoder {
 case class SignalMapping(padSignal: Bool, dfiSource: Bits)
 
 // DQSPattern module implementation - optimized for resource usage
-class DQSPattern(register: Boolean = false) extends Component {
+class DQSPattern(
+  phyConfig: XilinxUSPhyConfig = XilinxUSPhyConfig(),
+  register: Boolean = false
+) extends Component {
   val io = new Bundle {
     val preamble = in Bool ()
     val postamble = in Bool ()
     val wlevel_en = in Bool ()
     val wlevel_strobe = in Bool ()
-    val output = out Bits (HardwareWidths.BYTE bits)
+    val output = out Bits (phyConfig.byteWidth bits)
   }
 
   // Pattern generation logic - optimized with lookup table
-  val pattern = Bits(HardwareWidths.BYTE bits)
-  val patternSel = UInt(HardwareWidths.PATTERN_SEL bits)
+  val pattern = Bits(phyConfig.byteWidth bits)
+  val patternSel = UInt(phyConfig.patternSelectWidth bits)
 
   // Encode pattern selection for better LUT usage
   when(io.wlevel_en) {
@@ -172,7 +154,7 @@ class DQSPattern(register: Boolean = false) extends Component {
 
   // Optional registered output - optimized
   if (register) {
-    val reg = Reg(Bits(HardwareWidths.BYTE bits)) init (DQSPatterns.DEFAULT)
+    val reg = Reg(Bits(phyConfig.byteWidth bits)) init (DQSPatterns.DEFAULT)
     reg := pattern
     io.output := reg
   } else {
@@ -181,38 +163,26 @@ class DQSPattern(register: Boolean = false) extends Component {
 }
 
 // DDR Command Generator with JEDEC timing constraints - Pipelined for timing
-class DdrCommandGenerator(dfiConfig: DfiConfig) extends Component {
+class DdrCommandGenerator(
+  dfiConfig: DfiConfig,
+  phyConfig: XilinxUSPhyConfig = XilinxUSPhyConfig()
+) extends Component {
   // Use the shared DdrCmd enum from the parent class
 
-  // Command timing parameters (JEDEC DDR3) - use named constants
-  val tRCD = DDR3TimingConstants.TRCD
-  val tRP = DDR3TimingConstants.TRP
-  val tRFC = DDR3TimingConstants.TRFC
-  val tMRD = DDR3TimingConstants.TMRD
-  val tZQCS = DDR3TimingConstants.TZQCS
-
-  // Pre-compute timing constants for better resource usage
-  val tRCD_U = U(tRCD, HardwareWidths.BYTE bits)
-  val tRP_U = U(tRP, HardwareWidths.BYTE bits)
-  val tRFC_U = U(tRFC, HardwareWidths.COUNTER_9 bits)
-  val tMRD_U = U(tMRD, HardwareWidths.COUNTER_3 bits)
-  val tZQCS_U = U(tZQCS, HardwareWidths.COUNTER_8 bits)
+  // Command timing parameters (JEDEC DDR3) - using constants directly
+  // No intermediate variables needed - direct constant comparison is more concise
 
   // Command state tracking - pipelined
   val lastCommand = Reg(DdrCmd()) init(DdrCmd.NOP)
-  val commandTimer = Reg(UInt(HardwareWidths.COUNTER_16 bits)) init(0)
+  val commandTimer = Reg(UInt(phyConfig.timerCounterWidth bits)) init(0)
   val commandValid = Reg(Bool()) init(False)
 
   // Multi-chip select support
   val activeChipSelect = Reg(UInt(log2Up(dfiConfig.chipSelectNumber) bits)) init(0)
 
-  // Rank-to-rank timing parameters - use named constants
-  val tRRD = DDR3TimingConstants.TRRD
-  val tRRD_U = U(tRRD, HardwareWidths.COUNTER_3 bits)
-
   // Rank-specific timing tracking for multi-device support
   val rankLastCommand = Vec.fill(dfiConfig.chipSelectNumber)(Reg(DdrCmd()) init(DdrCmd.NOP))
-  val rankCommandTimer = Vec.fill(dfiConfig.chipSelectNumber)(Reg(UInt(HardwareWidths.COUNTER_16 bits)) init(0))
+  val rankCommandTimer = Vec.fill(dfiConfig.chipSelectNumber)(Reg(UInt(phyConfig.timerCounterWidth bits)) init(0))
 
   // Command generation logic - pipelined for timing
   val currentCmd = Reg(DdrCmd()) init(DdrCmd.NOP)
@@ -309,19 +279,19 @@ class DdrCommandGenerator(dfiConfig: DfiConfig) extends Component {
 
     switch(lastCmdReg) {
       is(DdrCmd.ACT) {
-        globalTimingValid := cmdTimerReg >= tRCD_U
+        globalTimingValid := cmdTimerReg >= DDR3TimingConstants.TRCD
       }
       is(DdrCmd.PRE) {
-        globalTimingValid := cmdTimerReg >= tRP_U
+        globalTimingValid := cmdTimerReg >= DDR3TimingConstants.TRP
       }
       is(DdrCmd.REF) {
-        globalTimingValid := cmdTimerReg >= tRFC_U
+        globalTimingValid := cmdTimerReg >= DDR3TimingConstants.TRFC
       }
       is(DdrCmd.MRS) {
-        globalTimingValid := cmdTimerReg >= tMRD_U
+        globalTimingValid := cmdTimerReg >= DDR3TimingConstants.TMRD
       }
       is(DdrCmd.ZQCS) {
-        globalTimingValid := cmdTimerReg >= tZQCS_U
+        globalTimingValid := cmdTimerReg >= DDR3TimingConstants.TZQCS
       }
       default {
         globalTimingValid := True
@@ -339,7 +309,7 @@ class DdrCommandGenerator(dfiConfig: DfiConfig) extends Component {
       for (rank <- 0 until dfiConfig.chipSelectNumber) {
         rankLastCmdRegs(rank) := RegNext(rankLastCommand(rank)) init(DdrCmd.NOP)
         rankTimerRegs(rank) := RegNext(rankCommandTimer(rank)) init(0)
-        rankViolations(rank) := (rankLastCmdRegs(rank) === DdrCmd.ACT) && (rankTimerRegs(rank) < tRRD_U)
+        rankViolations(rank) := (rankLastCmdRegs(rank) === DdrCmd.ACT) && (rankTimerRegs(rank) < DDR3TimingConstants.TRRD)
       }
       rankToRankValid := !rankViolations.reduce(_ || _)
     } else {
@@ -463,7 +433,10 @@ class DdrCommandGenerator(dfiConfig: DfiConfig) extends Component {
 }
 
 // Helper class to manage command/address/bank signals and their output connections
-class CmdSignalHandler(dfiConfig: DfiConfig) extends Component {
+class CmdSignalHandler(
+  dfiConfig: DfiConfig,
+  phyConfig: XilinxUSPhyConfig = XilinxUSPhyConfig()
+) extends Component {
   def regroupSignals(input: Bits, width: Int): Vec[Bits] = {
     val slices = input.subdivideIn(width bits)
     Vec.tabulate(width) { i =>
@@ -504,7 +477,7 @@ class CmdSignalHandler(dfiConfig: DfiConfig) extends Component {
   }
 
   // Instantiate DDR command generator
-  val cmdGen = new DdrCommandGenerator(dfiConfig)
+  val cmdGen = new DdrCommandGenerator(dfiConfig, phyConfig)
 
   val pads = out(new SdramIO(dfiConfig))
 
@@ -744,16 +717,19 @@ class CmdSignalHandler(dfiConfig: DfiConfig) extends Component {
 }
 
 // Complete Training Controller with proper DFI integration - optimized
-class TrainingController(config: DfiConfig) extends Component {
+class TrainingController(
+  config: DfiConfig,
+  phyConfig: XilinxUSPhyConfig = XilinxUSPhyConfig()
+) extends Component {
 
   val io = new Bundle {
     // Input signals (moved from constructor parameters)
     val initDone = in Bool()
-    val writeLevelingSampledData = in Bits(HardwareWidths.BYTE bits)
-    val readGateSampledData = in Bits(HardwareWidths.BYTE bits)
-    val readEyeSampledData = in(Vec(Bits(HardwareWidths.BYTE bits), HardwareWidths.PHASE_COUNT))
+    val writeLevelingSampledData = in Bits(phyConfig.byteWidth bits)
+    val readGateSampledData = in Bits(phyConfig.byteWidth bits)
+    val readEyeSampledData = in(Vec(Bits(phyConfig.byteWidth bits), phyConfig.phaseCount))
     val caSampledAddr = in Bits(config.addressWidth bits)
-    val caSampledBank = in Bits(HardwareWidths.BYTE bits)
+    val caSampledBank = in Bits(phyConfig.byteWidth bits)
     val caCurrentCmd = in(DdrCmd())
     val wrLvlEn = in Bool()
     val wrLvlStrobe = in Bool()
@@ -762,9 +738,9 @@ class TrainingController(config: DfiConfig) extends Component {
     val caLvlEn = in Bool()
 
     // PHY control interface outputs
-    val half_sys8x_taps = out UInt(HardwareWidths.COUNTER_9 bits)
-    val dqs_inc_count = out UInt(HardwareWidths.COUNTER_9 bits)
-    val cdly_value = out UInt(HardwareWidths.COUNTER_9 bits)
+    val half_sys8x_taps = out UInt(phyConfig.delayCounterWidth bits)
+    val dqs_inc_count = out UInt(phyConfig.delayCounterWidth bits)
+    val cdly_value = out UInt(phyConfig.delayCounterWidth bits)
     val training_cdly_inc = out Bool()
     val training_dq_inc = out Bool()
     val training_bitslip = out Bool()
@@ -776,13 +752,13 @@ class TrainingController(config: DfiConfig) extends Component {
     val caTrainingDone = out Bool()
 
     // Expose training response signals as outputs to avoid hierarchy violations
-    val readGateResponse = out Bits(HardwareWidths.RESPONSE_1 bits)
-    val readEyeResponse = out Bits(HardwareWidths.RESPONSE_1 bits)
-    val writeLevelingResponse = out Bits(HardwareWidths.RESPONSE_1 bits)
-    val caTrainingResponse = out Bits(HardwareWidths.RESPONSE_2 bits)
+    val readGateResponse = out Bits(phyConfig.trainingResultWidth bits)
+    val readEyeResponse = out Bits(phyConfig.trainingResultWidth bits)
+    val writeLevelingResponse = out Bits(phyConfig.trainingResultWidth bits)
+    val caTrainingResponse = out Bits(phyConfig.trainingStateCodeWidth bits)
 
     // Expose cdly_value as output to avoid hierarchy violations
-    val cdly_value_out = out UInt(HardwareWidths.COUNTER_9 bits)
+    val cdly_value_out = out UInt(phyConfig.delayCounterWidth bits)
   }
 
   // Use input parameters directly to avoid hierarchy violations
@@ -791,26 +767,26 @@ class TrainingController(config: DfiConfig) extends Component {
 
   // Create training modules with proper signal isolation using local registered signals
   val writeLevelingModule = if (config.useWrlvlEn) {
-    val module = new WriteLevelingModule(config)
+    val module = new WriteLevelingModule(config, phyConfig)
     module.io.wrLvlEn := io.wrLvlEn
     module.io.wrLvlStrobe := io.wrLvlStrobe
     module.io.sampledData := io.writeLevelingSampledData
     module
   } else null
   val readGateModule = if (config.useRdlvlEn) {
-    val module = new ReadGateModule(config)
+    val module = new ReadGateModule(config, phyConfig)
     module.io.rdLvlEn := io.rdLvlEn
     module.io.sampledData := io.readGateSampledData
     module
   } else null
   val readEyeModule = if (config.useRdlvlGateEn) {
-    val module = new ReadEyeModule(config, io.readEyeSampledData.length)
+    val module = new ReadEyeModule(config, io.readEyeSampledData.length, phyConfig)
     module.io.rdLvlGateEn := io.rdLvlGateEn
     module.io.sampledData := io.readEyeSampledData
     module
   } else null
   val caTrainingModule = if (config.useCalvlEn) {
-    val module = new CATrainingModule(config)
+    val module = new CATrainingModule(config, phyConfig)
     module.io.caLvlEn := io.caLvlEn
     module.io.sampledAddr := io.caSampledAddr
     module.io.sampledBank := io.caSampledBank
@@ -980,14 +956,17 @@ class TrainingController(config: DfiConfig) extends Component {
   }
 }
 
-class WriteLevelingModule(config: DfiConfig) extends Component {
+class WriteLevelingModule(
+  config: DfiConfig,
+  phyConfig: XilinxUSPhyConfig = XilinxUSPhyConfig()
+) extends Component {
   val io = new Bundle {
     val wrLvlEn = in Bool()
     val wrLvlStrobe = in Bool()
-    val sampledData = in Bits(HardwareWidths.BYTE bits)
+    val sampledData = in Bits(phyConfig.byteWidth bits)
     val done = out Bool()
-    val cdlyCount = out UInt(HardwareWidths.COUNTER_9 bits)
-    val dqsIncCount = out UInt(HardwareWidths.COUNTER_9 bits)
+    val cdlyCount = out UInt(phyConfig.delayCounterWidth bits)
+    val dqsIncCount = out UInt(phyConfig.delayCounterWidth bits)
     val response = out Bits(config.writeLevelingResponseWidth bits)
     val dqIncrement = out Bool() // Output to be connected externally
   }
@@ -999,7 +978,7 @@ class WriteLevelingModule(config: DfiConfig) extends Component {
 
   // Write leveling pattern generation - alternating 0x55/0xAA pattern (aligned with LiteX)
   val patternGenerator = new Area {
-    val pattern = Reg(Bits(HardwareWidths.BYTE bits)) init(DQSPatterns.DEFAULT) // Start with 0x55
+    val pattern = Reg(Bits(phyConfig.byteWidth bits)) init(DQSPatterns.DEFAULT) // Start with 0x55
     val patternToggle = RegInit(False)
 
     when(wrLvlEnReg) {
@@ -1015,7 +994,7 @@ class WriteLevelingModule(config: DfiConfig) extends Component {
 
   // DQS delay line control for write leveling
   val dqsDelayControl = new Area {
-    val delayCounter = Reg(UInt(HardwareWidths.COUNTER_9 bits)) init(0)
+    val delayCounter = Reg(UInt(phyConfig.delayCounterWidth bits)) init(0)
 
     // Increment delay during training sweeps
     when(wrLvlEnReg && wrLvlStrobeReg) {
@@ -1027,11 +1006,11 @@ class WriteLevelingModule(config: DfiConfig) extends Component {
   val completionDetector = new Area {
     val doneReg = RegInit(False)
     val patternMatch = RegInit(False)
-    val timeoutCounter = Reg(UInt(HardwareWidths.COUNTER_8 bits)) init(0)
-    val stableCounter = Reg(UInt(HardwareWidths.COUNTER_4 bits)) init(0) // Require stable pattern for multiple cycles
+    val timeoutCounter = Reg(UInt(phyConfig.timeoutCounterWidth bits)) init(0)
+    val stableCounter = Reg(UInt(phyConfig.stableCounterWidth bits)) init(0) // Require stable pattern for multiple cycles
 
     // Sample received pattern during strobe from actual DQ sampling
-    val receivedPattern = Reg(Bits(HardwareWidths.BYTE bits)) init(0)
+    val receivedPattern = Reg(Bits(phyConfig.byteWidth bits)) init(0)
     val expectedPattern = patternGenerator.pattern
     val currentMatch = Bool()
 
@@ -1051,7 +1030,7 @@ class WriteLevelingModule(config: DfiConfig) extends Component {
         stableCounter := 0
       }
       
-      patternMatch := stableCounter >= TimingConstants.STABLE_CYCLES_3 // Require 3 consecutive matches
+      patternMatch := stableCounter >= TimingConstants.STABLE_PATTERN_MATCH_CYCLES // Require 3 consecutive matches
       timeoutCounter := timeoutCounter + 1
     } otherwise {
       receivedPattern := receivedPattern
@@ -1074,10 +1053,13 @@ class WriteLevelingModule(config: DfiConfig) extends Component {
   io.dqIncrement := wrLvlEnReg && wrLvlStrobeReg // Increment only during active training with strobe
 }
 
-class ReadGateModule(config: DfiConfig) extends Component {
+class ReadGateModule(
+  config: DfiConfig,
+  phyConfig: XilinxUSPhyConfig = XilinxUSPhyConfig()
+) extends Component {
   val io = new Bundle {
     val rdLvlEn = in Bool()
-    val sampledData = in Bits(HardwareWidths.BYTE bits)
+    val sampledData = in Bits(phyConfig.byteWidth bits)
     val done = out Bool()
     val bitslip = out Bool()
     val dq_inc = out Bool()
@@ -1169,12 +1151,16 @@ class ReadGateModule(config: DfiConfig) extends Component {
   io.response := gateTraining.gateFound ? B"1" | B"0"
 }
 
-class ReadEyeModule(config: DfiConfig, dataSampleCount: Int) extends Component {
+class ReadEyeModule(
+  config: DfiConfig,
+  dataSampleCount: Int,
+  phyConfig: XilinxUSPhyConfig = XilinxUSPhyConfig()
+) extends Component {
   val io = new Bundle {
     val rdLvlGateEn = in Bool()
-    val sampledData = in(Vec(Bits(8 bits), dataSampleCount))
+    val sampledData = in(Vec(Bits(phyConfig.byteWidth bits), dataSampleCount))
     val done = out Bool()
-    val phase = out UInt(2 bits)
+    val phase = out UInt(phyConfig.phaseSelectWidth bits)
     val response = out Bits(config.readLevelingResponseWidth bits)
     val dqIncrement = out Bool() // Output to be connected externally
   }
@@ -1266,11 +1252,14 @@ class ReadEyeModule(config: DfiConfig, dataSampleCount: Int) extends Component {
   io.dqIncrement := rdLvlGateEnReg && eyeTraining.timeout(6 downto 0).andR // Increment only during active sweep
 }
 
-class CATrainingModule(config: DfiConfig) extends Component {
+class CATrainingModule(
+  config: DfiConfig,
+  phyConfig: XilinxUSPhyConfig = XilinxUSPhyConfig()
+) extends Component {
   val io = new Bundle {
     val caLvlEn = in Bool()
     val sampledAddr = in Bits(config.addressWidth bits)
-    val sampledBank = in Bits(8 bits)
+    val sampledBank = in Bits(phyConfig.byteWidth bits)
     val currentCmd = in(DdrCmd())
     val done = out Bool()
     val response = out Bits(config.caTrainingResponseWidth bits)

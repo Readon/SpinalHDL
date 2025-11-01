@@ -113,7 +113,11 @@ Numeric literals with semantic meaning SHALL use named constants instead of magi
 #### Scenario: Magic Number Elimination
 - **WHEN** using numbers with semantic meaning
 - **THEN** developers SHALL define named constants for values like timeouts, limits, and configuration parameters
-- **AND** SHALL allow simple math operations (+1, <<2, *8) and basic initialization values (0, False)
+- **AND** SHALL allow:
+  - Special literal values (0, False) in all contexts
+  - Simple math operations (+1, -1) only
+  - Direct Arabic numerals for **Scala software code initialization** (Scala variables, constructor parameters, configuration values)
+- **AND** SHALL prohibit direct Arabic numerals in **hardware contexts** (signal widths, memory sizes, non-zero register initialization)
 
 ### Requirement: REQ-CS-009: Simulation and Testing Patterns
 Test code SHALL use proper SpinalHDL simulation assignment patterns.
@@ -413,6 +417,13 @@ val timeout = Reg(UInt(32 bits)) init(TimingConstants.TIMEOUT_CYCLES)
 // ❌ WRONG: Magic numbers
 val dataBus = UInt(16 bits)  // What does 16 mean?
 val timeout = Reg(UInt(32 bits)) init(150000)  // What is 150000?
+
+// ✅ ALLOWED: Direct Arabic numerals for Scala initialization
+class Config {
+  val timeout = 150000  // Scala software initialization
+  val retries = 3
+}
+val counter = 0  // Special literal in all contexts
 ```
 
 #### Allowed Numeric Usage
@@ -420,8 +431,9 @@ val timeout = Reg(UInt(32 bits)) init(150000)  // What is 150000?
 |----------|----------|----------|
 | **Hardware Widths** | PROHIBITED | `8`, `16`, `32`, `64` → Use `HardwareWidths.BYTE` |
 | **Magic Numbers** | PROHIBITED | `150000`, `42`, `256` → Use named constants |
-| **Math Operations** | ALLOWED | `+ 1`, `<< 2`, `* 8` |
-| **Initialization** | ALLOWED | `init(0)`, `init(False)` |
+| **Scala Initialization** | ALLOWED | `val timeout = 150000` (Scala software code) |
+| **Math Operations** | ALLOWED | `+ 1`, `- 1` (only simple operations) |
+| **Special Literals** | ALLOWED | `0`, `False` (all contexts) |
 
 ### Testing Examples
 

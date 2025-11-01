@@ -102,18 +102,18 @@ class XilinxUSPhyTester extends SpinalSimFunSuite {
     dut.io.ctrl.reset #= true
 
     // PHY控制信号
-    dut.io.phyCtrl.dly_sel #= 0
-    dut.io.phyCtrl.cdly_rst #= false
-    dut.io.phyCtrl.cdly_inc #= false
-    dut.io.phyCtrl.dq_rst #= false
-    dut.io.phyCtrl.dq_inc #= false
-    dut.io.phyCtrl.bitslip_rst #= false
+    dut.io.phyCtrl.dlySel #= 0
+    dut.io.phyCtrl.cdlyRst #= false
+    dut.io.phyCtrl.cdlyInc #= false
+    dut.io.phyCtrl.dqRst #= false
+    dut.io.phyCtrl.dqInc #= false
+    dut.io.phyCtrl.bitslipRst #= false
     dut.io.phyCtrl.bitslip #= false
-    dut.io.phyCtrl.rd_phase #= 0
-    dut.io.phyCtrl.wr_phase #= 0
-    dut.io.phyCtrl.training_cdly_inc #= false
-    dut.io.phyCtrl.training_dq_inc #= false
-    dut.io.phyCtrl.training_bitslip #= false
+    dut.io.phyCtrl.rdPhase #= 0
+    dut.io.phyCtrl.wrPhase #= 0
+    dut.io.phyCtrl.trainingCdlyInc #= false
+    dut.io.phyCtrl.trainingDqInc #= false
+    dut.io.phyCtrl.trainingBitslip #= false
 
     // DFI控制信号
     setDfiControlSignals(dut, rasN = true, casN = true, weN = true, actN = true)
@@ -626,18 +626,18 @@ class XilinxUSPhyTester extends SpinalSimFunSuite {
       dut.clockDomain.waitSampling(TEST_INIT_WAIT_CYCLES)
 
       // 测试PHY控制接口
-      dut.io.phyCtrl.dly_sel #= 1
-      dut.io.phyCtrl.cdly_inc #= true
+      dut.io.phyCtrl.dlySel #= 1
+      dut.io.phyCtrl.cdlyInc #= true
       dut.clockDomain.waitSampling(1)
-      dut.io.phyCtrl.cdly_inc #= false
+      dut.io.phyCtrl.cdlyInc #= false
 
       // 验证延迟控制
-      assert(dut.io.phyCtrl.cdly_value.toInt >= 0, "Command delay value updated")
+      assert(dut.io.phyCtrl.cdlyValue.toInt >= 0, "Command delay value updated")
 
       // 测试数据路径控制
-      dut.io.phyCtrl.dq_inc #= true
+      dut.io.phyCtrl.dqInc #= true
       dut.clockDomain.waitSampling(1)
-      dut.io.phyCtrl.dq_inc #= false
+      dut.io.phyCtrl.dqInc #= false
 
       // 测试位滑动控制
       dut.io.phyCtrl.bitslip #= true
@@ -645,23 +645,23 @@ class XilinxUSPhyTester extends SpinalSimFunSuite {
       dut.io.phyCtrl.bitslip #= false
 
       // 测试相位控制
-      dut.io.phyCtrl.rd_phase #= 1
-      dut.io.phyCtrl.wr_phase #= 2
+      dut.io.phyCtrl.rdPhase #= 1
+      dut.io.phyCtrl.wrPhase #= 2
       dut.clockDomain.waitSampling(5)
 
       // 验证相位设置
-      assert(dut.io.phyCtrl.rd_phase.toInt == 1, "Read phase control working")
-      assert(dut.io.phyCtrl.wr_phase.toInt == 2, "Write phase control working")
+      assert(dut.io.phyCtrl.rdPhase.toInt == 1, "Read phase control working")
+      assert(dut.io.phyCtrl.wrPhase.toInt == 2, "Write phase control working")
 
       // 测试训练控制信号
-      dut.io.phyCtrl.training_cdly_inc #= true
-      dut.io.phyCtrl.training_dq_inc #= true
-      dut.io.phyCtrl.training_bitslip #= true
+      dut.io.phyCtrl.trainingCdlyInc #= true
+      dut.io.phyCtrl.trainingDqInc #= true
+      dut.io.phyCtrl.trainingBitslip #= true
       dut.clockDomain.waitSampling(1)
 
-      dut.io.phyCtrl.training_cdly_inc #= false
-      dut.io.phyCtrl.training_dq_inc #= false
-      dut.io.phyCtrl.training_bitslip #= false
+      dut.io.phyCtrl.trainingCdlyInc #= false
+      dut.io.phyCtrl.trainingDqInc #= false
+      dut.io.phyCtrl.trainingBitslip #= false
 
       println("Control Interface Integration passed")
     }

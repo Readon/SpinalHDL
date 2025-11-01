@@ -41,9 +41,15 @@ case class SdramIO(dfiConfig: DfiConfig) extends Bundle {
     )
 }
 
-class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
+class XilinxUSPhy(
+  dfiConfig: DfiConfig,
+  phyConfig: XilinxUSPhyConfig = XilinxUSPhyConfig()
+) extends Component {
   // Clock domain access through override to avoid hierarchy violations
   override val clockDomain = ClockDomain.current
+
+  // Use width configurations
+  import phyConfig._
 
   // IO definition must be at the beginning of Component
   val io = new Bundle {
@@ -55,30 +61,30 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // PHY control interface
     val phyCtrl = new Bundle {
       // Training status
-      val half_sys8x_taps = out UInt(9 bits)
-      val dqs_inc_count = out UInt(9 bits)
+      val half_sys8x_taps = out UInt(delayCounterWidth bits)
+      val dqs_inc_count = out UInt(delayCounterWidth bits)
 
       // Control signals
-      val dly_sel = in Bits(8 bits) // Byte lane select
-      val cdly_rst = in Bool() // Command delay reset
-      val cdly_inc = in Bool() // Command delay increment
-      val cdly_value = out UInt(9 bits) // Current command delay
+      val dlySel = in Bits(timeoutCounterWidth bits) // Byte lane select
+      val cdlyRst = in Bool() // Command delay reset
+      val cdlyInc = in Bool() // Command delay increment
+      val cdlyValue = out UInt(delayCounterWidth bits) // Current command delay
 
       // Data path control
-      val dq_rst = in Bool() // DQ delay reset
-      val dq_inc = in Bool() // DQ delay increment
-      val bitslip_rst = in Bool() // Bitslip reset
+      val dqRst = in Bool() // DQ delay reset
+      val dqInc = in Bool() // DQ delay increment
+      val bitslipRst = in Bool() // Bitslip reset
       val bitslip = in Bool() // Bitslip trigger
-      val dly_dq_value = out UInt(9 bits) // Current DQ delay
+      val dlyDqValue = out UInt(delayCounterWidth bits) // Current DQ delay
 
       // Phase control
-      val rd_phase = in UInt(2 bits) // Read phase control
-      val wr_phase = in UInt(2 bits) // Write phase control
+      val rdPhase = in UInt(phaseSelectWidth bits) // Read phase control
+      val wrPhase = in UInt(phaseSelectWidth bits) // Write phase control
 
       // Training control signals - changed to out to allow training controller assignment
-      val training_cdly_inc = out Bool() // Training command delay increment
-      val training_dq_inc = out Bool() // Training DQ/DQS delay increment
-      val training_bitslip = out Bool() // Training bitslip trigger
+      val trainingCdlyInc = out Bool() // Training command delay increment
+      val trainingDqInc = out Bool() // Training DQ/DQS delay increment
+      val trainingBitslip = out Bool() // Training bitslip trigger
 
       // Initialization status
       val initDone = out Bool() // Initialization complete flag
@@ -86,14 +92,11 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
       val cke = out Bool() // Clock enable
 
       // Training status interface - Enhanced
-      val trainingCdlyInc = out Bool() // Training command delay increment
-      val trainingDqInc = out Bool() // Training DQ delay increment
-      val trainingBitslip = out Bool() // Training bitslip control
       val trainingDone = out Bool() // All training complete
       val trainingActive = out Bool() // Training in progress
 
       // Error status
-      val errorStatus = out Bits(8 bits) // Error flags
+      val errorStatus = out Bits(timeoutCounterWidth bits) // Error flags
     }
 
     // Control interface
@@ -107,8 +110,8 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
   // Configuration parameters area - must be defined before any usage
   val configParams = new Area {
     // SDRAM timing parameters
-    val burstLength = U(dfiConfig.sdram.burstLength, 4 bits)
-    val casLatency = U(dfiConfig.sdram.ddrRdLat, 4 bits)
+    val burstLength = U(dfiConfig.sdram.burstLength, stableCounterWidth bits)
+    val casLatency = U(dfiConfig.sdram.ddrRdLat, stableCounterWidth bits)
 
     // Error status signals
     val clockError = Bool()
@@ -140,15 +143,15 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     val caTrainingDone = Bool()
 
     // Training response signals
-    val writeLevelingResponse = Bits(1 bits)
-    val readGateResponse = Bits(1 bits)
-    val readEyeResponse = Bits(1 bits)
-    val caTrainingResponse = Bits(2 bits)
+    val writeLevelingResponse = Bits(trainingResultWidth bits)
+    val readGateResponse = Bits(trainingResultWidth bits)
+    val readEyeResponse = Bits(trainingResultWidth bits)
+    val caTrainingResponse = Bits(trainingStateCodeWidth bits)
 
     // Training delay values
-    val cdlyValueOut = UInt(9 bits)
-    val halfSys8xTaps = UInt(9 bits)
-    val dqsIncCount = UInt(9 bits)
+    val cdlyValueOut = UInt(delayCounterWidth bits)
+    val halfSys8xTaps = UInt(delayCounterWidth bits)
+    val dqsIncCount = UInt(delayCounterWidth bits)
 
     // Training control outputs
     val trainingCdlyInc = Bool()
@@ -184,43 +187,43 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
 
   def driveFrom(busCtrl: BusSlaveFactory, address: BigInt): Unit = {
     // Control register group (0x00)
-    val ctrlReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x00).init(0)
+    val ctrlReg = busCtrl.createReadAndWrite(Bits(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits), 0x00).init(0)
     io.ctrl.reset := ctrlReg(0) // [0] Global reset
-    ctrlReg(8) := io.ctrl.initDone // [8] Initialization status (RO)
+    ctrlReg(byteWidth) := io.ctrl.initDone // [8] Initialization status (RO)
     // Use buffered training signals to avoid hierarchy violations
     ctrlReg(9) := trainingInterfaceArea.bufferedWriteLevelingDone // [9] Write leveling done
     ctrlReg(10) := trainingInterfaceArea.bufferedReadGateDone // [10] Read gate training done
     ctrlReg(11) := trainingInterfaceArea.bufferedReadEyeDone // [11] Read eye training done
 
     // Delay control register (0x04)
-    val delayCtrlReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x04).init(0)
-    io.phyCtrl.dly_sel := delayCtrlReg(16 to 23) // [16:23] Byte lane select
-    io.phyCtrl.cdly_rst := delayCtrlReg(0) // [0] CDLY reset
-    io.phyCtrl.cdly_inc := delayCtrlReg(1) // [1] CDLY increment
+    val delayCtrlReg = busCtrl.createReadAndWrite(Bits(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits), 0x04).init(0)
+    io.phyCtrl.dlySel := delayCtrlReg(16 to 23) // [16:23] Byte lane select
+    io.phyCtrl.cdlyRst := delayCtrlReg(0) // [0] CDLY reset
+    io.phyCtrl.cdlyInc := delayCtrlReg(1) // [1] CDLY increment
     // Use buffered training signals to avoid hierarchy violations
-    delayCtrlReg(24 to 31) := trainingInterfaceArea.bufferedCdlyValue.asBits.resize(8) // [24:31] Wlevel counter
+    delayCtrlReg(24 to 31) := trainingInterfaceArea.bufferedCdlyValue.asBits.resize(timeoutCounterWidth) // [24:31] Wlevel counter
 
     // Data path control register (0x08)
-    val dataCtrlReg = busCtrl.createWriteOnly(Bits(32 bits), 0x08)
-    io.phyCtrl.dq_rst := dataCtrlReg(0) // [0] DQ reset
-    io.phyCtrl.dq_inc := dataCtrlReg(1) // [1] DQ increment
-    io.phyCtrl.bitslip_rst := dataCtrlReg(2) // [2] Bitslip reset
+    val dataCtrlReg = busCtrl.createWriteOnly(Bits(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits), 0x08)
+    io.phyCtrl.dqRst := dataCtrlReg(0) // [0] DQ reset
+    io.phyCtrl.dqInc := dataCtrlReg(1) // [1] DQ increment
+    io.phyCtrl.bitslipRst := dataCtrlReg(2) // [2] Bitslip reset
     io.phyCtrl.bitslip := dataCtrlReg(3) // [3] Bitslip trigger
 
     // Status registers
-    busCtrl.read(io.phyCtrl.half_sys8x_taps ## io.phyCtrl.cdly_value, 0x10) // [0x10] Taps + CDLY value
+    busCtrl.read(io.phyCtrl.half_sys8x_taps ## io.phyCtrl.cdlyValue, 0x10) // [0x10] Taps + CDLY value
     busCtrl.read(io.phyCtrl.dqs_inc_count, 0x14) // [0x14] DQS increment count
     // Error status register (0x18)
-    val errorStatusReg = busCtrl.createReadOnly(Bits(32 bits), 0x18)
+    val errorStatusReg = busCtrl.createReadOnly(Bits(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits), 0x18)
     errorStatusReg(0) := configParams.clockError // [0] Clock error
     errorStatusReg(1) := configParams.resetError // [1] Reset synchronization error
     errorStatusReg(2) := configParams.initError  // [2] Initialization error
-    // busCtrl.read(trainingCtrl.readGate.io.shiftCounter.asBits.resize(16), 0x16) // [0x16-0x17] Read calibration shift
+    // busCtrl.read(trainingCtrl.readGate.io.shiftCounter.asBits.resize(DfiCommonConstants.TIMER_WIDTH), 0x16) // [0x16-0x17] Read calibration shift
 
     // Configuration register (0x18)
-    val configReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x18).init(0)
-    io.phyCtrl.rd_phase := configReg(13 downto 12).asUInt // [1:0] Read phase
-    io.phyCtrl.wr_phase := configReg(15 downto 14).asUInt // [3:2] Write phase
+    val configReg = busCtrl.createReadAndWrite(Bits(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits), 0x18).init(0)
+    io.phyCtrl.rdPhase := configReg(13 downto 12).asUInt // [1:0] Read phase
+    io.phyCtrl.wrPhase := configReg(15 downto 14).asUInt // [3:2] Write phase
     // Register FSM state to avoid hierarchy violations - use buffered signals
     val allTrainingDone = RegNext(
       (trainingInterfaceArea.bufferedWriteLevelingDone && trainingInterfaceArea.bufferedReadGateDone &&
@@ -240,7 +243,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // Initialization FSM states - JEDEC DDR3 Power-up and Initialization Sequence
     // InitState is now defined in XilinxUSPhyTypes.scala
     val currentState = Reg(InitState()) init(InitState.IDLE)
-    val initTimer = Reg(UInt(20 bits)) init(0)  // Extended timer for 200us timing
+    val initTimer = Reg(UInt(DfiCommonConstants.TIMER_WIDTH + stableCounterWidth bits)) init(0)  // Extended timer for 200us timing
 
     // JEDEC DDR3 timing parameters (using named constants for REQ-CS-008 compliance)
     val tPWRUP = DDR3TimingConstants.T_PWRUP_CYCLES   // 200us power-up time
@@ -252,7 +255,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // Mode register programming state
     // MrsState is now defined in XilinxUSPhyTypes.scala
     val mrsState = Reg(MrsState()) init(MrsState.IDLE)
-    val mrsTimer = Reg(UInt(8 bits)) init(0)
+    val mrsTimer = Reg(UInt(timeoutCounterWidth bits)) init(0)
 
     // Initialization control signals
     val initActive = currentState =/= InitState.IDLE
@@ -548,11 +551,11 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
   // to avoid forward reference issues
   val trainingCtrl = new Area {
     // Placeholder for sampled data - will be assigned after dataPath and cmdPath are defined
-    val writeLevelingSampledData = Bits(8 bits)
-    val readGateSampledData = Bits(8 bits)
-    val readEyeSampledData = Vec.fill(4)(Bits(8 bits))
+    val writeLevelingSampledData = Bits(byteWidth bits)
+    val readGateSampledData = Bits(byteWidth bits)
+    val readEyeSampledData = Vec.fill(phaseCount)(Bits(byteWidth bits))
     val caSampledAddr = Bits(dfiConfig.addressWidth bits)
-    val caSampledBank = Bits(8 bits)
+    val caSampledBank = Bits(byteWidth bits)
     val caCurrentCmd = DdrCmd()
 
     // Placeholder for controller - will be instantiated after data is available
@@ -580,7 +583,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
 
     // Error detection for reset synchronization
     val resetSyncError = RegInit(False)
-    val resetTimeoutCounter = RegInit(U(0, 16 bits))
+    val resetTimeoutCounter = RegInit(U(0, DfiCommonConstants.TIMER_WIDTH bits))
 
     // Detect reset synchronization issues (metastability or stuck resets)
     when(io.ctrl.reset && !dfiResetSynced) {
@@ -611,7 +614,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
 
     // Error detection for clock domain crossing
     val cdcError = RegInit(False)
-    val cdcTimeoutCounter = RegInit(U(0, 16 bits))
+    val cdcTimeoutCounter = RegInit(U(0, DfiCommonConstants.TIMER_WIDTH bits))
 
     // Detect CDC issues (metastability or stuck signals)
     val ckeChanged = ckeFF1 =/= ckeFF2
@@ -643,30 +646,30 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // Phase control for different frequency ratios (1:1, 1:2, 1:4) - configurable
     val phaseSelect = RegInit(U"00") // 0: 0°, 1: 90°, 2: 180°, 3: 270°
     // Assign phaseSelect based on DFI configuration
-    phaseSelect := io.phyCtrl.wr_phase // Use write phase for clock phase control
+    phaseSelect := io.phyCtrl.wrPhase // Use write phase for clock phase control
 
     // Clock pattern generation based on frequency ratio - optimized lookup table
-    val clkPattern = Bits(8 bits)
-    val freqRatio = UInt(3 bits)
+    val clkPattern = Bits(timeoutCounterWidth bits)
+    val freqRatio = UInt(tmrdCounterWidth bits)
     freqRatio := dfiConfig.frequencyRatio
 
     // Pre-computed patterns for better timing - optimized with registered selection
-    val patterns_1to1 = Vec(B"1010_1010", B"1010_1010", B"1010_1010", B"1010_1010")
+    val patterns_1to1 = Vec(DQSPatterns.ALTERNATING, DQSPatterns.ALTERNATING, DQSPatterns.ALTERNATING, DQSPatterns.ALTERNATING)
     val patterns_1to2 = Vec(B"1100_1100", B"0011_0011", B"1100_1100", B"0011_0011")
     val patterns_1to4 = Vec(B"1000_1000", B"0010_0010", B"0001_0001", B"0100_0100")
 
     // Generate appropriate clock pattern based on ratio and phase - pipelined with registered mux
-    val patternSelReg = Reg(Bits(8 bits)) init(B"1010_1010")
+    val patternSelReg = Reg(Bits(timeoutCounterWidth bits)) init(DQSPatterns.ALTERNATING)
     val freqRatioReg = RegNext(freqRatio) init(U(1))
     val phaseSelectReg = RegNext(phaseSelect) init(U"00")
 
     // Break critical path with registered frequency ratio selection
-    val selectedPattern = Bits(8 bits)
+    val selectedPattern = Bits(timeoutCounterWidth bits)
     switch(freqRatioReg) {
-      is(U(1)) { selectedPattern := patterns_1to1(phaseSelectReg.resize(2)) }
-      is(U(2)) { selectedPattern := patterns_1to2(phaseSelectReg.resize(2)) }
-      is(U(4)) { selectedPattern := patterns_1to4(phaseSelectReg.resize(2)) }
-      default { selectedPattern := B"1010_1010" }
+      is(U(1)) { selectedPattern := patterns_1to1(phaseSelectReg.resize(phaseSelectWidth)) }
+      is(U(2)) { selectedPattern := patterns_1to2(phaseSelectReg.resize(phaseSelectWidth)) }
+      is(U(4)) { selectedPattern := patterns_1to4(phaseSelectReg.resize(phaseSelectWidth)) }
+      default { selectedPattern := DQSPatterns.ALTERNATING }
     }
     patternSelReg := selectedPattern
     clkPattern := patternSelReg
@@ -682,11 +685,11 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
 
     // ODELAYE3 with phase control for fine timing adjustment - optimized
     val delay = new ODELAYE3(delayType = "VARIABLE")
-    delay.RST := io.ctrl.reset | io.phyCtrl.cdly_rst
+    delay.RST := io.ctrl.reset | io.phyCtrl.cdlyRst
     delay.CLK := io.clk4x
     // EN_VTC controlled by DFI interface - disabled during training
     delay.EN_VTC := io.dfi.update.ctrlupdAck && !trainingParams.trainingActive
-    delay.CE := io.phyCtrl.cdly_inc
+    delay.CE := io.phyCtrl.cdlyInc
     delay.INC := True
     delay.ODATAIN := serdes.OQ
     // Fixed: Add missing CNTVALUEIN to prevent NO DRIVER ON error
@@ -733,7 +736,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
   // Command and Control signals path
   val cmdPath = new Area {
     // Command signals handling
-    val handler = new CmdSignalHandler(dfiConfig) // Instantiate the handler
+    val handler = new CmdSignalHandler(dfiConfig, phyConfig) // Instantiate the handler
 
     // Connect DFI signals to handler interface
     handler.io.dfi.rasNor := io.dfi.control.rasN.orR
@@ -749,7 +752,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
 
     // Create OSERDES and ODELAY for each signal identified by the handler
     val oserdesVec = Seq.fill(handler.signalMappings.length)(new OSERDESE3(hasTristate = true))
-    val odelayVec = Seq.fill(handler.signalMappings.length)(new ODELAYE3(delayType = "VARIABLE", refClkFrequency = 200))
+    val odelayVec = Seq.fill(handler.signalMappings.length)(new ODELAYE3(delayType = "VARIABLE", refClkFrequency = DfiCommonConstants.DEFAULT_FIFO_DEPTH * DfiCommonConstants.FIFO_DEPTH + DfiCommonConstants.FIFO_DEPTH))
 
     // Expose synced signals as Area outputs to avoid hierarchy violations
     val syncedAddressOut = Vec.fill(15)(Bool())
@@ -764,8 +767,8 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     }
 
     // Create local copies for internal use to avoid hierarchy violations
-    val syncedAddressLocal = Vec.fill(15)(Reg(Bool()) init(False)) // Address width
-    val syncedBankLocal = Vec.fill(3)(Reg(Bool()) init(False)) // Bank width
+    val syncedAddressLocal = Vec.fill(syncedAddressOut.length)(Reg(Bool()) init(False)) // Address width
+    val syncedBankLocal = Vec.fill(syncedBankOut.length)(Reg(Bool()) init(False)) // Bank width
 
     // Assign from exposed signals
     for (i <- 0 until syncedAddressLocal.length) {
@@ -783,23 +786,23 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
 
       // Fixed: Create local copies of DFI signals to avoid hierarchy violations
       // Don't access handler's internal signals directly
-      val dfiSourceBits = Bits(8 bits)
+      val dfiSourceBits = Bits(byteWidth bits)
       // Assign based on signal index to avoid direct access to handler internals
-      if (i < 15) {
+      if (i < syncedAddressOut.length) {
         // Address signals (0-14 for 15-bit address)
-        dfiSourceBits := handler.syncedAddressOut(i).asBits.resize(8)
-      } else if (i >= 15 && i < 18) {
+        dfiSourceBits := handler.syncedAddressOut(i).asBits.resize(byteWidth)
+      } else if (i >= syncedAddressOut.length && i < syncedAddressOut.length + syncedBankOut.length) {
         // Bank signals (15-17 for 3-bit bank, if enabled)
-        val bankIndex = i - 15
+        val bankIndex = i - syncedAddressOut.length
         if (bankIndex < handler.syncedBankOut.length) {
-          dfiSourceBits := handler.syncedBankOut(bankIndex).asBits.resize(8)
+          dfiSourceBits := handler.syncedBankOut(bankIndex).asBits.resize(byteWidth)
         } else {
-          dfiSourceBits := B(0, 8 bits)
+          dfiSourceBits := B(0, byteWidth bits)
         }
       } else {
         // Control signals (RAS_N, CAS_N, WE_N, etc.)
         // These need to be generated from DFI signals directly
-        dfiSourceBits := B(0, 8 bits) // Default for other signals
+        dfiSourceBits := B(0, byteWidth bits) // Default for other signals
       }
       serdes.D := dfiSourceBits
 
@@ -808,14 +811,14 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
         serdes.T := False  // Always drive output (not tristate)
       }
 
-      delay.RST := io.ctrl.reset | io.phyCtrl.cdly_rst
+      delay.RST := io.ctrl.reset | io.phyCtrl.cdlyRst
       delay.CLK := io.clk4x
       delay.EN_VTC := True // Always enabled after training
-      delay.CE := io.phyCtrl.cdly_inc
+      delay.CE := io.phyCtrl.cdlyInc
       delay.INC := True
       delay.ODATAIN := serdes.OQ
       // Fixed: Add missing CNTVALUEIN to prevent NO DRIVER ON error
-      delay.CNTVALUEIN := U(0, 9 bits) // Default to no additional delay
+      delay.CNTVALUEIN := U(0, delayCounterWidth bits) // Default to no additional delay
       // Fixed: Add missing cascade and load ports to match simulation stubs
       // Note: CASC_OUT is output port, leave unconnected in standalone mode
       if(delay.cascade != "NONE") {
@@ -897,7 +900,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // DQS Pattern Generation
     // ==========================================================================
     // DQS pattern generator for serialization
-    val pattern = new DQSPattern
+    val pattern = new DQSPattern(phyConfig)
     pattern.io.preamble := dqs_preamble
     pattern.io.postamble := dqs_postamble
     if (dfiConfig.signalConfig.useWrlvlEn) {
@@ -927,7 +930,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // Timing configuration: System clock freq: ${sysClkFreq/1e6} MHz, TCK: ${tckPeriodPs} ps, DQS initial delay: ${dqsInitialDelay} taps
     // Note: Timing values can be monitored through phyCtrl interface for debugging
     
-    val odelayVec = Seq.fill(dqsWidth)(new ODELAYE3(delayType="VARIABLE", delayValue=dqsInitialDelay, refClkFrequency = 200))
+    val odelayVec = Seq.fill(dqsWidth)(new ODELAYE3(delayType="VARIABLE", delayValue=dqsInitialDelay, refClkFrequency = DfiCommonConstants.DEFAULT_FIFO_DEPTH * DfiCommonConstants.FIFO_DEPTH + DfiCommonConstants.FIFO_DEPTH))
 
     // Configure and connect DQS OSERDES for each byte lane
     for (((serdes, delay), i) <- oserdesVec.zip(odelayVec).zipWithIndex) {
@@ -935,7 +938,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
       serdes.RST := io.ctrl.reset
       serdes.CLK := io.clk4x
       serdes.CLKDIV := io.clk4x // Use 4x clock divided by 4 internally
-      serdes.D      := BitSlip(pattern.io.output, 2, io.phyCtrl.bitslip)
+      serdes.D      := BitSlip(pattern.io.output, phaseSelectWidth, io.phyCtrl.bitslip)
       serdes.T      := ~delayLine.last
 
       // Configure delay line with proper reset and control signals
@@ -943,11 +946,11 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
       delay.CLK := io.clk4x
       // EN_VTC follows same control logic as clockGen delay
       delay.EN_VTC := io.dfi.update.ctrlupdAck && !trainingParams.trainingActive
-      delay.CE := io.phyCtrl.dq_inc & io.phyCtrl.dly_sel(i / 8) // Proper flattened phyCtrl signals
+      delay.CE := io.phyCtrl.dqInc & io.phyCtrl.dlySel(i / byteWidth) // Proper flattened phyCtrl signals
       delay.INC := True // Always increment (decrement handled by reset+increment)
       delay.ODATAIN := serdes.OQ
       // Fixed: Add missing CNTVALUEIN to prevent NO DRIVER ON error
-      delay.CNTVALUEIN := U(0, 9 bits) // Default to no additional delay
+      delay.CNTVALUEIN := U(0, delayCounterWidth bits) // Default to no additional delay
       // Fixed: Add missing cascade and load ports to match simulation stubs
       // Note: CASC_OUT is output port, leave unconnected in standalone mode
       if(delay.cascade != "NONE") {
@@ -1008,12 +1011,12 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
 
     // Pre-compute burst ordering for better timing
     switch(burstLength) {
-      is(4) { // BL4: 0,1,2,3
-        for (i <- 0 until 4) burstOrderReg(i) := U(i)
-        for (i <- 4 until maxBurstLength) burstOrderReg(i) := U(0)
+      is(stableCounterWidth) { // BL4: 0,1,2,3
+        for (i <- 0 until stableCounterWidth) burstOrderReg(i) := U(i)
+        for (i <- stableCounterWidth until maxBurstLength) burstOrderReg(i) := U(0)
       }
-      is(8) { // BL8: 0,1,2,3,4,5,6,7
-        for (i <- 0 until 8) burstOrderReg(i) := U(i)
+      is(DfiCommonConstants.BYTE_WIDTH) { // BL8: 0,1,2,3,4,5,6,7
+        for (i <- 0 until DfiCommonConstants.BYTE_WIDTH) burstOrderReg(i) := U(i)
       }
       default { // Default to sequential
         for (i <- 0 until maxBurstLength) burstOrderReg(i) := U(i)
@@ -1031,53 +1034,53 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     val dmOserdes = Seq.fill(dfiConfig.dataWidth / 8)(new OSERDESE3(hasTristate = true))
 
     // Data reordering for burst - optimized with pipelining
-    val reorderedWrData = Vec.fill(dfiConfig.dataWidth)(Reg(Bits(8 bits)) init(0))
-    val reorderedWrMask = Vec.fill(dfiConfig.dataWidth / 8)(Reg(Bits(8 bits)) init(0))
+    val reorderedWrData = Vec.fill(dfiConfig.dataWidth)(Reg(Bits(byteWidth bits)) init(0))
+    val reorderedWrMask = Vec.fill(dfiConfig.dataWidth / byteWidth)(Reg(Bits(byteWidth bits)) init(0))
 
     // Initialize with current data (no reordering for now - can be enhanced later)
     for (i <- 0 until dfiConfig.dataWidth) {
-      val byteIndex = i / 8
-      val bitIndex = i % 8
+      val byteIndex = i / byteWidth
+      val bitIndex = i % byteWidth
       // Add bounds checking to prevent IndexOutOfBoundsException
       if (byteIndex < wrData.length) {
         // Fixed: Ensure proper bit range within data width
-        val maxBit = if (bitIndex * 8 + 7 < wrData(byteIndex).getWidth) bitIndex * 8 + 7 else wrData(byteIndex).getWidth - 1
-        val minBit = bitIndex * 8
+        val maxBit = if (bitIndex * byteWidth + (byteWidth - 1) < wrData(byteIndex).getWidth) bitIndex * byteWidth + (byteWidth - 1) else wrData(byteIndex).getWidth - 1
+        val minBit = bitIndex * byteWidth
         if (minBit <= maxBit) {
-          reorderedWrData(i) := wrData(byteIndex)(maxBit downto minBit).resize(8)
+          reorderedWrData(i) := wrData(byteIndex)(maxBit downto minBit).resize(byteWidth)
         } else {
-          reorderedWrData(i) := B(0, 8 bits)
+          reorderedWrData(i) := B(0, byteWidth bits)
         }
       } else {
         // Default to first byte if out of bounds (safe fallback)
         if (wrData.nonEmpty) {
-          val maxBit = if (bitIndex * 8 + 7 < wrData(0).getWidth) bitIndex * 8 + 7 else wrData(0).getWidth - 1
-          val minBit = bitIndex * 8
+          val maxBit = if (bitIndex * byteWidth + (byteWidth - 1) < wrData(0).getWidth) bitIndex * byteWidth + (byteWidth - 1) else wrData(0).getWidth - 1
+          val minBit = bitIndex * byteWidth
           if (minBit <= maxBit) {
-            reorderedWrData(i) := wrData(0)(maxBit downto minBit).resize(8)
+            reorderedWrData(i) := wrData(0)(maxBit downto minBit).resize(byteWidth)
           } else {
-            reorderedWrData(i) := B(0, 8 bits)
+            reorderedWrData(i) := B(0, byteWidth bits)
           }
         } else {
-          reorderedWrData(i) := B(0, 8 bits)
+          reorderedWrData(i) := B(0, byteWidth bits)
         }
       }
     }
     // Fixed: Ensure proper width for write mask
-    for (i <- 0 until dfiConfig.dataWidth / 8) {
+    for (i <- 0 until dfiConfig.dataWidth / byteWidth) {
       if (i < wrDataMask.getWidth) {
         // Use proper bit extraction and width matching
         val maskBit = wrDataMask(i).asBits
-        reorderedWrMask(i) := maskBit.resize(8)
+        reorderedWrMask(i) := maskBit.resize(byteWidth)
       } else {
-        reorderedWrMask(i) := B(0, 8 bits)
+        reorderedWrMask(i) := B(0, byteWidth bits)
       }
     }
 
     // Configure and connect DQ OSERDES to pads - optimized configuration
     for(((osd, data), i) <- dqOserdes.zip(reorderedWrData).zipWithIndex) {
       // Configure OSERDES - shared parameters
-      val dataBitslip = BitSlip(data, 2, io.phyCtrl.bitslip)
+      val dataBitslip = BitSlip(data, phaseSelectWidth, io.phyCtrl.bitslip)
       osd.D := dataBitslip
       osd.CLK := io.clk4x
       osd.CLKDIV := io.clk4x
@@ -1097,7 +1100,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // Configure and connect DM OSERDES to pads - optimized
     for(((dmOsd, mask), i) <- dmOserdes.zip(reorderedWrMask).zipWithIndex) {
       // Configure OSERDES for DM - shared parameters
-      val maskBitslip = BitSlip(mask, 2, io.phyCtrl.bitslip)
+      val maskBitslip = BitSlip(mask, phaseSelectWidth, io.phyCtrl.bitslip)
       dmOsd.D := maskBitslip
       dmOsd.CLK := io.clk4x
       dmOsd.CLKDIV := io.clk4x
@@ -1113,7 +1116,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // ==========================================================================
     // Read data deserialization components - shared configuration
     val rdIserdes = Seq.fill(dfiConfig.dataWidth)(new ISERDESE3(fifoEnable = true))
-    val rdDelay = Seq.fill(dfiConfig.dataWidth)(new IDELAYE3(delayType = "VARIABLE", refClkFrequency = 200))
+    val rdDelay = Seq.fill(dfiConfig.dataWidth)(new IDELAYE3(delayType = "VARIABLE", refClkFrequency = DfiCommonConstants.DEFAULT_FIFO_DEPTH * DfiCommonConstants.FIFO_DEPTH + DfiCommonConstants.FIFO_DEPTH))
 
     // DQS gating for read path - pipelined
     val dqsGate = Reg(Bool()) init(False)
@@ -1121,7 +1124,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
 
     // Read timing control - generate read data valid based on read commands - optimized
     val readCommandActive = RegInit(False)
-    val readDataValidDelay = Vec.fill(8)(RegInit(False)) // Individual registers for better LUT optimization
+    val readDataValidDelay = Vec.fill(DfiCommonConstants.BYTE_WIDTH)(RegInit(False)) // Individual registers for better LUT optimization
     
 
     // Detect read command from DFI interface - pipelined
@@ -1168,10 +1171,10 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
 
     for (((serdes, delay), i) <- rdIserdes.zip(rdDelay).zipWithIndex) {
       // Configure delay line with proper reset and control signals - shared parameters
-      delay.RST := io.ctrl.reset | io.phyCtrl.dq_rst
+      delay.RST := io.ctrl.reset | io.phyCtrl.dqRst
       delay.CLK := io.clk4x
       delay.EN_VTC := enVtcShared
-      delay.CE := io.phyCtrl.dq_inc && io.phyCtrl.dly_sel(i / 8)
+      delay.CE := io.phyCtrl.dqInc && io.phyCtrl.dlySel(i / 8)
       delay.INC := True
       // Fixed: Drive both DATAIN and IDATAIN to prevent NO DRIVER ON error
       delay.DATAIN := io.pads.dq(i)  // Primary data input
@@ -1202,7 +1205,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
 
     // Connect read data to DFI interface with proper timing - optimized
     for((serdes, data) <- rdIserdes.zip(rdData)) {
-      val deserializedData = BitSlip(serdes.Q, 2, io.phyCtrl.bitslip)
+      val deserializedData = BitSlip(serdes.Q, phaseSelectWidth, io.phyCtrl.bitslip)
       // Fixed: Ensure proper width matching for read data
       val maskedData = deserializedData & (rdDataValid.asBits.resize(deserializedData.getWidth))
       data := maskedData.resize(data.getWidth) // Ensure proper width for DFI interface
@@ -1430,7 +1433,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
   // Now that dataPath and cmdPath are defined, complete the trainingCtrl initialization
   trainingCtrl.writeLevelingSampledData := RegNext(dataPath.rdIserdes(0).Q(7 downto 0)) init(B(0, 8 bits)) // Sample first byte lane for write leveling
   trainingCtrl.readGateSampledData := RegNext(dataPath.rdIserdes(0).Q(7 downto 0)) init(B(0, 8 bits)) // Sample first byte lane for read gate training
-  for (i <- 0 until HardwareWidths.PHASE_COUNT) {
+  for (i <- 0 until phaseCount) {
     val byteIndex = (i * DDR3TimingConstants.TRAINING_DISTRIBUTOR) % (dfiConfig.dataWidth / 8) // Distribute across available byte lanes
     if (byteIndex < dataPath.rdIserdes.length) {
       trainingCtrl.readEyeSampledData(i) := RegNext(dataPath.rdIserdes(byteIndex).Q(7 downto 0)) init(B(0, 8 bits))
@@ -1491,7 +1494,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
 
   // Instantiate TrainingController only if training is enabled to avoid hierarchy violations
   if (dfiConfig.useWrlvlEn || dfiConfig.useRdlvlEn || dfiConfig.useRdlvlGateEn || dfiConfig.useCalvlEn) {
-    trainingCtrl.controller = new TrainingController(dfiConfig)
+    trainingCtrl.controller = new TrainingController(dfiConfig, phyConfig)
 
     // Connect input signals to controller io
     trainingCtrl.controller.io.initDone := initManager.initComplete
@@ -1558,13 +1561,10 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
   io.phyCtrl.trainingCdlyInc := False // Training disabled - no increment
   io.phyCtrl.trainingDqInc := False // Training disabled - no increment
   io.phyCtrl.trainingBitslip := False // Training disabled - no bitslip
-  io.phyCtrl.cdly_value := trainingInterfaceArea.bufferedCdlyValue
+  io.phyCtrl.cdlyValue := trainingInterfaceArea.bufferedCdlyValue
 
   // Add missing output signal assignments
-  io.phyCtrl.dly_dq_value := U(0, 9 bits) // Default DQ delay value when training disabled
-  io.phyCtrl.training_cdly_inc := False // Training disabled - no increment (underscore naming)
-  io.phyCtrl.training_dq_inc := False // Training disabled - no increment (underscore naming)
-  io.phyCtrl.training_bitslip := False // Training disabled - no bitslip (underscore naming)
+  io.phyCtrl.dlyDqValue := U(0, delayCounterWidth bits) // Default DQ delay value when training disabled
   io.phyCtrl.cke := True // Clock enable - always enabled when training is disabled
   io.phyCtrl.initDone := initManager.initComplete // Initialization status
   io.phyCtrl.resetN := io.ctrl.reset // Reset signal
@@ -1772,7 +1772,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     val powerDownEnable = configParams.autoPowerDown && !io.dfi.control.cke.orR
 
     // Low power state machine
-    val lpState = RegInit(U(0, 2 bits)) // 0: active, 1: clock gated, 2: power down
+    val lpState = RegInit(U(0, phaseSelectWidth bits)) // 0: active, 1: clock gated, 2: power down
     switch(lpState) {
       is(U(0)) { // Active
         when(clockGateEnable) { lpState := U(1) }
