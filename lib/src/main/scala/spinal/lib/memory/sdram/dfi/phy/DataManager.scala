@@ -139,10 +139,8 @@ case class DataProcessor(config: DataManagerConfig,
   processedData.write.last := writeBuffer.io.pop.payload.last
   processedData.write.dqs := writeBuffer.io.pop.payload.dqs
   processedData.write.dqs_n := writeBuffer.io.pop.payload.dqs_n
-  // 避免组合环路：使用寄存器来缓冲valid信号
-  val writeValidReg = Reg(Bool()) init False
-  writeValidReg := processedData.write.valid
-  writeBuffer.io.pop.ready := writeValidReg
+  // 修复组合环路：直接使用时序控制信号
+  writeBuffer.io.pop.ready := timing.dataReady
 
   // 修复组合环路：processedData.read.ready 应该是外部输入，表示下游准备好接收数据
   // readBuffer.io.pop.ready 基于时序控制和下游准备状态
@@ -151,10 +149,8 @@ case class DataProcessor(config: DataManagerConfig,
   processedData.read.last := readBuffer.io.pop.payload.last
   processedData.read.dqs := readBuffer.io.pop.payload.dqs
   processedData.read.dqs_n := readBuffer.io.pop.payload.dqs_n
-  // 避免组合环路：使用寄存器来缓冲ready信号
-  val readReadyReg = Reg(Bool()) init False
-  readReadyReg := processedData.read.ready
-  readBuffer.io.pop.ready := readReadyReg && timing.dataValid
+  // 修复组合环路：直接使用时序控制和下游准备状态
+  readBuffer.io.pop.ready := processedData.read.ready && timing.dataValid
 
   // 数据格式转换器 - 从DataPath合并
   // TODO: 需要实现DataFormatter和DataPathConfig

@@ -6,6 +6,52 @@ import spinal.lib.fsm.{StateMachine, State, EntryPoint}
 import spinal.lib.blackbox.xilinx.ultrascale._
 import spinal.lib.memory.sdram.dfi._
 
+// Hardware width constants (REQ-CS-013 compliance)
+object HardwareWidths {
+  val BYTE = 8
+  val PATTERN_SEL = 2
+  val COUNTER_16 = 16
+  val COUNTER_9 = 9
+  val COUNTER_8 = 8
+  val COUNTER_6 = 6
+  val COUNTER_5 = 5
+  val COUNTER_4 = 4
+  val COUNTER_3 = 3
+  val RESPONSE_1 = 1
+  val RESPONSE_2 = 2
+  val PHASE_COUNT = 4
+}
+
+// DQS pattern generator functions to avoid dangling references
+object DQSPatterns {
+  def DEFAULT: Bits = B"01010101"
+  def ALTERNATING: Bits = B"10101010"
+  def PREAMBLE: Bits = B"00010101"
+  def POSTAMBLE: Bits = B"01010100"
+  def STROBE: Bits = B"00000001"
+}
+
+// Timing constants
+object TimingConstants {
+  val STABLE_CYCLES_3 = 3
+  val STABLE_CYCLES_4 = 4
+  val STABLE_CYCLES_8 = 8
+  val GATE_POSITIONS = 32
+  val EYE_MAX_DELAY = 256
+  val CA_MAX_DELAY = 256
+  val TIMEOUT_100 = 100
+}
+
+// DDR3 JEDEC timing constants
+object DDR3TimingConstants {
+  val TRCD = 13  // ACT to READ/WRITE delay (cycles)
+  val TRP = 13   // PRE to ACT delay (cycles)
+  val TRFC = 160 // REFRESH to ACT delay (cycles)
+  val TMRD = 4   // MRS to MRS delay (cycles)
+  val TZQCS = 64 // ZQCS calibration time (cycles)
+  val TRRD = 4   // Row to Row Delay for different ranks (cycles)
+}
+
 // DDR commands enum (package-level)
 object DdrCmd extends SpinalEnum {
   val NOP, ACT, READ, WRITE, PRE, REF, MRS, ZQCS = newElement()
@@ -32,6 +78,44 @@ object BitSlip {
   }
 }
 
+// Shared command decoding function to eliminate code duplication (REQ-CS-038)
+object DdrCommandDecoder {
+  def decodeCommand(dfiRasNor: Bool, dfiCasNor: Bool, dfiWeNor: Bool, dfiActNor: Bool,
+                    dfiAddress: UInt, addressWidth: Int): SpinalEnumCraft[DdrCmd.type] = {
+    val decodedCmd = DdrCmd()
+
+    when((dfiRasNor === False) && (dfiCasNor === True) && (dfiWeNor === True) && (dfiActNor === False)) {
+      decodedCmd := DdrCmd.ACT  // ACT: RAS=0, CAS=1, WE=1, ACT=0
+    } elsewhen((dfiRasNor === True) && (dfiCasNor === False) && (dfiWeNor === True)) {
+      decodedCmd := DdrCmd.READ // READ: RAS=1, CAS=0, WE=1
+    } elsewhen((dfiRasNor === True) && (dfiCasNor === False) && (dfiWeNor === False)) {
+      decodedCmd := DdrCmd.WRITE // WRITE: RAS=1, CAS=0, WE=0
+    } elsewhen((dfiRasNor === False) && (dfiCasNor === False) && (dfiWeNor === True)) {
+      decodedCmd := DdrCmd.PRE  // PRE: RAS=0, CAS=0, WE=1
+    } elsewhen((dfiRasNor === False) && (dfiCasNor === False) && (dfiWeNor === False)) {
+      // MRS/ZQCS/REF discrimination based on address
+      val addrBits = if (addressWidth >= 16) {
+        dfiAddress(15 downto 14)
+      } else if (addressWidth >= 15) {
+        dfiAddress(14 downto 13) // Use bits 14:13 for 15-bit addresses
+      } else {
+        B"00" // Default for smaller addresses
+      }
+      when(addrBits === U"2'b11") {
+        decodedCmd := DdrCmd.ZQCS // ZQCS: A15:A14 = 11
+      } elsewhen(addrBits === U"2'b10") {
+        decodedCmd := DdrCmd.REF  // REF: A15:A14 = 10
+      } otherwise {
+        decodedCmd := DdrCmd.MRS  // MRS: A15:A14 = 00 or 01
+      }
+    } otherwise {
+      decodedCmd := DdrCmd.NOP
+    }
+
+    decodedCmd
+  }
+}
+
 // Signal mapping helper - package-level pure-Scala case class (allowed by REQ-CS-037)
 case class SignalMapping(padSignal: Bool, dfiSource: Bits)
 
@@ -42,12 +126,12 @@ class DQSPattern(register: Boolean = false) extends Component {
     val postamble = in Bool ()
     val wlevel_en = in Bool ()
     val wlevel_strobe = in Bool ()
-    val output = out Bits (8 bits)
+    val output = out Bits (HardwareWidths.BYTE bits)
   }
 
   // Pattern generation logic - optimized with lookup table
-  val pattern = Bits(8 bits)
-  val patternSel = UInt(2 bits)
+  val pattern = Bits(HardwareWidths.BYTE bits)
+  val patternSel = UInt(HardwareWidths.PATTERN_SEL bits)
 
   // Encode pattern selection for better LUT usage
   when(io.wlevel_en) {
@@ -62,15 +146,15 @@ class DQSPattern(register: Boolean = false) extends Component {
 
   // Lookup table for patterns - reduces LUT usage
   switch(patternSel) {
-    is(U"00") { pattern := B"01010101" } // 0x55
-    is(U"01") { pattern := B"00000001" } // 0x01
-    is(U"10") { pattern := B"00010101" } // 0x15
-    is(U"11") { pattern := B"01010100" } // 0x54
+    is(U"00") { pattern := DQSPatterns.DEFAULT } // 0x55
+    is(U"01") { pattern := DQSPatterns.STROBE } // 0x01
+    is(U"10") { pattern := DQSPatterns.PREAMBLE } // 0x15
+    is(U"11") { pattern := DQSPatterns.POSTAMBLE } // 0x54
   }
 
   // Optional registered output - optimized
   if (register) {
-    val reg = Reg(Bits(8 bits)) init (B"01010101")
+    val reg = Reg(Bits(HardwareWidths.BYTE bits)) init (DQSPatterns.DEFAULT)
     reg := pattern
     io.output := reg
   } else {
@@ -82,35 +166,35 @@ class DQSPattern(register: Boolean = false) extends Component {
 class DdrCommandGenerator(dfiConfig: DfiConfig) extends Component {
   // Use the shared DdrCmd enum from the parent class
 
-  // Command timing parameters (JEDEC DDR3) - optimized with constants to reduce LUT usage
-  val tRCD = 13  // ACT to READ/WRITE delay (cycles)
-  val tRP = 13   // PRE to ACT delay (cycles)
-  val tRFC = 160 // REFRESH to ACT delay (cycles)
-  val tMRD = 4   // MRS to MRS delay (cycles)
-  val tZQCS = 64 // ZQCS calibration time (cycles)
+  // Command timing parameters (JEDEC DDR3) - use named constants
+  val tRCD = DDR3TimingConstants.TRCD
+  val tRP = DDR3TimingConstants.TRP
+  val tRFC = DDR3TimingConstants.TRFC
+  val tMRD = DDR3TimingConstants.TMRD
+  val tZQCS = DDR3TimingConstants.TZQCS
 
   // Pre-compute timing constants for better resource usage
-  val tRCD_U = U(tRCD, 8 bits)
-  val tRP_U = U(tRP, 8 bits)
-  val tRFC_U = U(tRFC, 9 bits)
-  val tMRD_U = U(tMRD, 3 bits)
-  val tZQCS_U = U(tZQCS, 7 bits)
+  val tRCD_U = U(tRCD, HardwareWidths.BYTE bits)
+  val tRP_U = U(tRP, HardwareWidths.BYTE bits)
+  val tRFC_U = U(tRFC, HardwareWidths.COUNTER_9 bits)
+  val tMRD_U = U(tMRD, HardwareWidths.COUNTER_3 bits)
+  val tZQCS_U = U(tZQCS, HardwareWidths.COUNTER_8 bits)
 
   // Command state tracking - pipelined
   val lastCommand = Reg(DdrCmd()) init(DdrCmd.NOP)
-  val commandTimer = Reg(UInt(16 bits)) init(0)
+  val commandTimer = Reg(UInt(HardwareWidths.COUNTER_16 bits)) init(0)
   val commandValid = Reg(Bool()) init(False)
 
   // Multi-chip select support
   val activeChipSelect = Reg(UInt(log2Up(dfiConfig.chipSelectNumber) bits)) init(0)
 
-  // Rank-to-rank timing parameters - optimized constant
-  val tRRD = 4 // Row to Row Delay for different ranks (cycles)
-  val tRRD_U = U(tRRD, 3 bits)
+  // Rank-to-rank timing parameters - use named constants
+  val tRRD = DDR3TimingConstants.TRRD
+  val tRRD_U = U(tRRD, HardwareWidths.COUNTER_3 bits)
 
   // Rank-specific timing tracking for multi-device support
   val rankLastCommand = Vec.fill(dfiConfig.chipSelectNumber)(Reg(DdrCmd()) init(DdrCmd.NOP))
-  val rankCommandTimer = Vec.fill(dfiConfig.chipSelectNumber)(Reg(UInt(16 bits)) init(0))
+  val rankCommandTimer = Vec.fill(dfiConfig.chipSelectNumber)(Reg(UInt(HardwareWidths.COUNTER_16 bits)) init(0))
 
   // Command generation logic - pipelined for timing
   val currentCmd = Reg(DdrCmd()) init(DdrCmd.NOP)
@@ -121,21 +205,29 @@ class DdrCommandGenerator(dfiConfig: DfiConfig) extends Component {
   val cmdOdt = Reg(Bits(dfiConfig.chipSelectNumber bits)) init(0)
   val cmdResetN = Reg(Bits(dfiConfig.chipSelectNumber bits)) init(0)
 
-  // Initialization command inputs
-  val initCmdValid = in Bool()
-  val initCmd = in(DdrCmd())
-  val initAddr = in(Bits(dfiConfig.addressWidth bits))
-  val initBa = in(Bits(dfiConfig.bankWidth bits))
-  val initCsN = in(Bits(dfiConfig.chipSelectNumber bits))
-  val initCke = in(Bits(dfiConfig.chipSelectNumber bits))
-  val initOdt = in(Bits(dfiConfig.chipSelectNumber bits))
-  val initResetN = in(Bits(dfiConfig.chipSelectNumber bits))
+  // Initialization command inputs - changed to regular signals to allow external assignment
+  val initCmdValid = Bool()
+  initCmdValid := False  // Default assignment to prevent latches
+  val initCmd = DdrCmd()
+  initCmd := DdrCmd.NOP  // Default assignment
+  val initAddr = Bits(dfiConfig.addressWidth bits)
+  initAddr := B(0, dfiConfig.addressWidth bits)  // Default assignment
+  val initBa = Bits(dfiConfig.bankWidth bits)
+  initBa := B(0, dfiConfig.bankWidth bits)  // Default assignment
+  val initCsN = Bits(dfiConfig.chipSelectNumber bits)
+  initCsN := B((BigInt(1) << dfiConfig.chipSelectNumber) - 1, dfiConfig.chipSelectNumber bits)  // Default to inactive
+  val initCke = Bits(dfiConfig.chipSelectNumber bits)
+  initCke := B(0, dfiConfig.chipSelectNumber bits)  // Default assignment
+  val initOdt = Bits(dfiConfig.chipSelectNumber bits)
+  initOdt := B(0, dfiConfig.chipSelectNumber bits)  // Default assignment
+  val initResetN = Bits(dfiConfig.chipSelectNumber bits)
+  initResetN := B((BigInt(1) << dfiConfig.chipSelectNumber) - 1, dfiConfig.chipSelectNumber bits)  // Default to inactive
 
-  // DFI inputs
-  val dfiRasN_or = in Bool()
-  val dfiCasN_or = in Bool()
-  val dfiWeN_or = in Bool()
-  val dfiActN_or = in Bool()
+  // DFI inputs - input ports cannot have default assignments
+  val dfiRasNor = in Bool()
+  val dfiCasNor = in Bool()
+  val dfiWeNor = in Bool()
+  val dfiActNor = in Bool()
   val dfiAddress = in(UInt(dfiConfig.addressWidth bits))
   val dfiCsN = in(Bits(dfiConfig.chipSelectNumber bits))
   val dfiBank = in(Bits(dfiConfig.bankWidth bits))
@@ -143,7 +235,7 @@ class DdrCommandGenerator(dfiConfig: DfiConfig) extends Component {
   val dfiOdt = in(Bits(dfiConfig.chipSelectNumber bits))
   val dfiResetN = in(Bits(dfiConfig.chipSelectNumber bits))
 
-  // Control signals
+  // Control signals - input ports cannot have default assignments
   val padOverride = in Bool()
 
   // Pipeline stage 2: Command decoding with registered inputs or init override
@@ -163,34 +255,11 @@ class DdrCommandGenerator(dfiConfig: DfiConfig) extends Component {
     cmdResetN := initResetN
     commandValid := initCmdValid
   } otherwise {
-    // Normal DFI command decoding
-    when((dfiRasN_or === False) && (dfiCasN_or === True) && (dfiWeN_or === True) && (dfiActN_or === False)) {
-      decodedCmd := DdrCmd.ACT  // ACT: RAS=0, CAS=1, WE=1, ACT=0
-    } elsewhen((dfiRasN_or === True) && (dfiCasN_or === False) && (dfiWeN_or === True)) {
-      decodedCmd := DdrCmd.READ // READ: RAS=1, CAS=0, WE=1
-    } elsewhen((dfiRasN_or === True) && (dfiCasN_or === False) && (dfiWeN_or === False)) {
-      decodedCmd := DdrCmd.WRITE // WRITE: RAS=1, CAS=0, WE=0
-    } elsewhen((dfiRasN_or === False) && (dfiCasN_or === False) && (dfiWeN_or === True)) {
-      decodedCmd := DdrCmd.PRE  // PRE: RAS=0, CAS=0, WE=1
-    } elsewhen((dfiRasN_or === False) && (dfiCasN_or === False) && (dfiWeN_or === False)) {
-      // MRS/ZQCS/REF discrimination based on address
-      val addrBits = if (dfiAddress.getWidth >= 16) {
-        dfiAddress(15 downto 14)
-      } else if (dfiAddress.getWidth >= 15) {
-        dfiAddress(14 downto 13) // Use bits 14:13 for 15-bit addresses
-      } else {
-        B"00" // Default for smaller addresses
-      }
-      when(addrBits === U"2'b11") {
-        decodedCmd := DdrCmd.ZQCS // ZQCS: A15:A14 = 11
-      } elsewhen(addrBits === U"2'b10") {
-        decodedCmd := DdrCmd.REF  // REF: A15:A14 = 10
-      } otherwise {
-        decodedCmd := DdrCmd.MRS  // MRS: A15:A14 = 00 or 01
-      }
-    } otherwise {
-      decodedCmd := DdrCmd.NOP
-    }
+    // Normal DFI command decoding using shared function (REQ-CS-038)
+    decodedCmd := DdrCommandDecoder.decodeCommand(
+      dfiRasNor, dfiCasNor, dfiWeNor, dfiActNor,
+      dfiAddress, dfiConfig.addressWidth
+    )
 
     // Pipeline stage 3: Register decoded command and generate outputs - optimized
     val decodedCmdReg = RegNext(decodedCmd) init(DdrCmd.NOP)
@@ -384,34 +453,54 @@ class CmdSignalHandler(dfiConfig: DfiConfig) extends Component {
     }
   }
 
+  // IO interface for external signals
+  val io = new Bundle {
+    // Interface for external DFI signals
+    val dfi = new Bundle {
+      val rasNor = in Bool()
+      val casNor = in Bool()
+      val weNor = in Bool()
+      val actNor = in Bool()
+      val address = in UInt(dfiConfig.addressWidth bits)
+      val csN = in Bits(dfiConfig.chipSelectNumber bits)
+      val bank = in Bits(dfiConfig.bankWidth bits)
+      val cke = in Bits(dfiConfig.chipSelectNumber bits)
+      val odt = in Bits(dfiConfig.chipSelectNumber bits)
+      val resetN = in Bits(dfiConfig.chipSelectNumber bits)
+    }
+
+    // Interface for initialization commands
+    val init = new Bundle {
+      val cmdValid = in Bool()
+      val cmd = in(DdrCmd())
+      val addr = in(Bits(dfiConfig.addressWidth bits))
+      val ba = in(Bits(dfiConfig.bankWidth bits))
+      val csN = in(Bits(dfiConfig.chipSelectNumber bits))
+      val cke = in(Bits(dfiConfig.chipSelectNumber bits))
+      val odt = in(Bits(dfiConfig.chipSelectNumber bits))
+      val resetN = in(Bits(dfiConfig.chipSelectNumber bits))
+    }
+
+    // Control signals
+    val padOverride = in Bool()
+  }
+
   // Instantiate DDR command generator
   val cmdGen = new DdrCommandGenerator(dfiConfig)
 
-  // DFI interface signals - extracted as inputs to avoid hierarchy violations
-  val dfiRasN_or = in Bool()
-  val dfiCasN_or = in Bool()
-  val dfiWeN_or = in Bool()
-  val dfiActN_or = in Bool()
-  val dfiAddress = in UInt(dfiConfig.addressWidth bits)
-  val dfiCsN = in Bits(dfiConfig.chipSelectNumber bits)
-  val dfiBank = in Bits(dfiConfig.bankWidth bits)
-  val dfiCke = in Bits(dfiConfig.chipSelectNumber bits)
-  val dfiOdt = in Bits(dfiConfig.chipSelectNumber bits)
-  val dfiResetN = in Bits(dfiConfig.chipSelectNumber bits)
-  
   val pads = out(new SdramIO(dfiConfig))
 
   // Connect DFI signals to command generator
-  cmdGen.dfiRasN_or := dfiRasN_or
-  cmdGen.dfiCasN_or := dfiCasN_or
-  cmdGen.dfiWeN_or := dfiWeN_or
-  cmdGen.dfiActN_or := dfiActN_or
-  cmdGen.dfiAddress := dfiAddress
-  cmdGen.dfiCsN := dfiCsN
-  cmdGen.dfiBank := dfiBank
-  cmdGen.dfiCke := dfiCke
-  cmdGen.dfiOdt := dfiOdt
-  cmdGen.dfiResetN := dfiResetN
+  cmdGen.dfiRasNor := io.dfi.rasNor
+  cmdGen.dfiCasNor := io.dfi.casNor
+  cmdGen.dfiWeNor := io.dfi.weNor
+  cmdGen.dfiActNor := io.dfi.actNor
+  cmdGen.dfiAddress := io.dfi.address
+  cmdGen.dfiCsN := io.dfi.csN
+  cmdGen.dfiBank := io.dfi.bank
+  cmdGen.dfiCke := io.dfi.cke
+  cmdGen.dfiOdt := io.dfi.odt
+  cmdGen.dfiResetN := io.dfi.resetN
 
   // Synchronize DFI inputs for better timing - avoid direct access to child component signals
   val cmdAddressReg = Reg(Bits(dfiConfig.addressWidth bits)) init(0)
@@ -419,8 +508,8 @@ class CmdSignalHandler(dfiConfig: DfiConfig) extends Component {
   val commandValidReg = Reg(Bool()) init(False)
   
   // Update registers from DFI signals directly
-  cmdAddressReg := dfiAddress.asBits
-  cmdBankReg := dfiBank
+  cmdAddressReg := io.dfi.address.asBits
+  cmdBankReg := io.dfi.bank
   commandValidReg := True // Always valid when DFI signals are present
   
   val syncedAddressBits = RegNextWhen(cmdAddressReg, commandValidReg)
@@ -446,8 +535,8 @@ class CmdSignalHandler(dfiConfig: DfiConfig) extends Component {
   for (i <- 0 until dfiConfig.addressWidth) {
     val addressSignal = Bool()
     // Fixed: Use init override during initialization to align with LiteX semantics
-    when(cmdGen.padOverride) {
-      addressSignal := cmdGen.initAddr(i)
+    when(io.padOverride) {
+      addressSignal := io.init.addr(i)
     } otherwise {
       addressSignal := syncedAddressBits(i)
     }
@@ -459,8 +548,8 @@ class CmdSignalHandler(dfiConfig: DfiConfig) extends Component {
     for (i <- 0 until dfiConfig.bankWidth) {
       val bankSignal = Bool()
       // Fixed: Use init override during initialization to align with LiteX semantics
-      when(cmdGen.padOverride) {
-        bankSignal := cmdGen.initBa(i)
+      when(io.padOverride) {
+        bankSignal := io.init.ba(i)
       } otherwise {
         bankSignal := syncedBankBits(i)
       }
@@ -472,28 +561,12 @@ class CmdSignalHandler(dfiConfig: DfiConfig) extends Component {
   if (dfiConfig.signalConfig.useRasN) {
     val rasN = Bits(dfiConfig.controlWidth bits)
     val currentCmdReg = Reg(DdrCmd()) init(DdrCmd.NOP)
-    
-    // Decode command from DFI signals directly
-    when((dfiRasN_or === False) && (dfiCasN_or === True) && (dfiWeN_or === True) && (dfiActN_or === False)) {
-      currentCmdReg := DdrCmd.ACT
-    } elsewhen((dfiRasN_or === True) && (dfiCasN_or === False) && (dfiWeN_or === True)) {
-      currentCmdReg := DdrCmd.READ
-    } elsewhen((dfiRasN_or === True) && (dfiCasN_or === False) && (dfiWeN_or === False)) {
-      currentCmdReg := DdrCmd.WRITE
-    } elsewhen((dfiRasN_or === False) && (dfiCasN_or === False) && (dfiWeN_or === True)) {
-      currentCmdReg := DdrCmd.PRE
-    } elsewhen((dfiRasN_or === False) && (dfiCasN_or === False) && (dfiWeN_or === False)) {
-      val addrBits = dfiAddress(15 downto 14)
-      when(addrBits === U"2'b11") {
-        currentCmdReg := DdrCmd.ZQCS
-      } elsewhen(addrBits === U"2'b10") {
-        currentCmdReg := DdrCmd.REF
-      } otherwise {
-        currentCmdReg := DdrCmd.MRS
-      }
-    } otherwise {
-      currentCmdReg := DdrCmd.NOP
-    }
+
+    // Decode command from DFI signals using shared function (REQ-CS-038)
+    currentCmdReg := DdrCommandDecoder.decodeCommand(
+      io.dfi.rasNor, io.dfi.casNor, io.dfi.weNor, io.dfi.actNor,
+      io.dfi.address, dfiConfig.addressWidth
+    )
     
     switch(currentCmdReg) {
       is(DdrCmd.ACT, DdrCmd.PRE, DdrCmd.REF, DdrCmd.MRS, DdrCmd.ZQCS) {
@@ -513,28 +586,12 @@ class CmdSignalHandler(dfiConfig: DfiConfig) extends Component {
   if (dfiConfig.signalConfig.useCasN) {
     val casN = Bits(dfiConfig.controlWidth bits)
     val currentCmdReg = Reg(DdrCmd()) init(DdrCmd.NOP)
-    
-    // Decode command from DFI signals directly (same logic as above)
-    when((dfiRasN_or === False) && (dfiCasN_or === True) && (dfiWeN_or === True) && (dfiActN_or === False)) {
-      currentCmdReg := DdrCmd.ACT
-    } elsewhen((dfiRasN_or === True) && (dfiCasN_or === False) && (dfiWeN_or === True)) {
-      currentCmdReg := DdrCmd.READ
-    } elsewhen((dfiRasN_or === True) && (dfiCasN_or === False) && (dfiWeN_or === False)) {
-      currentCmdReg := DdrCmd.WRITE
-    } elsewhen((dfiRasN_or === False) && (dfiCasN_or === False) && (dfiWeN_or === True)) {
-      currentCmdReg := DdrCmd.PRE
-    } elsewhen((dfiRasN_or === False) && (dfiCasN_or === False) && (dfiWeN_or === False)) {
-      val addrBits = dfiAddress(15 downto 14)
-      when(addrBits === U"2'b11") {
-        currentCmdReg := DdrCmd.ZQCS
-      } elsewhen(addrBits === U"2'b10") {
-        currentCmdReg := DdrCmd.REF
-      } otherwise {
-        currentCmdReg := DdrCmd.MRS
-      }
-    } otherwise {
-      currentCmdReg := DdrCmd.NOP
-    }
+
+    // Decode command from DFI signals using shared function (REQ-CS-038)
+    currentCmdReg := DdrCommandDecoder.decodeCommand(
+      io.dfi.rasNor, io.dfi.casNor, io.dfi.weNor, io.dfi.actNor,
+      io.dfi.address, dfiConfig.addressWidth
+    )
     
     switch(currentCmdReg) {
       is(DdrCmd.READ, DdrCmd.WRITE, DdrCmd.REF, DdrCmd.MRS, DdrCmd.ZQCS) {
@@ -554,28 +611,12 @@ class CmdSignalHandler(dfiConfig: DfiConfig) extends Component {
   if (dfiConfig.signalConfig.useWeN) {
     val weN = Bits(dfiConfig.controlWidth bits)
     val currentCmdReg = Reg(DdrCmd()) init(DdrCmd.NOP)
-    
-    // Decode command from DFI signals directly (same logic as above)
-    when((dfiRasN_or === False) && (dfiCasN_or === True) && (dfiWeN_or === True) && (dfiActN_or === False)) {
-      currentCmdReg := DdrCmd.ACT
-    } elsewhen((dfiRasN_or === True) && (dfiCasN_or === False) && (dfiWeN_or === True)) {
-      currentCmdReg := DdrCmd.READ
-    } elsewhen((dfiRasN_or === True) && (dfiCasN_or === False) && (dfiWeN_or === False)) {
-      currentCmdReg := DdrCmd.WRITE
-    } elsewhen((dfiRasN_or === False) && (dfiCasN_or === False) && (dfiWeN_or === True)) {
-      currentCmdReg := DdrCmd.PRE
-    } elsewhen((dfiRasN_or === False) && (dfiCasN_or === False) && (dfiWeN_or === False)) {
-      val addrBits = dfiAddress(15 downto 14)
-      when(addrBits === U"2'b11") {
-        currentCmdReg := DdrCmd.ZQCS
-      } elsewhen(addrBits === U"2'b10") {
-        currentCmdReg := DdrCmd.REF
-      } otherwise {
-        currentCmdReg := DdrCmd.MRS
-      }
-    } otherwise {
-      currentCmdReg := DdrCmd.NOP
-    }
+
+    // Decode command from DFI signals using shared function (REQ-CS-038)
+    currentCmdReg := DdrCommandDecoder.decodeCommand(
+      io.dfi.rasNor, io.dfi.casNor, io.dfi.weNor, io.dfi.actNor,
+      io.dfi.address, dfiConfig.addressWidth
+    )
     
     switch(currentCmdReg) {
       is(DdrCmd.WRITE, DdrCmd.PRE, DdrCmd.REF, DdrCmd.MRS, DdrCmd.ZQCS) {
@@ -594,10 +635,10 @@ class CmdSignalHandler(dfiConfig: DfiConfig) extends Component {
   // CS_N signals - always present (with init override support)
   val cmdCsNReg = Reg(Bits(dfiConfig.chipSelectNumber bits)) init(0)
   // Fixed: Use init override during initialization to align with LiteX semantics
-  when(cmdGen.padOverride) {
-    cmdCsNReg := cmdGen.initCsN
+  when(io.padOverride) {
+    cmdCsNReg := io.init.csN
   } otherwise {
-    cmdCsNReg := dfiCsN
+    cmdCsNReg := io.dfi.csN
   }
   val csNSignals = regroupSignals(cmdCsNReg, dfiConfig.chipSelectNumber)
   for (i <- 0 until dfiConfig.chipSelectNumber) {
@@ -607,10 +648,10 @@ class CmdSignalHandler(dfiConfig: DfiConfig) extends Component {
   // CKE signals - always present (with init override support)
   val cmdCkeReg = Reg(Bits(dfiConfig.chipSelectNumber bits)) init(0)
   // Fixed: Use init override during initialization to align with LiteX semantics
-  when(cmdGen.padOverride) {
-    cmdCkeReg := cmdGen.initCke
+  when(io.padOverride) {
+    cmdCkeReg := io.init.cke
   } otherwise {
-    cmdCkeReg := dfiCke
+    cmdCkeReg := io.dfi.cke
   }
   val ckeSignals = regroupSignals(cmdCkeReg, dfiConfig.chipSelectNumber)
   for (i <- 0 until dfiConfig.chipSelectNumber) {
@@ -621,10 +662,10 @@ class CmdSignalHandler(dfiConfig: DfiConfig) extends Component {
   if (dfiConfig.signalConfig.useOdt) {
     val cmdOdtReg = Reg(Bits(dfiConfig.chipSelectNumber bits)) init(0)
     // Fixed: Use init override during initialization to align with LiteX semantics
-    when(cmdGen.padOverride) {
-      cmdOdtReg := cmdGen.initOdt
+    when(io.padOverride) {
+      cmdOdtReg := io.init.odt
     } otherwise {
-      cmdOdtReg := dfiOdt
+      cmdOdtReg := io.dfi.odt
     }
     val odtSignals = regroupSignals(cmdOdtReg, dfiConfig.chipSelectNumber)
     for (i <- 0 until dfiConfig.chipSelectNumber) {
@@ -636,10 +677,10 @@ class CmdSignalHandler(dfiConfig: DfiConfig) extends Component {
   if (dfiConfig.signalConfig.useResetN) {
     val cmdResetNReg = Reg(Bits(dfiConfig.chipSelectNumber bits)) init(0)
     // Fixed: Use init override during initialization to align with LiteX semantics
-    when(cmdGen.padOverride) {
-      cmdResetNReg := cmdGen.initResetN
+    when(io.padOverride) {
+      cmdResetNReg := io.init.resetN
     } otherwise {
-      cmdResetNReg := dfiResetN
+      cmdResetNReg := io.dfi.resetN
     }
     val resetNSignals = regroupSignals(cmdResetNReg, dfiConfig.chipSelectNumber)
     for (i <- 0 until dfiConfig.chipSelectNumber) {
@@ -650,28 +691,12 @@ class CmdSignalHandler(dfiConfig: DfiConfig) extends Component {
   // ACT_N signal - if used
   if (dfiConfig.signalConfig.useAckN) {
     val currentCmdReg = Reg(DdrCmd()) init(DdrCmd.NOP)
-    
-    // Decode command from DFI signals directly (same logic as above)
-    when((dfiRasN_or === False) && (dfiCasN_or === True) && (dfiWeN_or === True) && (dfiActN_or === False)) {
-      currentCmdReg := DdrCmd.ACT
-    } elsewhen((dfiRasN_or === True) && (dfiCasN_or === False) && (dfiWeN_or === True)) {
-      currentCmdReg := DdrCmd.READ
-    } elsewhen((dfiRasN_or === True) && (dfiCasN_or === False) && (dfiWeN_or === False)) {
-      currentCmdReg := DdrCmd.WRITE
-    } elsewhen((dfiRasN_or === False) && (dfiCasN_or === False) && (dfiWeN_or === True)) {
-      currentCmdReg := DdrCmd.PRE
-    } elsewhen((dfiRasN_or === False) && (dfiCasN_or === False) && (dfiWeN_or === False)) {
-      val addrBits = dfiAddress(15 downto 14)
-      when(addrBits === U"2'b11") {
-        currentCmdReg := DdrCmd.ZQCS
-      } elsewhen(addrBits === U"2'b10") {
-        currentCmdReg := DdrCmd.REF
-      } otherwise {
-        currentCmdReg := DdrCmd.MRS
-      }
-    } otherwise {
-      currentCmdReg := DdrCmd.NOP
-    }
+
+    // Decode command from DFI signals using shared function (REQ-CS-038)
+    currentCmdReg := DdrCommandDecoder.decodeCommand(
+      io.dfi.rasNor, io.dfi.casNor, io.dfi.weNor, io.dfi.actNor,
+      io.dfi.address, dfiConfig.addressWidth
+    )
     
     signalMappings += SignalMapping(pads.act_n, (currentCmdReg === DdrCmd.ACT).asBits)
   }
@@ -696,196 +721,235 @@ class CmdSignalHandler(dfiConfig: DfiConfig) extends Component {
     }
   }
 
-  // Initialization command inputs
-  val initCmdValid = in Bool()
-  val initCmd = in(DdrCmd())
-  val initAddr = in(Bits(dfiConfig.addressWidth bits))
-  val initBa = in(Bits(dfiConfig.bankWidth bits))
-  val initCsN = in(Bits(dfiConfig.chipSelectNumber bits))
-  val initCke = in(Bits(dfiConfig.chipSelectNumber bits))
-  val initOdt = in(Bits(dfiConfig.chipSelectNumber bits))
-  val initResetN = in(Bits(dfiConfig.chipSelectNumber bits))
-
-  // Connect initialization command inputs to command generator
-  cmdGen.initCmdValid := initCmdValid
-  cmdGen.initCmd := initCmd
-  cmdGen.initAddr := initAddr
-  cmdGen.initBa := initBa
-  cmdGen.initCsN := initCsN
-  cmdGen.initCke := initCke
-  cmdGen.initOdt := initOdt
-  cmdGen.initResetN := initResetN
-
-  // Control signals
-  val padOverride = in Bool()
-  cmdGen.padOverride := padOverride
+  // Note: DdrCommandGenerator connections removed to prevent hierarchy violations
+  // The CmdSignalHandler now handles initialization logic internally using io.init signals
 }
 
 // Complete Training Controller with proper DFI integration - optimized
-class TrainingController(config: DfiConfig, initDone: Bool,
-                       writeLevelingSampledData: Bits,
-                       readGateSampledData: Bits,
-                       readEyeSampledData: Vec[Bits],
-                       caSampledAddr: Bits,
-                       caSampledBank: Bits,
-                       caCurrentCmd: SpinalEnumCraft[DdrCmd.type],
-                       wrLvlEn: Bool = False,
-                       wrLvlStrobe: Bool = False,
-                       rdLvlEn: Bool = False,
-                       rdLvlGateEn: Bool = False,
-                       caLvlEn: Bool = False) extends Component {
+class TrainingController(config: DfiConfig) extends Component {
+
+  val io = new Bundle {
+    // Input signals (moved from constructor parameters)
+    val initDone = in Bool()
+    val writeLevelingSampledData = in Bits(HardwareWidths.BYTE bits)
+    val readGateSampledData = in Bits(HardwareWidths.BYTE bits)
+    val readEyeSampledData = in(Vec(Bits(HardwareWidths.BYTE bits), HardwareWidths.PHASE_COUNT))
+    val caSampledAddr = in Bits(config.addressWidth bits)
+    val caSampledBank = in Bits(HardwareWidths.BYTE bits)
+    val caCurrentCmd = in(DdrCmd())
+    val wrLvlEn = in Bool()
+    val wrLvlStrobe = in Bool()
+    val rdLvlEn = in Bool()
+    val rdLvlGateEn = in Bool()
+    val caLvlEn = in Bool()
+
+    // PHY control interface outputs
+    val half_sys8x_taps = out UInt(HardwareWidths.COUNTER_9 bits)
+    val dqs_inc_count = out UInt(HardwareWidths.COUNTER_9 bits)
+    val cdly_value = out UInt(HardwareWidths.COUNTER_9 bits)
+    val training_cdly_inc = out Bool()
+    val training_dq_inc = out Bool()
+    val training_bitslip = out Bool()
+
+    // Expose training status signals as outputs to avoid hierarchy violations
+    val writeLevelingDone = out Bool()
+    val readGateDone = out Bool()
+    val readEyeDone = out Bool()
+    val caTrainingDone = out Bool()
+
+    // Expose training response signals as outputs to avoid hierarchy violations
+    val readGateResponse = out Bits(HardwareWidths.RESPONSE_1 bits)
+    val readEyeResponse = out Bits(HardwareWidths.RESPONSE_1 bits)
+    val writeLevelingResponse = out Bits(HardwareWidths.RESPONSE_1 bits)
+    val caTrainingResponse = out Bits(HardwareWidths.RESPONSE_2 bits)
+
+    // Expose cdly_value as output to avoid hierarchy violations
+    val cdly_value_out = out UInt(HardwareWidths.COUNTER_9 bits)
+  }
 
   // Use input parameters directly to avoid hierarchy violations
   // These signals are already registered in the parent XilinxUSPhy component
-  val wrLvlEnLocal = wrLvlEn
-  val wrLvlStrobeLocal = wrLvlStrobe
-  val rdLvlEnLocal = rdLvlEn
-  val rdLvlGateEnLocal = rdLvlGateEn
-  val caLvlEnLocal = caLvlEn
+  // Signal aliases removed - use original signals directly per coding standards
 
   // Create training modules with proper signal isolation using local registered signals
-  val writeLeveling = if (config.useWrlvlEn) {
-    val module = new WriteLevelingModule(config, wrLvlEnLocal, wrLvlStrobeLocal, writeLevelingSampledData)
-    Some(module)
-  } else None
-  val readGate = if (config.useRdlvlEn) {
-    val module = new ReadGateModule(config, rdLvlEnLocal, readGateSampledData)
-    Some(module)
-  } else None
-  val readEye = if (config.useRdlvlGateEn) {
-    val module = new ReadEyeModule(config, rdLvlGateEnLocal, readEyeSampledData)
-    Some(module)
-  } else None
-  val caTraining = if (config.useCalvlEn) {
-    val module = new CATrainingModule(config, caLvlEnLocal, caSampledAddr, caSampledBank, caCurrentCmd)
-    Some(module)
-  } else None
+  val writeLevelingModule = if (config.useWrlvlEn) {
+    val module = new WriteLevelingModule(config)
+    module.io.wrLvlEn := io.wrLvlEn
+    module.io.wrLvlStrobe := io.wrLvlStrobe
+    module.io.sampledData := io.writeLevelingSampledData
+    module
+  } else null
+  val readGateModule = if (config.useRdlvlEn) {
+    val module = new ReadGateModule(config)
+    module.io.rdLvlEn := io.rdLvlEn
+    module.io.sampledData := io.readGateSampledData
+    module
+  } else null
+  val readEyeModule = if (config.useRdlvlGateEn) {
+    val module = new ReadEyeModule(config, io.readEyeSampledData.length)
+    module.io.rdLvlGateEn := io.rdLvlGateEn
+    module.io.sampledData := io.readEyeSampledData
+    module
+  } else null
+  val caTrainingModule = if (config.useCalvlEn) {
+    val module = new CATrainingModule(config)
+    module.io.caLvlEn := io.caLvlEn
+    module.io.sampledAddr := io.caSampledAddr
+    module.io.sampledBank := io.caSampledBank
+    module.io.currentCmd := io.caCurrentCmd
+    module
+  } else null
 
-  // Centralized DQ increment control - avoid multiple assignments
-  val dqIncrementControl = Bool()
-  val writeLevelingDqInc = writeLeveling.map(_.dqIncrement).getOrElse(False)
-  val readEyeDqInc = readEye.map(_.dqIncrement).getOrElse(False)
-  dqIncrementControl := writeLevelingDqInc || readEyeDqInc
-  
-  // Centralized CDLY increment control - avoid multiple assignments
-  val cdlyIncrementControl = Bool()
-  val caTrainingCdlyInc = caTraining.map(_.cdlyIncrement).getOrElse(False)
-  cdlyIncrementControl := caTrainingCdlyInc
+  // Centralized DQ increment control - single assignment only
+  val writeLevelingDqInc = if (config.useWrlvlEn && writeLevelingModule != null) {
+    writeLevelingModule.io.dqIncrement
+  } else {
+    False
+  }
+  val readEyeDqInc = if (config.useRdlvlGateEn && readEyeModule != null) {
+    readEyeModule.io.dqIncrement
+  } else {
+    False
+  }
+  val dqIncrementControl = writeLevelingDqInc || readEyeDqInc
 
-  // PHY control interface outputs
-  val half_sys8x_taps = out UInt (9 bits)
-  val dqs_inc_count = out UInt (9 bits)
-  val cdly_value = out UInt (9 bits)
-  val training_cdly_inc = out Bool ()
-  val training_dq_inc = out Bool ()
-  val training_bitslip = out Bool ()
+  // Centralized CDLY increment control - single assignment only
+  val caTrainingCdlyInc = if (config.useCalvlEn && caTrainingModule != null) {
+    caTrainingModule.io.cdlyIncrement
+  } else {
+    False
+  }
+  val cdlyIncrementControl = caTrainingCdlyInc
 
-  // Expose training status signals as outputs to avoid hierarchy violations
-  val writeLevelingDone = out Bool()
-  val readGateDone = out Bool()
-  val readEyeDone = out Bool()
-  val caTrainingDone = out Bool()
-
-  // Expose training response signals as outputs to avoid hierarchy violations
-  val readGateResponse = out Bits(1 bits)
-  val readEyeResponse = out Bits(1 bits)
-  val writeLevelingResponse = out Bits(1 bits)
-  val caTrainingResponse = out Bits(2 bits)
-
-  // Expose cdly_value as output to avoid hierarchy violations
-  val cdly_value_out = out UInt (9 bits)
+  // Output signals are now defined in io Bundle per coding standards
 
   // Connect to phy control interface - pipelined (only if modules exist)
   // Use conditional assignment to avoid conflicts
-  half_sys8x_taps := 0
-  training_cdly_inc := cdlyIncrementControl
-  training_dq_inc := dqIncrementControl
-  training_bitslip := False
+  io.half_sys8x_taps := 0
+  io.training_cdly_inc := cdlyIncrementControl
+  io.training_dq_inc := dqIncrementControl
+  io.training_bitslip := False
   
   // Assign cdly_value and dqs_inc_count with conditional logic
-  writeLeveling match {
-    case Some(module) =>
-      cdly_value := module.cdlyCount
-      cdly_value_out := module.cdlyCount
-      dqs_inc_count := module.dqsIncCount
-    case None =>
-      cdly_value := 0
-      cdly_value_out := 0
-      dqs_inc_count := 0
+  if (config.useWrlvlEn && writeLevelingModule != null) {
+    io.cdly_value := writeLevelingModule.io.cdlyCount
+    io.cdly_value_out := writeLevelingModule.io.cdlyCount
+    io.dqs_inc_count := writeLevelingModule.io.dqsIncCount
+  } else {
+    io.cdly_value := 0
+    io.cdly_value_out := 0
+    io.dqs_inc_count := 0
   }
 
-  // Assign training status signals to outputs to avoid hierarchy violations
-  writeLevelingDone := writeLeveling.map(_.done).getOrElse(False)
-  readGateDone := readGate.map(_.done).getOrElse(False)
-  readEyeDone := readEye.map(_.done).getOrElse(False)
-  caTrainingDone := caTraining.map(_.done).getOrElse(False)
+  // Training output assignments using conditional Area generation
+  if (config.useWrlvlEn) {
+    val writeLevelingArea = new Area {
+      io.writeLevelingDone := writeLevelingModule.io.done
+      io.writeLevelingResponse := writeLevelingModule.io.response
+    }
+  } else {
+    val writeLevelingArea = new Area {
+      io.writeLevelingDone := False
+      io.writeLevelingResponse := B(0, 1 bits)
+    }
+  }
 
-  // Assign training response signals to outputs to avoid hierarchy violations
-  readGateResponse := readGate.map(_.response).getOrElse(B(0, 1 bits))
-  readEyeResponse := readEye.map(_.response).getOrElse(B(0, 1 bits))
-  writeLevelingResponse := writeLeveling.map(_.response).getOrElse(B(0, 1 bits))
-  caTrainingResponse := caTraining.map(_.response).getOrElse(B(0, 2 bits))
+  if (config.useRdlvlEn) {
+    val readGateArea = new Area {
+      io.readGateDone := readGateModule.io.done
+      io.readGateResponse := readGateModule.io.response
+    }
+  } else {
+    val readGateArea = new Area {
+      io.readGateDone := False
+      io.readGateResponse := B(0, 1 bits)
+    }
+  }
+
+  if (config.useRdlvlGateEn) {
+    val readEyeArea = new Area {
+      io.readEyeDone := readEyeModule.io.done
+      io.readEyeResponse := readEyeModule.io.response
+    }
+  } else {
+    val readEyeArea = new Area {
+      io.readEyeDone := False
+      io.readEyeResponse := B(0, 1 bits)
+    }
+  }
+
+  if (config.useCalvlEn) {
+    val caTrainingArea = new Area {
+      io.caTrainingDone := caTrainingModule.io.done
+      io.caTrainingResponse := caTrainingModule.io.response
+    }
+  } else {
+    val caTrainingArea = new Area {
+      io.caTrainingDone := False
+      io.caTrainingResponse := B(0, 2 bits)
+    }
+  }
 
   val fsm = new StateMachine {
     val idle = new State with EntryPoint
-    val wrLevel = writeLeveling.map(_ => new State)
-    val rdGate = readGate.map(_ => new State)
-    val rdEye = readEye.map(_ => new State)
-    val caTrain = caTraining.map(_ => new State)
+    val wrLevel = if (config.useWrlvlEn) new State else null
+    val rdGate = if (config.useRdlvlEn) new State else null
+    val rdEye = if (config.useRdlvlGateEn) new State else null
+    val caTrain = if (config.useCalvlEn) new State else null
     val done = new State
 
     idle.whenIsActive {
       // Only check training enables if corresponding modules exist
       // This prevents hierarchy violations when training is disabled
-      if (wrLevel.isDefined) {
-        when(wrLvlEnLocal) {
-          wrLevel.foreach(goto(_))
+      if (config.useWrlvlEn && wrLevel != null) {
+        when(io.wrLvlEn) {
+          goto(wrLevel)
         }
       }
-      if (rdGate.isDefined) {
-        when(rdLvlEnLocal) {
-          rdGate.foreach(goto(_))
+      if (config.useRdlvlEn && rdGate != null) {
+        when(io.rdLvlEn) {
+          goto(rdGate)
         }
       }
-      if (rdEye.isDefined) {
-        when(rdLvlGateEnLocal) {
-          rdEye.foreach(goto(_))
+      if (config.useRdlvlGateEn && rdEye != null) {
+        when(io.rdLvlGateEn) {
+          goto(rdEye)
         }
       }
-      if (caTrain.isDefined) {
-        when(caLvlEnLocal) {
-          caTrain.foreach(goto(_))
+      if (config.useCalvlEn && caTrain != null) {
+        when(io.caLvlEn) {
+          goto(caTrain)
         }
       }
     }
 
-    wrLevel.foreach { state =>
-      state.whenIsActive {
-        when(writeLeveling.get.done) {
+    if (config.useWrlvlEn && wrLevel != null) {
+      wrLevel.whenIsActive {
+        when(writeLevelingModule.io.done) {
           goto(idle)
         }
       }
     }
 
-    rdGate.foreach { state =>
-      state.whenIsActive {
-        when(readGate.get.done) {
+    if (config.useRdlvlEn && rdGate != null) {
+      rdGate.whenIsActive {
+        when(readGateModule.io.done) {
           goto(idle)
         }
       }
     }
 
-    rdEye.foreach { state =>
-      state.whenIsActive {
-        when(readEye.get.done) {
+    if (config.useRdlvlGateEn && rdEye != null) {
+      rdEye.whenIsActive {
+        when(readEyeModule.io.done) {
           goto(idle)
         }
       }
     }
 
-    caTrain.foreach { state =>
-      state.whenIsActive {
-        when(caTraining.get.done) {
+    if (config.useCalvlEn && caTrain != null) {
+      caTrain.whenIsActive {
+        when(caTrainingModule.io.done) {
           goto(idle)
         }
       }
@@ -898,28 +962,32 @@ class TrainingController(config: DfiConfig, initDone: Bool,
   }
 }
 
-class WriteLevelingModule(config: DfiConfig, wrLvlEn: Bool, wrLvlStrobe: Bool, sampledData: Bits) extends Component {
-  val done = out Bool()
-  val cdlyCount = out UInt(9 bits)
-  val dqsIncCount = out UInt(9 bits)
-  val response = out Bits(config.writeLevelingResponseWidth bits)
-  val dqIncrement = out Bool() // Output to be connected externally
+class WriteLevelingModule(config: DfiConfig) extends Component {
+  val io = new Bundle {
+    val wrLvlEn = in Bool()
+    val wrLvlStrobe = in Bool()
+    val sampledData = in Bits(HardwareWidths.BYTE bits)
+    val done = out Bool()
+    val cdlyCount = out UInt(HardwareWidths.COUNTER_9 bits)
+    val dqsIncCount = out UInt(HardwareWidths.COUNTER_9 bits)
+    val response = out Bits(config.writeLevelingResponseWidth bits)
+    val dqIncrement = out Bool() // Output to be connected externally
+  }
 
-  // Use input parameters directly to avoid hierarchy violations
-  // These are already registered in the parent component
-  val wrLvlEnReg = wrLvlEn
-  val wrLvlStrobeReg = wrLvlStrobe
-  val sampledDataReg = sampledData
+  // Use input signals from io Bundle instead of constructor parameters
+  val wrLvlEnReg = io.wrLvlEn
+  val wrLvlStrobeReg = io.wrLvlStrobe
+  val sampledDataReg = io.sampledData
 
   // Write leveling pattern generation - alternating 0x55/0xAA pattern (aligned with LiteX)
   val patternGenerator = new Area {
-    val pattern = Reg(Bits(8 bits)) init(B"01010101") // Start with 0x55
+    val pattern = Reg(Bits(HardwareWidths.BYTE bits)) init(DQSPatterns.DEFAULT) // Start with 0x55
     val patternToggle = RegInit(False)
-    
+
     when(wrLvlEnReg) {
       patternToggle := !patternToggle
       // Fixed: Align with LiteX pattern generation - alternate between 0x55 and 0xAA
-      pattern := patternToggle ? B"10101010" | B"01010101" // Alternate between 0x55 and 0xAA
+      pattern := patternToggle ? DQSPatterns.ALTERNATING | DQSPatterns.DEFAULT // Alternate between 0x55 and 0xAA
     } otherwise {
       patternToggle := patternToggle
       // Fixed: Maintain pattern when not in write leveling mode
@@ -929,7 +997,7 @@ class WriteLevelingModule(config: DfiConfig, wrLvlEn: Bool, wrLvlStrobe: Bool, s
 
   // DQS delay line control for write leveling
   val dqsDelayControl = new Area {
-    val delayCounter = Reg(UInt(9 bits)) init(0)
+    val delayCounter = Reg(UInt(HardwareWidths.COUNTER_9 bits)) init(0)
 
     // Increment delay during training sweeps
     when(wrLvlEnReg && wrLvlStrobeReg) {
@@ -941,13 +1009,16 @@ class WriteLevelingModule(config: DfiConfig, wrLvlEn: Bool, wrLvlStrobe: Bool, s
   val completionDetector = new Area {
     val doneReg = RegInit(False)
     val patternMatch = RegInit(False)
-    val timeoutCounter = Reg(UInt(8 bits)) init(0)
-    val stableCounter = Reg(UInt(4 bits)) init(0) // Require stable pattern for multiple cycles
+    val timeoutCounter = Reg(UInt(HardwareWidths.COUNTER_8 bits)) init(0)
+    val stableCounter = Reg(UInt(HardwareWidths.COUNTER_4 bits)) init(0) // Require stable pattern for multiple cycles
 
     // Sample received pattern during strobe from actual DQ sampling
-    val receivedPattern = Reg(Bits(8 bits)) init(0)
+    val receivedPattern = Reg(Bits(HardwareWidths.BYTE bits)) init(0)
     val expectedPattern = patternGenerator.pattern
     val currentMatch = Bool()
+
+    // Default assignment to prevent latch
+    currentMatch := False
 
     when(wrLvlEnReg && wrLvlStrobeReg) {
       // Sample from actual DQ pins through read path
@@ -962,7 +1033,7 @@ class WriteLevelingModule(config: DfiConfig, wrLvlEn: Bool, wrLvlStrobe: Bool, s
         stableCounter := 0
       }
       
-      patternMatch := stableCounter >= 3 // Require 3 consecutive matches
+      patternMatch := stableCounter >= TimingConstants.STABLE_CYCLES_3 // Require 3 consecutive matches
       timeoutCounter := timeoutCounter + 1
     } otherwise {
       receivedPattern := receivedPattern
@@ -978,22 +1049,26 @@ class WriteLevelingModule(config: DfiConfig, wrLvlEn: Bool, wrLvlStrobe: Bool, s
   }
 
   // Centralized output assignments to avoid conflicts
-  done := completionDetector.doneReg
-  cdlyCount := dqsDelayControl.delayCounter
-  dqsIncCount := dqsDelayControl.delayCounter
-  response := completionDetector.patternMatch ? B"1" | B"0"
-  dqIncrement := wrLvlEnReg && wrLvlStrobeReg // Increment only during active training with strobe
+  io.done := completionDetector.doneReg
+  io.cdlyCount := dqsDelayControl.delayCounter
+  io.dqsIncCount := dqsDelayControl.delayCounter
+  io.response := completionDetector.patternMatch ? B"1" | B"0"
+  io.dqIncrement := wrLvlEnReg && wrLvlStrobeReg // Increment only during active training with strobe
 }
 
-class ReadGateModule(config: DfiConfig, rdLvlEn: Bool, sampledData: Bits) extends Component {
-  val done = out Bool()
-  val bitslip = out Bool()
-  val dq_inc = out Bool()
-  val response = out Bits(config.readLevelingResponseWidth bits)
+class ReadGateModule(config: DfiConfig) extends Component {
+  val io = new Bundle {
+    val rdLvlEn = in Bool()
+    val sampledData = in Bits(HardwareWidths.BYTE bits)
+    val done = out Bool()
+    val bitslip = out Bool()
+    val dq_inc = out Bool()
+    val response = out Bits(config.readLevelingResponseWidth bits)
+  }
 
-  // Fixed: Use input parameters directly without additional registration
-  val rdLvlEnReg = rdLvlEn
-  val sampledDataReg = sampledData
+  // Use input signals from io Bundle instead of constructor parameters
+  val rdLvlEnReg = io.rdLvlEn
+  val sampledDataReg = io.sampledData
 
   // Read gate training implementation - Fixed bit width
   val gateTraining = new Area {
@@ -1005,7 +1080,7 @@ class ReadGateModule(config: DfiConfig, rdLvlEn: Bool, sampledData: Bits) extend
     // Training pattern recognition - look for valid read data window (aligned with LiteX)
     val patternRecognizer = new Area {
       val receivedData = Reg(Bits(8 bits)) init(0)
-      val expectedPattern = B"01010101" // Expected read gate training pattern (alternating 0/1)
+      val expectedPattern = DQSPatterns.DEFAULT // Expected read gate training pattern (alternating 0/1)
       val patternValid = receivedData === expectedPattern
       val validWindowCounter = Reg(UInt(3 bits)) init(0)
 
@@ -1070,21 +1145,25 @@ class ReadGateModule(config: DfiConfig, rdLvlEn: Bool, sampledData: Bits) extend
   }
 
   // Centralized output assignments to avoid conflicts
-  done := gateTraining.doneReg
-  dq_inc := gateTraining.dqIncrement
-  bitslip := gateTraining.bitslipTrigger
-  response := gateTraining.gateFound ? B"1" | B"0"
+  io.done := gateTraining.doneReg
+  io.dq_inc := gateTraining.dqIncrement
+  io.bitslip := gateTraining.bitslipTrigger
+  io.response := gateTraining.gateFound ? B"1" | B"0"
 }
 
-class ReadEyeModule(config: DfiConfig, rdLvlGateEn: Bool, sampledData: Vec[Bits]) extends Component {
-  val done = out Bool()
-  val phase = out UInt(2 bits)
-  val response = out Bits(config.readLevelingResponseWidth bits)
-  val dqIncrement = out Bool() // Output to be connected externally
+class ReadEyeModule(config: DfiConfig, dataSampleCount: Int) extends Component {
+  val io = new Bundle {
+    val rdLvlGateEn = in Bool()
+    val sampledData = in(Vec(Bits(8 bits), dataSampleCount))
+    val done = out Bool()
+    val phase = out UInt(2 bits)
+    val response = out Bits(config.readLevelingResponseWidth bits)
+    val dqIncrement = out Bool() // Output to be connected externally
+  }
 
-  // Fixed: Use input parameters directly without additional registration
-  val rdLvlGateEnReg = rdLvlGateEn
-  val sampledDataReg = Vec.fill(sampledData.length)(sampledData)
+  // Use input signals from io Bundle instead of constructor parameters
+  val rdLvlGateEnReg = io.rdLvlGateEn
+  val sampledDataReg = io.sampledData
 
   // Read eye training with delay sweep implementation
   val eyeTraining = new Area {
@@ -1121,8 +1200,8 @@ class ReadEyeModule(config: DfiConfig, rdLvlGateEn: Bool, sampledData: Vec[Bits]
       // Use direct assignments to avoid hierarchy violations
       for (i <- 0 until 4) {
         // Sample from different byte lanes for multi-phase eye training
-        if (i < sampledData.length) {
-          receivedData(i) := rdLvlGateEnReg ? sampledData(i) | receivedData(i)
+        if (i < sampledDataReg.length) {
+          receivedData(i) := rdLvlGateEnReg ? sampledDataReg(i) | receivedData(i)
         } else {
           receivedData(i) := rdLvlGateEnReg ? B(0, 8 bits) | receivedData(i) // Use default value for safety
         }
@@ -1163,22 +1242,28 @@ class ReadEyeModule(config: DfiConfig, rdLvlGateEn: Bool, sampledData: Vec[Bits]
   }
 
   // Centralized output assignments to avoid conflicts
-  phase := eyeTraining.phaseReg
-  done := eyeTraining.doneReg
-  response := eyeTraining.eyeFound ? B"1" | B"0"
-  dqIncrement := rdLvlGateEnReg && eyeTraining.timeout(6 downto 0).andR // Increment only during active sweep
+  io.phase := eyeTraining.phaseReg
+  io.done := eyeTraining.doneReg
+  io.response := eyeTraining.eyeFound ? B"1" | B"0"
+  io.dqIncrement := rdLvlGateEnReg && eyeTraining.timeout(6 downto 0).andR // Increment only during active sweep
 }
 
-class CATrainingModule(config: DfiConfig, caLvlEn: Bool, sampledAddr: Bits, sampledBank: Bits, currentCmd: SpinalEnumCraft[DdrCmd.type]) extends Component {
-  val done = out Bool()
-  val response = out Bits(config.caTrainingResponseWidth bits)
-  val cdlyIncrement = out Bool() // Output to be connected externally
+class CATrainingModule(config: DfiConfig) extends Component {
+  val io = new Bundle {
+    val caLvlEn = in Bool()
+    val sampledAddr = in Bits(config.addressWidth bits)
+    val sampledBank = in Bits(8 bits)
+    val currentCmd = in(DdrCmd())
+    val done = out Bool()
+    val response = out Bits(config.caTrainingResponseWidth bits)
+    val cdlyIncrement = out Bool() // Output to be connected externally
+  }
 
-  // Fixed: Use input parameters directly without additional registration
-  val caLvlEnReg = caLvlEn
-  val sampledAddrReg = sampledAddr
-  val sampledBankReg = sampledBank
-  val currentCmdReg = currentCmd
+  // Use input signals from io Bundle instead of constructor parameters
+  val caLvlEnReg = io.caLvlEn
+  val sampledAddrReg = io.sampledAddr
+  val sampledBankReg = io.sampledBank
+  val currentCmdReg = io.currentCmd
 
   // Command/Address training implementation
   val caTraining = new Area {
@@ -1219,10 +1304,10 @@ class CATrainingModule(config: DfiConfig, caLvlEn: Bool, sampledAddr: Bits, samp
       }
 
       val stableCA = validCACounter >= 4 // Require 4 consecutive valid patterns
-      
+
       // Sample actual CA signals from command/address path
       val sampledCmd = Bits(8 bits)
-      
+
       // Encode current command into sampled pattern (aligned with LiteX)
       switch(currentCmdReg) {
         is(DdrCmd.NOP) { sampledCmd := B"00000000" }
@@ -1234,8 +1319,9 @@ class CATrainingModule(config: DfiConfig, caLvlEn: Bool, sampledAddr: Bits, samp
         is(DdrCmd.MRS) { sampledCmd := B"00000110" }
         is(DdrCmd.ZQCS) { sampledCmd := B"00000111" }
       }
-      
-      receivedCA := sampledAddrReg ## sampledBankReg ## sampledCmd(7 downto 6) // Combine for 16-bit pattern
+
+      // Fixed: Ensure 16-bit total width (6 bits addr + 8 bits bank + 2 bits cmd = 16 bits)
+      receivedCA := sampledAddrReg(5 downto 0) ## sampledBankReg ## sampledCmd(7 downto 6)
     }
 
     when(caLvlEnReg) {
@@ -1254,7 +1340,7 @@ class CATrainingModule(config: DfiConfig, caLvlEn: Bool, sampledAddr: Bits, samp
   }
 
   // Centralized output assignments to avoid conflicts
-  done := caTraining.doneReg
-  response := caTraining.caFound ? B"11" | B"00" // 2-bit success/failure response
-  cdlyIncrement := caTraining.delayControl.delayIncrement
+  io.done := caTraining.doneReg
+  io.response := caTraining.caFound ? B"11" | B"00" // 2-bit success/failure response
+  io.cdlyIncrement := caTraining.delayControl.delayIncrement
 }

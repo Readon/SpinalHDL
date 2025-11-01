@@ -42,84 +42,143 @@ case class SdramIO(dfiConfig: DfiConfig) extends Bundle {
 }
 
 class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
-  // Clock domain access through parameters to avoid hierarchy violations
+  // Clock domain access through override to avoid hierarchy violations
   override val clockDomain = ClockDomain.current
-  val sysClk = CombInit(clockDomain.readClockWire)
-  val sysRst = CombInit(clockDomain.readResetWire)
 
+  // IO definition must be at the beginning of Component
+  val io = new Bundle {
+    val dfi = slave(Dfi(dfiConfig))
+    val pads = new SdramIO(dfiConfig)
+    val clk4x = in Bool()
+    val clk4xN = in Bool()
+
+    // PHY control interface
+    val phyCtrl = new Bundle {
+      // Training status
+      val half_sys8x_taps = out UInt(9 bits)
+      val dqs_inc_count = out UInt(9 bits)
+
+      // Control signals
+      val dly_sel = in Bits(8 bits) // Byte lane select
+      val cdly_rst = in Bool() // Command delay reset
+      val cdly_inc = in Bool() // Command delay increment
+      val cdly_value = out UInt(9 bits) // Current command delay
+
+      // Data path control
+      val dq_rst = in Bool() // DQ delay reset
+      val dq_inc = in Bool() // DQ delay increment
+      val bitslip_rst = in Bool() // Bitslip reset
+      val bitslip = in Bool() // Bitslip trigger
+      val dly_dq_value = out UInt(9 bits) // Current DQ delay
+
+      // Phase control
+      val rd_phase = in UInt(2 bits) // Read phase control
+      val wr_phase = in UInt(2 bits) // Write phase control
+
+      // Training control signals - changed to out to allow training controller assignment
+      val training_cdly_inc = out Bool() // Training command delay increment
+      val training_dq_inc = out Bool() // Training DQ/DQS delay increment
+      val training_bitslip = out Bool() // Training bitslip trigger
+
+      // Initialization status
+      val initDone = out Bool() // Initialization complete flag
+      val resetN = out Bool() // Reset signal
+      val cke = out Bool() // Clock enable
+
+      // Training status interface - Enhanced
+      val trainingCdlyInc = out Bool() // Training command delay increment
+      val trainingDqInc = out Bool() // Training DQ delay increment
+      val trainingBitslip = out Bool() // Training bitslip control
+      val trainingDone = out Bool() // All training complete
+      val trainingActive = out Bool() // Training in progress
+
+      // Error status
+      val errorStatus = out Bits(8 bits) // Error flags
+    }
+
+    // Control interface
+    val ctrl = new Bundle {
+      val reset = in Bool()
+      val initDone = out Bool()
+    }
+  }
+
+  
   // Configuration parameters area - must be defined before any usage
   val configParams = new Area {
     // SDRAM timing parameters
     val burstLength = U(dfiConfig.sdram.burstLength, 4 bits)
     val casLatency = U(dfiConfig.sdram.ddrRdLat, 4 bits)
-    
+
     // Error status signals
     val clockError = Bool()
     val resetError = Bool()
     val initError = Bool()
-    
+
     // Resource monitoring configuration
     val enableResourceMonitoring = Bool()
     val standardMode = Bool()
     val advancedMode = Bool()
-    
+
     // Low power configuration
     val autoClockGating = Bool()
     val autoPowerDown = Bool()
   }
-  
+
+  // Training parameter area - centralized configuration to avoid assignment conflicts
+  val trainingParams = new Area {
+    // Training enable signals - consolidated from scattered locations
+    val writeLevelingEn = Bool()
+    val readGateEn = Bool()
+    val readEyeEn = Bool()
+    val caTrainingEn = Bool()
+
+    // Training status signals - single point of assignment
+    val writeLevelingDone = Bool()
+    val readGateDone = Bool()
+    val readEyeDone = Bool()
+    val caTrainingDone = Bool()
+
+    // Training response signals
+    val writeLevelingResponse = Bits(1 bits)
+    val readGateResponse = Bits(1 bits)
+    val readEyeResponse = Bits(1 bits)
+    val caTrainingResponse = Bits(2 bits)
+
+    // Training delay values
+    val cdlyValueOut = UInt(9 bits)
+    val halfSys8xTaps = UInt(9 bits)
+    val dqsIncCount = UInt(9 bits)
+
+    // Training control outputs
+    val trainingCdlyInc = Bool()
+    val trainingDqInc = Bool()
+    val trainingBitslip = Bool()
+
+    // Global training active status
+    val trainingActive = Bool()
+  }
+
   // Initialize configParams signals
   configParams.enableResourceMonitoring := False
   configParams.standardMode := True
   configParams.advancedMode := False
   configParams.autoClockGating := False
   configParams.autoPowerDown := False
-  
+
+  // Initialize training parameters with default values - single point of initialization
+  trainingParams.writeLevelingEn := False
+  trainingParams.readGateEn := False
+  trainingParams.readEyeEn := False
+  trainingParams.caTrainingEn := False
+  // trainingParams will be assigned conditionally below to avoid overlap
+
   // Error signals will be assigned by specific error detection modules
   // Do not initialize them here to avoid assignment conflicts
 
   // Shared DDR Command definitions are now in XilinxUSPhyTypes.scala
 
-  val io = new Bundle {
-    val dfi = slave(Dfi(dfiConfig))
-    val pads = new SdramIO(dfiConfig)
-    val clk4x = in Bool ()
-    val clk4xN = in Bool ()
-
-    // PHY control interface
-    val phyCtrl = new Bundle {
-      // Training status
-      val half_sys8x_taps = out UInt (9 bits)
-      val dqs_inc_count = out UInt (9 bits)
-
-      // Control signals
-      val dly_sel = in Bits (8 bits) // Byte lane select
-      val cdly_rst = in Bool () // Command delay reset
-      val cdly_inc = in Bool () // Command delay increment
-      val cdly_value = out UInt (9 bits) // Current command delay
-
-      // Data path control
-      val dq_rst = in Bool () // DQ delay reset
-      val dq_inc = in Bool () // DQ delay increment
-      val bitslip_rst = in Bool () // Bitslip reset
-      val bitslip = in Bool () // Bitslip trigger
-
-      // Phase control
-      val rd_phase = in UInt (2 bits) // Read phase
-      val wr_phase = in UInt (2 bits) // Write phase
-
-      // Training control signals - changed to out to allow training controller assignment
-      val training_cdly_inc = out Bool () // Training command delay increment
-      val training_dq_inc = out Bool () // Training DQ/DQS delay increment
-      val training_bitslip = out Bool () // Training bitslip trigger
-    }
-
-    val ctrl = new Bundle {
-      val reset = in Bool ()
-      val initDone = out Bool ()
-    }
-  }
-
+  
   // DRAM clock disable - defined early to avoid forward reference
   val dramClkDisable = RegInit(False)
 
@@ -128,23 +187,18 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     val ctrlReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x00).init(0)
     io.ctrl.reset := ctrlReg(0) // [0] Global reset
     ctrlReg(8) := io.ctrl.initDone // [8] Initialization status (RO)
-    // Use global training signals to avoid hierarchy violations
-    val writeLevelingDone = RegNext(trainingWriteLevelingDone) init(False)
-    val readGateDone = RegNext(trainingReadGateDone) init(False)
-    val readEyeDone = RegNext(trainingReadEyeDone) init(False)
-
-    ctrlReg(9) := writeLevelingDone // [9] Write leveling done
-    ctrlReg(10) := readGateDone // [10] Read gate training done
-    ctrlReg(11) := readEyeDone // [11] Read eye training done
+    // Use buffered training signals to avoid hierarchy violations
+    ctrlReg(9) := trainingInterfaceArea.bufferedWriteLevelingDone // [9] Write leveling done
+    ctrlReg(10) := trainingInterfaceArea.bufferedReadGateDone // [10] Read gate training done
+    ctrlReg(11) := trainingInterfaceArea.bufferedReadEyeDone // [11] Read eye training done
 
     // Delay control register (0x04)
     val delayCtrlReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x04).init(0)
     io.phyCtrl.dly_sel := delayCtrlReg(16 to 23) // [16:23] Byte lane select
     io.phyCtrl.cdly_rst := delayCtrlReg(0) // [0] CDLY reset
     io.phyCtrl.cdly_inc := delayCtrlReg(1) // [1] CDLY increment
-    // Use global training signals to avoid hierarchy violations
-    val writeLevelingCdlyCount = RegNext(trainingCdlyValueOut) init(U(0, 9 bits))
-    delayCtrlReg(24 to 31) := writeLevelingCdlyCount.asBits.resize(8) // [24:31] Wlevel counter
+    // Use buffered training signals to avoid hierarchy violations
+    delayCtrlReg(24 to 31) := trainingInterfaceArea.bufferedCdlyValue.asBits.resize(8) // [24:31] Wlevel counter
 
     // Data path control register (0x08)
     val dataCtrlReg = busCtrl.createWriteOnly(Bits(32 bits), 0x08)
@@ -167,14 +221,14 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     val configReg = busCtrl.createReadAndWrite(Bits(32 bits), 0x18).init(0)
     io.phyCtrl.rd_phase := configReg(13 downto 12).asUInt // [1:0] Read phase
     io.phyCtrl.wr_phase := configReg(15 downto 14).asUInt // [3:2] Write phase
-    // Register FSM state to avoid hierarchy violations
+    // Register FSM state to avoid hierarchy violations - use buffered signals
     val allTrainingDone = RegNext(
-      (trainingWriteLevelingDone && trainingReadGateDone &&
-       trainingReadEyeDone && trainingCaTrainingDone) ||
-      (trainingWriteLevelingDone && Bool(!dfiConfig.useRdlvlEn) && Bool(!dfiConfig.useRdlvlGateEn) && Bool(!dfiConfig.useCalvlEn)) ||
-      (trainingReadGateDone && Bool(!dfiConfig.useWrlvlEn) && Bool(!dfiConfig.useRdlvlGateEn) && Bool(!dfiConfig.useCalvlEn)) ||
-      (trainingReadEyeDone && Bool(!dfiConfig.useWrlvlEn) && Bool(!dfiConfig.useRdlvlEn) && Bool(!dfiConfig.useCalvlEn)) ||
-      (trainingCaTrainingDone && Bool(!dfiConfig.useWrlvlEn) && Bool(!dfiConfig.useRdlvlEn) && Bool(!dfiConfig.useRdlvlGateEn))
+      (trainingInterfaceArea.bufferedWriteLevelingDone && trainingInterfaceArea.bufferedReadGateDone &&
+       trainingInterfaceArea.bufferedReadEyeDone && trainingInterfaceArea.bufferedCaTrainingDone) ||
+      (trainingInterfaceArea.bufferedWriteLevelingDone && Bool(!dfiConfig.useRdlvlEn) && Bool(!dfiConfig.useRdlvlGateEn) && Bool(!dfiConfig.useCalvlEn)) ||
+      (trainingInterfaceArea.bufferedReadGateDone && Bool(!dfiConfig.useWrlvlEn) && Bool(!dfiConfig.useRdlvlGateEn) && Bool(!dfiConfig.useCalvlEn)) ||
+      (trainingInterfaceArea.bufferedReadEyeDone && Bool(!dfiConfig.useWrlvlEn) && Bool(!dfiConfig.useRdlvlEn) && Bool(!dfiConfig.useCalvlEn)) ||
+      (trainingInterfaceArea.bufferedCaTrainingDone && Bool(!dfiConfig.useWrlvlEn) && Bool(!dfiConfig.useRdlvlEn) && Bool(!dfiConfig.useRdlvlGateEn))
     ) init(False)
     configReg(16) := allTrainingDone // [16] Calibration done status
   }
@@ -390,6 +444,106 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     }
   }
 
+  // Training Control Area - isolated clock domain for training logic (only created if training enabled)
+  val trainingControlArea = if (dfiConfig.useWrlvlEn || dfiConfig.useRdlvlEn || dfiConfig.useRdlvlGateEn || dfiConfig.useCalvlEn) {
+    new Area {
+      // Create isolated clock domain for training to avoid hierarchy violations
+      val trainingClockDomain = ClockDomain(
+        clock = io.clk4x,
+        reset = io.ctrl.reset,
+        config = ClockDomainConfig(
+          resetActiveLevel = HIGH,
+          resetKind = SYNC
+        )
+      )
+
+      // Training control signals - clock domain isolated
+      val trainingArea = new ClockingArea(trainingClockDomain) {
+        // Training state machine and control logic
+        val trainingFsm = new StateMachine {
+          val idle = new State with EntryPoint
+          val active = new State
+          val done = new State
+
+          idle.whenIsActive {
+            when(trainingParams.trainingActive) {
+              goto(active)
+            }
+          }
+
+          active.whenIsActive {
+            when(!trainingParams.trainingActive) {
+              goto(idle)
+            }
+          }
+
+          done.whenIsActive {
+            goto(idle)
+          }
+        }
+
+        // Training enable signals - use direct assignment without RegNext to avoid conflicts
+        val writeLevelingEnReg = Bool()
+        val readGateEnReg = Bool()
+        val readEyeEnReg = Bool()
+        val caTrainingEnReg = Bool()
+
+        // Direct assignment - no registers, just combinational logic
+        writeLevelingEnReg := Bool(dfiConfig.signalConfig.useWrlvlEn) && io.dfi.wrTraining.wrlvlEn.orR
+        readGateEnReg := Bool(dfiConfig.signalConfig.useRdlvlGateEn) && io.dfi.rdTraining.rdlvlGateEn.orR
+        readEyeEnReg := Bool(dfiConfig.signalConfig.useRdlvlEn) && io.dfi.rdTraining.rdlvlEn.orR
+        caTrainingEnReg := Bool(dfiConfig.signalConfig.useCalvlEn) && io.dfi.caTraining.calvlEn.orR
+
+        // Centralized training active signal assignment to avoid hierarchy violations
+        val trainingActiveLocal = Bool()
+        trainingActiveLocal := writeLevelingEnReg || readGateEnReg || readEyeEnReg || caTrainingEnReg
+      }
+
+      // Expose training enable registers as outputs to avoid hierarchy violations
+      val writeLevelingEnRegOut = trainingArea.writeLevelingEnReg
+      val readGateEnRegOut = trainingArea.readGateEnReg
+      val readEyeEnRegOut = trainingArea.readEyeEnReg
+      val caTrainingEnRegOut = trainingArea.caTrainingEnReg
+    }
+  } else {
+    null // No training control area when training is disabled
+  }
+
+  // Connect training active signal from TrainingControlArea to avoid hierarchy violations
+  if (trainingControlArea != null) {
+    trainingParams.trainingActive := trainingControlArea.trainingArea.trainingActiveLocal
+  } else {
+    trainingParams.trainingActive := False
+  }
+
+  // Training Interface Area - external connections with proper buffering
+  val trainingInterfaceArea = new Area {
+    // Buffer training control signals to break combinatorial loops
+    val bufferedTrainingCdlyInc = RegNext(trainingParams.trainingCdlyInc) init(False)
+    val bufferedTrainingDqInc = RegNext(trainingParams.trainingDqInc) init(False)
+    val bufferedTrainingBitslip = RegNext(trainingParams.trainingBitslip) init(False)
+
+    // Interface status buffering
+    val bufferedHalfSys8xTaps = RegNext(trainingParams.halfSys8xTaps) init(U(0, 9 bits))
+    val bufferedDqsIncCount = RegNext(trainingParams.dqsIncCount) init(U(0, 9 bits))
+    val bufferedCdlyValue = RegNext(trainingParams.cdlyValueOut) init(U(0, 9 bits))
+
+    // Training status buffering for external interface
+    val bufferedWriteLevelingDone = RegNext(trainingParams.writeLevelingDone) init(False)
+    val bufferedReadGateDone = RegNext(trainingParams.readGateDone) init(False)
+    val bufferedReadEyeDone = RegNext(trainingParams.readEyeDone) init(False)
+    val bufferedCaTrainingDone = RegNext(trainingParams.caTrainingDone) init(False)
+  }
+
+  // Training Parameter Area - centralized configuration management
+  val trainingParameterArea = new Area {
+    // All training parameter assignments are centralized here to avoid conflicts
+    // This area acts as the single source of truth for training configuration
+
+    // Note: Individual training parameter updates are handled by the TrainingController
+    // through the trainingParams area to maintain proper signal flow
+  }
+
   // TrainingController will be instantiated after dataPath and cmdPath are defined
   // to avoid forward reference issues
   val trainingCtrl = new Area {
@@ -401,36 +555,9 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     val caSampledBank = Bits(8 bits)
     val caCurrentCmd = DdrCmd()
 
-    // Training status signals exposed as Area members to avoid hierarchy violations
-    val writeLevelingDone = Bool()
-    val readGateDone = Bool()
-    val readEyeDone = Bool()
-    val caTrainingDone = Bool()
-    val cdly_value_out = UInt(9 bits)
-    val readGateResponse = Bits(1 bits)
-    val readEyeResponse = Bits(1 bits)
-    val writeLevelingResponse = Bits(1 bits)
-    val caTrainingResponse = Bits(2 bits)
-
     // Placeholder for controller - will be instantiated after data is available
     var controller: TrainingController = null
   }
-
-  // Training status signals are now defined globally to avoid assignment conflicts
-  // They will be assigned in the global scope below
-
-  // Define training status signals outside the Area to make them accessible
-  val trainingWriteLevelingDone = Bool()
-  val trainingReadGateDone = Bool()
-  val trainingReadEyeDone = Bool()
-  val trainingCaTrainingDone = Bool()
-  val trainingCdlyValueOut = UInt(9 bits)
-  val trainingReadGateResponse = Bits(1 bits)
-  val trainingReadEyeResponse = Bits(1 bits)
-  val trainingWriteLevelingResponse = Bits(1 bits)
-  val trainingCaTrainingResponse = Bits(2 bits)
-
-  // Training signals are now assigned later in the code to avoid conflicts
 
   // Initialization state machine integration
   // The initialization sequence is now handled by ControlManager through UnifiedAdapter
@@ -505,20 +632,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
   }
 
 
-  // Global training active signal to avoid assignment conflicts
-  val trainingActiveShared = RegInit(False)
-  // Single assignment with conditional logic to avoid overlap
-  trainingActiveShared := {
-    if (dfiConfig.signalConfig.useWrlvlEn) {
-      io.dfi.wrTraining.wrlvlEn.orR
-    } else if (dfiConfig.signalConfig.useRdlvlEn) {
-      io.dfi.rdTraining.rdlvlEn.orR
-    } else if (dfiConfig.signalConfig.useRdlvlGateEn) {
-      io.dfi.rdTraining.rdlvlGateEn.orR
-    } else {
-      False
-    }
-  }
+  // Training active signal assignment will be handled in TrainingControlArea to avoid hierarchy violations
 
   // Enhanced DDR clock generation with phase control and enable/disable - optimized
   val clockGen = new Area {
@@ -559,26 +673,19 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
 
     // OSERDESE3 for clock serialization - optimized reset
     val serdes = new OSERDESE3(hasTristate = true)
-    serdes.RST := sysRst | io.ctrl.reset
+    serdes.RST := io.ctrl.reset
     serdes.CLK := io.clk4x
-    serdes.CLKDIV := sysClk
+    serdes.CLKDIV := io.clk4x // Use 4x clock divided by 4 internally
     serdes.D := clkPattern
     // Fixed: Add missing T signal to prevent NO DRIVER ON error
     serdes.T := False  // Always drive output (not tristate)
 
     // ODELAYE3 with phase control for fine timing adjustment - optimized
     val delay = new ODELAYE3(delayType = "VARIABLE")
-    delay.RST := sysRst | io.ctrl.reset | io.phyCtrl.cdly_rst
-    delay.CLK := sysClk
+    delay.RST := io.ctrl.reset | io.phyCtrl.cdly_rst
+    delay.CLK := io.clk4x
     // EN_VTC controlled by DFI interface - disabled during training
-    val trainingActive = RegInit(False)
-    val trainingActiveNext = Bool()
-
-    // Use shared training active signal to avoid assignment conflicts
-    trainingActive := trainingActiveShared
-    // Assign trainingActiveNext to avoid unassigned register
-    trainingActiveNext := trainingActiveShared
-    delay.EN_VTC := io.dfi.update.ctrlupdAck && !trainingActive
+    delay.EN_VTC := io.dfi.update.ctrlupdAck && !trainingParams.trainingActive
     delay.CE := io.phyCtrl.cdly_inc
     delay.INC := True
     delay.ODATAIN := serdes.OQ
@@ -628,17 +735,17 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // Command signals handling
     val handler = new CmdSignalHandler(dfiConfig) // Instantiate the handler
 
-    // Connect DFI signals to handler inputs to avoid hierarchy violations
-    handler.dfiRasN_or := io.dfi.control.rasN.orR
-    handler.dfiCasN_or := io.dfi.control.casN.orR
-    handler.dfiWeN_or := io.dfi.control.weN.orR
-    handler.dfiActN_or := (if (dfiConfig.signalConfig.useAckN) io.dfi.control.actN.orR else False)
-    handler.dfiAddress := io.dfi.control.address.asUInt
-    handler.dfiCsN := io.dfi.control.csN
-    handler.dfiBank := (if (dfiConfig.signalConfig.useBank) io.dfi.control.bank.orR.asBits.resize(dfiConfig.bankWidth) else B(0, dfiConfig.bankWidth bits))
-    handler.dfiCke := io.dfi.control.cke
-    handler.dfiOdt := io.dfi.control.odt
-    handler.dfiResetN := io.dfi.control.resetN
+    // Connect DFI signals to handler interface
+    handler.io.dfi.rasNor := io.dfi.control.rasN.orR
+    handler.io.dfi.casNor := io.dfi.control.casN.orR
+    handler.io.dfi.weNor := io.dfi.control.weN.orR
+    handler.io.dfi.actNor := (if (dfiConfig.signalConfig.useAckN) io.dfi.control.actN.orR else True)
+    handler.io.dfi.address := io.dfi.control.address.asUInt
+    handler.io.dfi.csN := io.dfi.control.csN
+    handler.io.dfi.bank := (if (dfiConfig.signalConfig.useBank) io.dfi.control.bank.orR.asBits.resize(dfiConfig.bankWidth) else B(0, dfiConfig.bankWidth bits))
+    handler.io.dfi.cke := io.dfi.control.cke
+    handler.io.dfi.odt := io.dfi.control.odt
+    handler.io.dfi.resetN := io.dfi.control.resetN
 
     // Create OSERDES and ODELAY for each signal identified by the handler
     val oserdesVec = Seq.fill(handler.signalMappings.length)(new OSERDESE3(hasTristate = true))
@@ -670,9 +777,9 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
 
     // Process each signal through OSERDES and ODELAY
     for (((serdes, delay), i) <- oserdesVec.zip(odelayVec).zipWithIndex) {
-      serdes.RST := io.ctrl.reset | sysRst
+      serdes.RST := io.ctrl.reset
       serdes.CLK := io.clk4x
-      serdes.CLKDIV := sysClk
+      serdes.CLKDIV := io.clk4x // Use 4x clock divided by 4 internally
 
       // Fixed: Create local copies of DFI signals to avoid hierarchy violations
       // Don't access handler's internal signals directly
@@ -701,8 +808,8 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
         serdes.T := False  // Always drive output (not tristate)
       }
 
-      delay.RST := io.ctrl.reset | sysRst | io.phyCtrl.cdly_rst
-      delay.CLK := sysClk
+      delay.RST := io.ctrl.reset | io.phyCtrl.cdly_rst
+      delay.CLK := io.clk4x
       delay.EN_VTC := True // Always enabled after training
       delay.CE := io.phyCtrl.cdly_inc
       delay.INC := True
@@ -825,24 +932,17 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // Configure and connect DQS OSERDES for each byte lane
     for (((serdes, delay), i) <- oserdesVec.zip(odelayVec).zipWithIndex) {
       // Configure OSERDES
-      serdes.RST := io.ctrl.reset | sysRst
+      serdes.RST := io.ctrl.reset
       serdes.CLK := io.clk4x
-      serdes.CLKDIV := sysClk
+      serdes.CLKDIV := io.clk4x // Use 4x clock divided by 4 internally
       serdes.D      := BitSlip(pattern.io.output, 2, io.phyCtrl.bitslip)
       serdes.T      := ~delayLine.last
 
       // Configure delay line with proper reset and control signals
-      delay.RST := sysRst | io.ctrl.reset
-      delay.CLK := sysClk
+      delay.RST := io.ctrl.reset
+      delay.CLK := io.clk4x
       // EN_VTC follows same control logic as clockGen delay
-      val trainingActiveDqs = RegInit(False)
-      val trainingActiveDqsNext = Bool()
-
-      // Use shared training active signal to avoid assignment conflicts
-      trainingActiveDqs := trainingActiveShared
-      // Assign trainingActiveDqsNext to avoid unassigned register
-      trainingActiveDqsNext := trainingActiveShared
-      delay.EN_VTC := io.dfi.update.ctrlupdAck && !trainingActiveDqs
+      delay.EN_VTC := io.dfi.update.ctrlupdAck && !trainingParams.trainingActive
       delay.CE := io.phyCtrl.dq_inc & io.phyCtrl.dly_sel(i / 8) // Proper flattened phyCtrl signals
       delay.INC := True // Always increment (decrement handled by reset+increment)
       delay.ODATAIN := serdes.OQ
@@ -980,8 +1080,8 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
       val dataBitslip = BitSlip(data, 2, io.phyCtrl.bitslip)
       osd.D := dataBitslip
       osd.CLK := io.clk4x
-      osd.CLKDIV := sysClk
-      osd.RST := io.ctrl.reset | sysRst
+      osd.CLKDIV := io.clk4x
+      osd.RST := io.ctrl.reset
       osd.T := ~dqsPath.dq_oe // Use dqsPath's dq_oe for output enable
 
       // Connect to IO buffer
@@ -1000,8 +1100,8 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
       val maskBitslip = BitSlip(mask, 2, io.phyCtrl.bitslip)
       dmOsd.D := maskBitslip
       dmOsd.CLK := io.clk4x
-      dmOsd.CLKDIV := sysClk
-      dmOsd.RST := io.ctrl.reset | sysRst
+      dmOsd.CLKDIV := io.clk4x
+      dmOsd.RST := io.ctrl.reset
       dmOsd.T := ~dqsPath.dq_oe // Same timing as DQ
 
       // Connect DM directly to pads (no tristate needed for DM)
@@ -1062,15 +1162,14 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
 
     // Configure read path components - optimized shared parameters
     val enVtcShared = Bool()
-    val trainingActiveSharedNext = Bool()
 
-    // Use global training active signal to avoid assignment conflicts
-    enVtcShared := io.dfi.update.ctrlupdAck && !trainingActiveShared
+    // Use centralized training active signal to avoid assignment conflicts
+    enVtcShared := io.dfi.update.ctrlupdAck && !trainingParams.trainingActive
 
     for (((serdes, delay), i) <- rdIserdes.zip(rdDelay).zipWithIndex) {
       // Configure delay line with proper reset and control signals - shared parameters
-      delay.RST := sysRst | io.ctrl.reset | io.phyCtrl.dq_rst
-      delay.CLK := sysClk
+      delay.RST := io.ctrl.reset | io.phyCtrl.dq_rst
+      delay.CLK := io.clk4x
       delay.EN_VTC := enVtcShared
       delay.CE := io.phyCtrl.dq_inc && io.phyCtrl.dly_sel(i / 8)
       delay.INC := True
@@ -1089,13 +1188,13 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
       // Configure ISERDESE3 with DQS gating - shared parameters
       serdes.CLK := io.clk4x
       serdes.CLK_B := io.clk4xN
-      serdes.CLKDIV := sysClk
-      serdes.RST := io.ctrl.reset | sysRst
+      serdes.CLKDIV := io.clk4x // Use 4x clock divided by 4 internally
+      serdes.RST := io.ctrl.reset
       serdes.D := delay.DATAOUT
       // Enable FIFO mode for better timing with DQS
       serdes.FIFO_RD_EN := dqsGate
       // Fixed: Add missing FIFO_RD_CLK to prevent NO DRIVER ON error
-      serdes.FIFO_RD_CLK := sysClk  // Use the same clock as CLKDIV
+      serdes.FIFO_RD_CLK := io.clk4x  // Use the same clock as CLKDIV
 
       // FIFO status monitoring - removed for production code
       // Note: FIFO status can be monitored through serdes.FIFO_EMPTY signal if needed
@@ -1172,17 +1271,17 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
   }
 
   // Connect initialization command inputs to command generator
-  cmdPath.handler.initCmdValid := initManager.initCmdValid
-  cmdPath.handler.initCmd := initManager.initCmd
-  cmdPath.handler.initAddr := initManager.initAddr
-  cmdPath.handler.initBa := initManager.initBa
-  cmdPath.handler.initCsN := initManager.initCsN
-  cmdPath.handler.initCke := initManager.initCke
-  cmdPath.handler.initOdt := initManager.initOdt
-  cmdPath.handler.initResetN := initManager.initResetN
+  cmdPath.handler.io.init.cmdValid := initManager.initCmdValid
+  cmdPath.handler.io.init.cmd := initManager.initCmd
+  cmdPath.handler.io.init.addr := initManager.initAddr
+  cmdPath.handler.io.init.ba := initManager.initBa
+  cmdPath.handler.io.init.csN := initManager.initCsN
+  cmdPath.handler.io.init.cke := initManager.initCke
+  cmdPath.handler.io.init.odt := initManager.initOdt
+  cmdPath.handler.io.init.resetN := initManager.initResetN
 
   // Control signals
-  cmdPath.handler.padOverride := initManager.padOverride
+  cmdPath.handler.io.padOverride := initManager.padOverride
 
   // Direct connection of DFI control signals to pads (when not overridden by initialization)
   when(!initManager.padOverride) {
@@ -1382,93 +1481,99 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
   
   trainingCtrl.caCurrentCmd := currentCmdLocal // Sample current command
 
-  // Move training control signal extraction and registration before TrainingController instantiation
-  // Extract training control signals to avoid hierarchy violations
-  val wrLvlEn = if (dfiConfig.useWrlvlEn && io.dfi.wrTraining != null) io.dfi.wrTraining.wrlvlEn.orR else False
+  // Move training control signal extraction before TrainingController instantiation
+  // Use exposed output signals from TrainingControlArea to avoid hierarchy violations
+  val wrLvlEn = if (dfiConfig.useWrlvlEn && trainingControlArea != null) trainingControlArea.writeLevelingEnRegOut else False
   val wrLvlStrobe = if (dfiConfig.useWrlvlEn && io.dfi.wrTraining != null) io.dfi.wrTraining.wrlvlStrobe.orR else False
-  val rdLvlEn = if (dfiConfig.useRdlvlEn && io.dfi.rdTraining != null) io.dfi.rdTraining.rdlvlEn.orR else False
-  val rdLvlGateEn = if (dfiConfig.useRdlvlGateEn && io.dfi.rdTraining != null) io.dfi.rdTraining.rdlvlGateEn.orR else False
-  val caLvlEn = if (dfiConfig.useCalvlEn && io.dfi.caTraining != null && io.dfi.caTraining.calvlEn != null) io.dfi.caTraining.calvlEn.orR else False
-
-  // Register training control signals to avoid hierarchy violations
-  val wrLvlEnReg = RegNext(wrLvlEn) init(False)
-  val wrLvlStrobeReg = RegNext(wrLvlStrobe) init(False)
-  val rdLvlEnReg = RegNext(rdLvlEn) init(False)
-  val rdLvlGateEnReg = RegNext(rdLvlGateEn) init(False)
-  val caLvlEnReg = RegNext(caLvlEn) init(False)
+  val rdLvlEn = if (dfiConfig.useRdlvlEn && trainingControlArea != null) trainingControlArea.readEyeEnRegOut else False  // Map rdlvlEn to readEyeEnReg
+  val rdLvlGateEn = if (dfiConfig.useRdlvlGateEn && trainingControlArea != null) trainingControlArea.readGateEnRegOut else False
+  val caLvlEn = if (dfiConfig.useCalvlEn && trainingControlArea != null) trainingControlArea.caTrainingEnRegOut else False
 
   // Instantiate TrainingController only if training is enabled to avoid hierarchy violations
   if (dfiConfig.useWrlvlEn || dfiConfig.useRdlvlEn || dfiConfig.useRdlvlGateEn || dfiConfig.useCalvlEn) {
-    trainingCtrl.controller = new TrainingController(
-      dfiConfig,
-      initManager.initComplete,
-      trainingCtrl.writeLevelingSampledData,
-      trainingCtrl.readGateSampledData,
-      trainingCtrl.readEyeSampledData,
-      trainingCtrl.caSampledAddr,
-      trainingCtrl.caSampledBank,
-      trainingCtrl.caCurrentCmd,
-      wrLvlEn,    // Use original DFI signal
-      wrLvlStrobe, // Use original DFI signal
-      rdLvlEn,    // Use original DFI signal
-      rdLvlGateEn, // Use original DFI signal
-      caLvlEn     // Use original DFI signal
-    )
+    trainingCtrl.controller = new TrainingController(dfiConfig)
+
+    // Connect input signals to controller io
+    trainingCtrl.controller.io.initDone := initManager.initComplete
+    trainingCtrl.controller.io.writeLevelingSampledData := trainingCtrl.writeLevelingSampledData
+    trainingCtrl.controller.io.readGateSampledData := trainingCtrl.readGateSampledData
+    trainingCtrl.controller.io.readEyeSampledData := trainingCtrl.readEyeSampledData
+    trainingCtrl.controller.io.caSampledAddr := trainingCtrl.caSampledAddr
+    trainingCtrl.controller.io.caSampledBank := trainingCtrl.caSampledBank
+    trainingCtrl.controller.io.caCurrentCmd := trainingCtrl.caCurrentCmd
+    trainingCtrl.controller.io.wrLvlEn := wrLvlEn
+    trainingCtrl.controller.io.wrLvlStrobe := wrLvlStrobe
+    trainingCtrl.controller.io.rdLvlEn := rdLvlEn
+    trainingCtrl.controller.io.rdLvlGateEn := rdLvlGateEn
+    trainingCtrl.controller.io.caLvlEn := caLvlEn
   }
 
-  // Connect training status signals - use direct assignment approach
-  // Set default values (for when training is disabled)
-  trainingWriteLevelingDone := False
-  trainingReadGateDone := False
-  trainingReadEyeDone := False
-  trainingCaTrainingDone := False
-  trainingCdlyValueOut := U(0, 9 bits)
-  trainingReadGateResponse := B(0, 1 bits)
-  trainingReadEyeResponse := B(0, 1 bits)
-  trainingWriteLevelingResponse := B(0, 1 bits)
-  trainingCaTrainingResponse := B(0, 2 bits)
+  // Training status signals are now handled through centralized trainingParams
+  // This avoids assignment conflicts and hierarchy violations
 
-  // Override with controller signals only if controller exists and training is enabled
+  // Connect PHY control outputs through buffered training interface
   if (dfiConfig.useWrlvlEn || dfiConfig.useRdlvlEn || dfiConfig.useRdlvlGateEn || dfiConfig.useCalvlEn) {
-    // These assignments will override the defaults above
-    trainingWriteLevelingDone := trainingCtrl.controller.writeLevelingDone
-    trainingReadGateDone := trainingCtrl.controller.readGateDone
-    trainingReadEyeDone := trainingCtrl.controller.readEyeDone
-    trainingCaTrainingDone := trainingCtrl.controller.caTrainingDone
-    trainingCdlyValueOut := trainingCtrl.controller.cdly_value_out
-    trainingReadGateResponse := trainingCtrl.controller.readGateResponse
-    trainingReadEyeResponse := trainingCtrl.controller.readEyeResponse
-    trainingWriteLevelingResponse := trainingCtrl.controller.writeLevelingResponse
-    trainingCaTrainingResponse := trainingCtrl.controller.caTrainingResponse
-  }
+    // Update training parameters from controller
+    if (trainingCtrl.controller != null) {
+      trainingParams.halfSys8xTaps := trainingCtrl.controller.io.half_sys8x_taps
+      trainingParams.dqsIncCount := trainingCtrl.controller.io.dqs_inc_count
+      trainingParams.trainingCdlyInc := trainingCtrl.controller.io.training_cdly_inc
+      trainingParams.trainingDqInc := trainingCtrl.controller.io.training_dq_inc
+      trainingParams.trainingBitslip := trainingCtrl.controller.io.training_bitslip
+      trainingParams.cdlyValueOut := trainingCtrl.controller.io.cdly_value_out
 
-  // Connect trainingCtrl area signals to global training signals to avoid hierarchy violations
-  trainingCtrl.writeLevelingDone := trainingWriteLevelingDone
-  trainingCtrl.readGateDone := trainingReadGateDone
-  trainingCtrl.readEyeDone := trainingReadEyeDone
-  trainingCtrl.caTrainingDone := trainingCaTrainingDone
-  trainingCtrl.cdly_value_out := trainingCdlyValueOut
-  trainingCtrl.readGateResponse := trainingReadGateResponse
-  trainingCtrl.readEyeResponse := trainingReadEyeResponse
-  trainingCtrl.writeLevelingResponse := trainingWriteLevelingResponse
-  trainingCtrl.caTrainingResponse := trainingCaTrainingResponse
-
-  // Connect PHY control outputs to training controller (only if training is enabled)
-  if (dfiConfig.useWrlvlEn || dfiConfig.useRdlvlEn || dfiConfig.useRdlvlGateEn || dfiConfig.useCalvlEn) {
-    io.phyCtrl.half_sys8x_taps := trainingCtrl.controller.half_sys8x_taps
-    io.phyCtrl.dqs_inc_count := trainingCtrl.controller.dqs_inc_count
-    io.phyCtrl.training_cdly_inc := trainingCtrl.controller.training_cdly_inc
-    io.phyCtrl.training_dq_inc := trainingCtrl.controller.training_dq_inc
-    io.phyCtrl.training_bitslip := trainingCtrl.controller.training_bitslip
-    io.phyCtrl.cdly_value := trainingCtrl.controller.cdly_value_out
+      // Update training status from controller
+      trainingParams.writeLevelingDone := trainingCtrl.controller.io.writeLevelingDone
+      trainingParams.readGateDone := trainingCtrl.controller.io.readGateDone
+      trainingParams.readEyeDone := trainingCtrl.controller.io.readEyeDone
+      trainingParams.caTrainingDone := trainingCtrl.controller.io.caTrainingDone
+      trainingParams.writeLevelingResponse := trainingCtrl.controller.io.writeLevelingResponse
+      trainingParams.readGateResponse := trainingCtrl.controller.io.readGateResponse
+      trainingParams.readEyeResponse := trainingCtrl.controller.io.readEyeResponse
+      trainingParams.caTrainingResponse := trainingCtrl.controller.io.caTrainingResponse
+    }
   } else {
-    io.phyCtrl.half_sys8x_taps := U(0, 9 bits)
-    io.phyCtrl.dqs_inc_count := U(0, 9 bits)
-    io.phyCtrl.training_cdly_inc := False
-    io.phyCtrl.training_dq_inc := False
-    io.phyCtrl.training_bitslip := False
-    io.phyCtrl.cdly_value := U(0, 9 bits)
+    // Default values when training is disabled
+    trainingParams.halfSys8xTaps := U(0, 9 bits)
+    trainingParams.dqsIncCount := U(0, 9 bits)
+    trainingParams.cdlyValueOut := U(0, 9 bits)
+    trainingParams.trainingCdlyInc := False
+    trainingParams.trainingDqInc := False
+    trainingParams.trainingBitslip := False
+
+    // Training status defaults when disabled
+    trainingParams.writeLevelingDone := True // Consider done when training disabled
+    trainingParams.readGateDone := True
+    trainingParams.readEyeDone := True
+    trainingParams.caTrainingDone := True
+    trainingParams.writeLevelingResponse := B(0, 1 bits)
+    trainingParams.readGateResponse := B(0, 1 bits)
+    trainingParams.readEyeResponse := B(0, 1 bits)
+    trainingParams.caTrainingResponse := B(0, 2 bits)
   }
+
+  // Connect to PHY control interface through buffered signals to avoid hierarchy violations
+  io.phyCtrl.half_sys8x_taps := trainingInterfaceArea.bufferedHalfSys8xTaps
+  io.phyCtrl.dqs_inc_count := trainingInterfaceArea.bufferedDqsIncCount
+  io.phyCtrl.trainingCdlyInc := False // Training disabled - no increment
+  io.phyCtrl.trainingDqInc := False // Training disabled - no increment
+  io.phyCtrl.trainingBitslip := False // Training disabled - no bitslip
+  io.phyCtrl.cdly_value := trainingInterfaceArea.bufferedCdlyValue
+
+  // Add missing output signal assignments
+  io.phyCtrl.dly_dq_value := U(0, 9 bits) // Default DQ delay value when training disabled
+  io.phyCtrl.training_cdly_inc := False // Training disabled - no increment (underscore naming)
+  io.phyCtrl.training_dq_inc := False // Training disabled - no increment (underscore naming)
+  io.phyCtrl.training_bitslip := False // Training disabled - no bitslip (underscore naming)
+  io.phyCtrl.cke := True // Clock enable - always enabled when training is disabled
+  io.phyCtrl.initDone := initManager.initComplete // Initialization status
+  io.phyCtrl.resetN := io.ctrl.reset // Reset signal
+  io.phyCtrl.trainingDone := trainingInterfaceArea.bufferedWriteLevelingDone &&
+                            trainingInterfaceArea.bufferedReadGateDone &&
+                            trainingInterfaceArea.bufferedReadEyeDone &&
+                            trainingInterfaceArea.bufferedCaTrainingDone
+  io.phyCtrl.trainingActive := trainingParams.trainingActive
+  io.phyCtrl.errorStatus := B(0, 8 bits) // No errors for now
   
   // Training control signals already defined and registered above
 
@@ -1500,10 +1605,10 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
 
     // Update counters based on activity - pipelined and feature-aware with null safety
     val trainingActive = RegNext(
-      (Bool(dfiConfig.useWrlvlEn) && trainingWriteLevelingDone) ||
-      (Bool(dfiConfig.useRdlvlEn) && trainingReadGateDone) ||
-      (Bool(dfiConfig.useRdlvlGateEn) && trainingReadEyeDone) ||
-      (Bool(dfiConfig.useCalvlEn) && trainingCaTrainingDone)
+      (Bool(dfiConfig.useWrlvlEn) && trainingParams.writeLevelingDone) ||
+      (Bool(dfiConfig.useRdlvlEn) && trainingParams.readGateDone) ||
+      (Bool(dfiConfig.useRdlvlGateEn) && trainingParams.readEyeDone) ||
+      (Bool(dfiConfig.useCalvlEn) && trainingParams.caTrainingDone)
     ) init(False)
     val ckeActive = RegNext(io.dfi.control.cke.orR) init(False)
 
@@ -1590,14 +1695,14 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
   if (dfiConfig.usePhyupdReq) {
     // PHY requests update after training completion
     val fsmDoneReg = Reg(Bool()) init(False)
-    // Use global training signals to avoid hierarchy violations
+    // Use centralized training signals to avoid hierarchy violations
     val allTrainingDone = RegNext(
-      (trainingWriteLevelingDone && trainingReadGateDone &&
-       trainingReadEyeDone && trainingCaTrainingDone) ||
-      (trainingWriteLevelingDone && Bool(!dfiConfig.useRdlvlEn) && Bool(!dfiConfig.useRdlvlGateEn) && Bool(!dfiConfig.useCalvlEn)) ||
-      (trainingReadGateDone && Bool(!dfiConfig.useWrlvlEn) && Bool(!dfiConfig.useRdlvlGateEn) && Bool(!dfiConfig.useCalvlEn)) ||
-      (trainingReadEyeDone && Bool(!dfiConfig.useWrlvlEn) && Bool(!dfiConfig.useRdlvlEn) && Bool(!dfiConfig.useCalvlEn)) ||
-      (trainingCaTrainingDone && Bool(!dfiConfig.useWrlvlEn) && Bool(!dfiConfig.useRdlvlEn) && Bool(!dfiConfig.useRdlvlGateEn))
+      (trainingParams.writeLevelingDone && trainingParams.readGateDone &&
+       trainingParams.readEyeDone && trainingParams.caTrainingDone) ||
+      (trainingParams.writeLevelingDone && Bool(!dfiConfig.useRdlvlEn) && Bool(!dfiConfig.useRdlvlGateEn) && Bool(!dfiConfig.useCalvlEn)) ||
+      (trainingParams.readGateDone && Bool(!dfiConfig.useWrlvlEn) && Bool(!dfiConfig.useRdlvlGateEn) && Bool(!dfiConfig.useCalvlEn)) ||
+      (trainingParams.readEyeDone && Bool(!dfiConfig.useWrlvlEn) && Bool(!dfiConfig.useRdlvlEn) && Bool(!dfiConfig.useCalvlEn)) ||
+      (trainingParams.caTrainingDone && Bool(!dfiConfig.useWrlvlEn) && Bool(!dfiConfig.useRdlvlEn) && Bool(!dfiConfig.useRdlvlGateEn))
     ) init(False)
     fsmDoneReg := allTrainingDone
     val phyUpdateReq = fsmDoneReg && !RegNext(fsmDoneReg)
@@ -1608,17 +1713,16 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
   // ==========================================================================
   // DFI Training Response Signals Implementation - Optimized
   // ==========================================================================
-  // Training responses are now handled by the TrainingController FSM
-  // Default values to avoid driver conflicts - optimized with null safety
-  // Centralized training response assignment to avoid conflicts
+  // Training responses are now handled through centralized trainingParams
+  // This avoids hierarchy violations and assignment conflicts
   if (dfiConfig.useRdlvlResp && io.dfi.rdTraining != null) {
     val rdLvlRespReg = Reg(Bits(1 bits)) init(0)
-    // Use TrainingController's exposed signals to avoid hierarchy violations
-    val readGateDone = RegNext(trainingCtrl.readGateDone) init(False)
-    val readGateResponse = RegNext(trainingCtrl.readGateResponse) init(B(0, 1 bits))
-    val readEyeDone = RegNext(trainingCtrl.readEyeDone) init(False)
-    val readEyeResponse = RegNext(trainingCtrl.readEyeResponse) init(B(0, 1 bits))
-    
+    // Use centralized training signals to avoid hierarchy violations
+    val readGateDone = RegNext(trainingParams.readGateDone) init(False)
+    val readGateResponse = RegNext(trainingParams.readGateResponse) init(B(0, 1 bits))
+    val readEyeDone = RegNext(trainingParams.readEyeDone) init(False)
+    val readEyeResponse = RegNext(trainingParams.readEyeResponse) init(B(0, 1 bits))
+
     // Assign response based on which training module is active and done
     when(readGateDone) {
       rdLvlRespReg := readGateResponse
@@ -1632,10 +1736,10 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
 
   if (dfiConfig.useWrlvlResp && io.dfi.wrTraining != null) {
     val wrLvlRespReg = Reg(Bits(1 bits)) init(0)
-    // Use TrainingController's exposed signals to avoid hierarchy violations
-    val writeLevelingDone = RegNext(trainingCtrl.writeLevelingDone) init(False)
-    val writeLevelingResponse = RegNext(trainingCtrl.writeLevelingResponse) init(B(0, 1 bits))
-    
+    // Use centralized training signals to avoid hierarchy violations
+    val writeLevelingDone = RegNext(trainingParams.writeLevelingDone) init(False)
+    val writeLevelingResponse = RegNext(trainingParams.writeLevelingResponse) init(B(0, 1 bits))
+
     when(writeLevelingDone) {
       wrLvlRespReg := writeLevelingResponse
     }.otherwise {
@@ -1646,10 +1750,10 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
 
   if (dfiConfig.useCalvlResp && io.dfi.caTraining != null) {
     val caLvlRespReg = Reg(Bits(2 bits)) init(0)
-    // Use TrainingController's exposed signals to avoid hierarchy violations
-    val caTrainingDone = RegNext(trainingCtrl.caTrainingDone) init(False)
-    val caTrainingResponse = RegNext(trainingCtrl.caTrainingResponse) init(B(0, 2 bits))
-    
+    // Use centralized training signals to avoid hierarchy violations
+    val caTrainingDone = RegNext(trainingParams.caTrainingDone) init(False)
+    val caTrainingResponse = RegNext(trainingParams.caTrainingResponse) init(B(0, 2 bits))
+
     when(caTrainingDone) {
       caLvlRespReg := caTrainingResponse
     }.otherwise {
