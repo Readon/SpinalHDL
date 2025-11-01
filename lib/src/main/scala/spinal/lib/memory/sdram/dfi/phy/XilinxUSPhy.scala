@@ -185,6 +185,26 @@ class XilinxUSPhy(
   // DRAM clock disable - defined early to avoid forward reference
   val dramClkDisable = RegInit(False)
 
+  // Training Interface Area - external connections with proper buffering
+  // Moved here to avoid forward reference issues in driveFrom method
+  val trainingInterfaceArea = new Area {
+    // Buffer training control signals to break combinatorial loops
+    val bufferedTrainingCdlyInc = RegNext(trainingParams.trainingCdlyInc) init(False)
+    val bufferedTrainingDqInc = RegNext(trainingParams.trainingDqInc) init(False)
+    val bufferedTrainingBitslip = RegNext(trainingParams.trainingBitslip) init(False)
+
+    // Interface status buffering
+    val bufferedHalfSys8xTaps = RegNext(trainingParams.halfSys8xTaps) init(U(0, delayCounterWidth bits))
+    val bufferedDqsIncCount = RegNext(trainingParams.dqsIncCount) init(U(0, delayCounterWidth bits))
+    val bufferedCdlyValue = RegNext(trainingParams.cdlyValueOut) init(U(0, delayCounterWidth bits))
+
+    // Training status buffering for external interface
+    val bufferedWriteLevelingDone = RegNext(trainingParams.writeLevelingDone) init(False)
+    val bufferedReadGateDone = RegNext(trainingParams.readGateDone) init(False)
+    val bufferedReadEyeDone = RegNext(trainingParams.readEyeDone) init(False)
+    val bufferedCaTrainingDone = RegNext(trainingParams.caTrainingDone) init(False)
+  }
+
   def driveFrom(busCtrl: BusSlaveFactory, address: BigInt): Unit = {
     // Control register group (0x00)
     val ctrlReg = busCtrl.createReadAndWrite(Bits(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits), 0x00).init(0)
@@ -519,25 +539,7 @@ class XilinxUSPhy(
     trainingParams.trainingActive := False
   }
 
-  // Training Interface Area - external connections with proper buffering
-  val trainingInterfaceArea = new Area {
-    // Buffer training control signals to break combinatorial loops
-    val bufferedTrainingCdlyInc = RegNext(trainingParams.trainingCdlyInc) init(False)
-    val bufferedTrainingDqInc = RegNext(trainingParams.trainingDqInc) init(False)
-    val bufferedTrainingBitslip = RegNext(trainingParams.trainingBitslip) init(False)
-
-    // Interface status buffering
-    val bufferedHalfSys8xTaps = RegNext(trainingParams.halfSys8xTaps) init(U(0, 9 bits))
-    val bufferedDqsIncCount = RegNext(trainingParams.dqsIncCount) init(U(0, 9 bits))
-    val bufferedCdlyValue = RegNext(trainingParams.cdlyValueOut) init(U(0, 9 bits))
-
-    // Training status buffering for external interface
-    val bufferedWriteLevelingDone = RegNext(trainingParams.writeLevelingDone) init(False)
-    val bufferedReadGateDone = RegNext(trainingParams.readGateDone) init(False)
-    val bufferedReadEyeDone = RegNext(trainingParams.readEyeDone) init(False)
-    val bufferedCaTrainingDone = RegNext(trainingParams.caTrainingDone) init(False)
-  }
-
+  
   // Training Parameter Area - centralized configuration management
   val trainingParameterArea = new Area {
     // All training parameter assignments are centralized here to avoid conflicts
