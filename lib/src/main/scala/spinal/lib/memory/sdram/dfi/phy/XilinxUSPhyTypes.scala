@@ -40,6 +40,7 @@ object TimingConstants {
   val EYE_MAX_DELAY = 256
   val CA_MAX_DELAY = 256
   val TIMEOUT_100 = 100
+  val WRITE_TRAINING_TIMEOUT = 100  // Write leveling training timeout cycles
 }
 
 // DDR3 JEDEC timing constants
@@ -50,6 +51,23 @@ object DDR3TimingConstants {
   val TMRD = 4   // MRS to MRS delay (cycles)
   val TZQCS = 64 // ZQCS calibration time (cycles)
   val TRRD = 4   // Row to Row Delay for different ranks (cycles)
+
+  // Power-up and initialization timing constants (REQ-CS-008 compliance)
+  val T_PWRUP_CYCLES = 40000   // 200us power-up time (200000ns / 5ns = 40000 cycles)
+  val T_RESET_CYCLES = 40000   // 200us reset stabilization time
+  val T_CKE_LOW_CYCLES = 10    // Minimum 10 cycles CKE low after reset
+
+  // DQS timing constants (REQ-CS-008 compliance)
+  val TCK_DIVISOR = 4          // TCK divisor for DQS initial delay calculation
+  val MIN_DELAY = 1            // Minimum delay value for timing calculations
+  val WRITE_LATENCY_OFFSET = 1 // Offset for safe write latency calculation
+
+  // System and timing constants (REQ-CS-008 compliance)
+  val RESET_TIMEOUT_CYCLES = 1000    // Reset synchronization timeout cycles
+  val CDC_TIMEOUT_CYCLES = 1000      // Clock domain crossing timeout cycles
+  val MAX_BURST_LENGTH = 8           // Maximum burst length for resource optimization
+  val MAX_EYE_DELAY = 256            // Maximum delay for eye training
+  val TRAINING_DISTRIBUTOR = 2       // Distributor for training data across byte lanes
 }
 
 // DDR commands enum (package-level)
@@ -1043,7 +1061,7 @@ class WriteLevelingModule(config: DfiConfig) extends Component {
     }
 
     // Complete when stable pattern matches or timeout reached
-    when(patternMatch || timeoutCounter >= 100) {
+    when(patternMatch || timeoutCounter >= TimingConstants.WRITE_TRAINING_TIMEOUT) {
       doneReg := True
     }
   }
@@ -1227,7 +1245,7 @@ class ReadEyeModule(config: DfiConfig, dataSampleCount: Int) extends Component {
         }
 
         // Move to next phase when eye found or max delay reached
-        when(eyeFound || delayCounter >= 256) {
+        when(eyeFound || delayCounter >= DDR3TimingConstants.MAX_EYE_DELAY) {
           when(phaseReg < 3) {
             phaseReg := phaseReg + 1
             delayCounter := 0 // Reset delay for next phase
@@ -1333,7 +1351,7 @@ class CATrainingModule(config: DfiConfig) extends Component {
       }
 
       // Complete when CA alignment found or max delay reached
-      when(caFound || delayCounter >= 256) {
+      when(caFound || delayCounter >= DDR3TimingConstants.MAX_EYE_DELAY) {
         doneReg := True
       }
     }

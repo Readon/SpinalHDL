@@ -242,12 +242,12 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     val currentState = Reg(InitState()) init(InitState.IDLE)
     val initTimer = Reg(UInt(20 bits)) init(0)  // Extended timer for 200us timing
 
-    // JEDEC DDR3 timing parameters (assuming 200MHz controller clock = 5ns cycle)
-    val tPWRUP = 40000   // 200us power-up time (200000ns / 5ns = 40000 cycles)
-    val tRESET = 40000   // 200us reset stabilization time
-    val tCKE_LOW = 10    // Minimum 10 cycles CKE low after reset
-    val tMRD = 4         // 4 cycles between MRS commands
-    val tZQCS = 64       // ZQCS calibration time
+    // JEDEC DDR3 timing parameters (using named constants for REQ-CS-008 compliance)
+    val tPWRUP = DDR3TimingConstants.T_PWRUP_CYCLES   // 200us power-up time
+    val tRESET = DDR3TimingConstants.T_RESET_CYCLES   // 200us reset stabilization time
+    val tCKE_LOW = DDR3TimingConstants.T_CKE_LOW_CYCLES    // Minimum CKE low cycles after reset
+    val tMRD = DDR3TimingConstants.TMRD         // 4 cycles between MRS commands
+    val tZQCS = DDR3TimingConstants.TZQCS       // ZQCS calibration time
 
     // Mode register programming state
     // MrsState is now defined in XilinxUSPhyTypes.scala
@@ -585,7 +585,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // Detect reset synchronization issues (metastability or stuck resets)
     when(io.ctrl.reset && !dfiResetSynced) {
       resetTimeoutCounter := resetTimeoutCounter + 1
-      when(resetTimeoutCounter >= 1000) { // Timeout after ~1000 cycles
+      when(resetTimeoutCounter >= DDR3TimingConstants.RESET_TIMEOUT_CYCLES) { // Timeout after configured cycles
         resetSyncError := True
       }
     } otherwise {
@@ -617,9 +617,9 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     val ckeChanged = ckeFF1 =/= ckeFF2
     val odtChanged = odtFF1 =/= odtFF2
 
-    when((ckeChanged || odtChanged) && cdcTimeoutCounter < 1000) {
+    when((ckeChanged || odtChanged) && cdcTimeoutCounter < DDR3TimingConstants.CDC_TIMEOUT_CYCLES) {
       cdcTimeoutCounter := cdcTimeoutCounter + 1
-      when(cdcTimeoutCounter >= 999) {
+      when(cdcTimeoutCounter >= (DDR3TimingConstants.CDC_TIMEOUT_CYCLES - 1)) {
         cdcError := True
       }
     } otherwise {
@@ -867,8 +867,8 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // ==========================================================================
     // Write Latency and Timing Generation - Optimized
     //==========================================================================
-    // Ensure writeLatency is at least 3 for proper preamble/postamble
-    val safeWriteLatency = Math.ceil(dfiConfig.sdram.ddrWrLat / dfiConfig.frequencyRatio).toInt - 1
+    // Ensure writeLatency is at least 3 for proper preamble/postamble (REQ-CS-008 compliance)
+    val safeWriteLatency = Math.ceil(dfiConfig.sdram.ddrWrLat / dfiConfig.frequencyRatio).toInt - DDR3TimingConstants.WRITE_LATENCY_OFFSET
 
     // Generate timing signals from delay taps with proper synchronization - pipelined
     val wrDataEnDelayed = History(wrDataEn, safeWriteLatency + 2)
@@ -922,7 +922,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // LiteX uses tck/4 as the initial DQS delay for proper timing alignment
     val sysClkFreq = dfiConfig.frequencyRatio * dfiConfig.sdram.ddrMHZ * 1e6 // System clock frequency in Hz
     val tckPeriodPs = (1e12 / sysClkFreq).toInt // Clock period in picoseconds
-    val dqsInitialDelay = Math.max(1, tckPeriodPs / 4) // tck/4 as per LiteX implementation, ensure at least 1
+    val dqsInitialDelay = Math.max(DDR3TimingConstants.MIN_DELAY, tckPeriodPs / DDR3TimingConstants.TCK_DIVISOR) // tck/4 as per LiteX implementation, ensure at least minimum
     
     // Timing configuration: System clock freq: ${sysClkFreq/1e6} MHz, TCK: ${tckPeriodPs} ps, DQS initial delay: ${dqsInitialDelay} taps
     // Note: Timing values can be monitored through phyCtrl interface for debugging
@@ -1000,7 +1000,7 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
     // ==========================================================================
     // Burst length configuration (from SDRAM config) - use configurable parameter
     val burstLength = configParams.burstLength.resize(4) // Use configurable burst length
-    val maxBurstLength = 8 // Fixed maximum for resource optimization
+    val maxBurstLength = DDR3TimingConstants.MAX_BURST_LENGTH // Fixed maximum for resource optimization (REQ-CS-008 compliance)
     val burstOrder = Vec.fill(maxBurstLength)(UInt(3 bits))
 
     // Generate burst ordering based on burst length - optimized with registered computation
@@ -1430,8 +1430,8 @@ class XilinxUSPhy(dfiConfig: DfiConfig) extends Component {
   // Now that dataPath and cmdPath are defined, complete the trainingCtrl initialization
   trainingCtrl.writeLevelingSampledData := RegNext(dataPath.rdIserdes(0).Q(7 downto 0)) init(B(0, 8 bits)) // Sample first byte lane for write leveling
   trainingCtrl.readGateSampledData := RegNext(dataPath.rdIserdes(0).Q(7 downto 0)) init(B(0, 8 bits)) // Sample first byte lane for read gate training
-  for (i <- 0 until 4) {
-    val byteIndex = (i * 2) % (dfiConfig.dataWidth / 8) // Distribute across available byte lanes
+  for (i <- 0 until HardwareWidths.PHASE_COUNT) {
+    val byteIndex = (i * DDR3TimingConstants.TRAINING_DISTRIBUTOR) % (dfiConfig.dataWidth / 8) // Distribute across available byte lanes
     if (byteIndex < dataPath.rdIserdes.length) {
       trainingCtrl.readEyeSampledData(i) := RegNext(dataPath.rdIserdes(byteIndex).Q(7 downto 0)) init(B(0, 8 bits))
     } else {
