@@ -58,7 +58,7 @@ case class UnifiedAdapter(config: UnifiedAdapterConfig) extends Component {
     if (config.dfiConfig.useRdlvlReq) reqs += io.dfi.rdTraining.rdlvlReq.orR
     if (config.dfiConfig.useWrlvlReq) reqs += io.dfi.wrTraining.wrlvlReq.orR
     if (config.dfiConfig.useCalvlReq) reqs += io.dfi.caTraining.calvlReq.orR
-    CountOne(reqs.result()).resize(32)
+    CountOne(reqs.result()).resize(DfiCommonConstants.DEBUG_COUNTER_WIDTH)
   }
   io.debug.errorCount := commandParser.debug.errorCount
 }
@@ -130,10 +130,10 @@ case class UnifiedCommandParser(config: UnifiedAdapterConfig,
   parsedData.readData := rawReadData(config.sdramConfig.dataWidth - 1 downto 0)
   parsedData.readValid := dfiRead.rd.map(rd => if (config.dfiConfig.useRddataDnv) rd.rddataDnv.orR else False).reduce(_ || _)
 
-  // 调试信号 - 符合REQ-CS-018：使用直接对象访问
-  debug.commandCount := CountOne(Seq(parsedCommand.valid)).resize(32)
-  debug.dataCount := CountOne(Seq(parsedData.writeValid, parsedData.readValid)).resize(32)
-  debug.errorCount := U(0, 32 bits)
+  // Debug signals - REQ-CS-018 compliance: direct object access using common constants
+  debug.commandCount := CountOne(Seq(parsedCommand.valid)).resize(DfiCommonConstants.DEBUG_COUNTER_WIDTH)
+  debug.dataCount := CountOne(Seq(parsedData.writeValid, parsedData.readValid)).resize(DfiCommonConstants.DEBUG_COUNTER_WIDTH)
+  debug.errorCount := U(0, DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
 }
 
 /**
@@ -218,9 +218,9 @@ case class UnifiedTrainingProcessor(config: UnifiedAdapterConfig,
   //   training.caResp := B"0".resized
   // }
 
-  // 调试信号 - 符合REQ-CS-018：使用直接对象访问
-  debug.trainingCount := CountOne(Seq(training.readReq, training.writeReq, training.caReq)).resize(32)
-  debug.errorCount := U(0, 32 bits)
+  // Debug signals - REQ-CS-018 compliance: direct object access using common constants
+  debug.trainingCount := CountOne(Seq(training.readReq, training.writeReq, training.caReq)).resize(DfiCommonConstants.DEBUG_COUNTER_WIDTH)
+  debug.errorCount := U(0, DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
 }
 
 /**
@@ -413,19 +413,19 @@ case class UnifiedTrainingInterface(config: DfiConfig) extends Bundle with IMast
  * 调试接口定义
  */
 case class UnifiedAdapterDebug() extends Bundle {
-  val commandCount = UInt(32 bits)
-  val dataCount = UInt(32 bits)
-  val trainingCount = UInt(32 bits)
-  val errorCount = UInt(32 bits)
+  val commandCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
+  val dataCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
+  val trainingCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
+  val errorCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
 }
 
 case class UnifiedCommandParserDebug() extends Bundle {
-  val commandCount = UInt(32 bits)
-  val dataCount = UInt(32 bits)
-  val errorCount = UInt(32 bits)
+  val commandCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
+  val dataCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
+  val errorCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
 }
 
 case class UnifiedTrainingProcessorDebug() extends Bundle {
-  val trainingCount = UInt(32 bits)
-  val errorCount = UInt(32 bits)
+  val trainingCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
+  val errorCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
 }

@@ -6,41 +6,41 @@ import spinal.lib.memory.sdram.dfi._
 import spinal.lib.memory.sdram.dfi.phy.interfaces._
 
 /**
- * 控制管理器组件
+ * Control Manager Component
  *
- * 合并了CalibrationEngine和InitializationManager的功能，
- * 统一管理DDR初始化、校准和训练状态机。
+ * Merges CalibrationEngine and InitializationManager functionality,
+ * Unified management of DDR initialization, calibration and training state machines.
  */
 case class ControlManager(config: ControlConfig) extends Component {
 
   val io = new Bundle {
-    // 训练接口
+    // Training interface
     val training = slave(DfiTrainingInterface(config.dfiConfig))
 
-    // 初始化接口
+    // Initialization interface
     val init = slave(DdrInitInterface(config.sdramConfig))
 
-    // 校准接口
+    // Calibration interface
     val calibrationInterface = slave(DdrCalibrationInterface(config.sdramConfig))
 
-    // DDR存储器接口
+    // DDR memory interface
     val sdram = master(DdrInterface(config.sdramConfig))
 
-    // 调试接口
+    // Debug interface
     val debug = out(ControlManagerDebug())
   }
 
-  // 控制状态机
+  // Control state machine
   val controlFsm = ControlFsm(config, io.training, io.init, io.calibrationInterface)
 
-  // DDR接口控制器
+  // DDR interface controller
   val ddrInterfaceController = ControlDdrInterfaceController(config, controlFsm.ddrCommand)
   io.sdram := ddrInterfaceController.sdram
 
-  // 模式寄存器控制器
+  // Mode register controller
   val modeRegisterController = ControlModeRegisterController(config, controlFsm.mrCommand)
 
-  // 调试信号 - 符合REQ-CS-018：使用直接对象访问
+  // Debug signals - REQ-CS-018 compliance: direct object access
   io.debug.initCount := controlFsm.debug.initCount
   io.debug.calibrationCount := controlFsm.debug.calibrationCount
   io.debug.errorCount := controlFsm.debug.errorCount
@@ -48,7 +48,7 @@ case class ControlManager(config: ControlConfig) extends Component {
 }
 
 /**
- * 控制配置
+ * Control configuration
  */
 case class ControlConfig(
     ddrStandard: DdrStandard.E,
@@ -58,62 +58,67 @@ case class ControlConfig(
 )
 
 /**
- * 控制有限状态机
+ * Control finite state machine
  */
 case class ControlFsm(config: ControlConfig,
                       training: DfiTrainingInterface,
                       init: DdrInitInterface,
                       calibrationInterface: DdrCalibrationInterface) extends Area {
 
-  // 输出信号 - directionless
+  // Output signals - directionless
   val ddrCommand = DdrInitCommandInterface()
   val mrCommand = ModeRegisterCommandInterface()
   val debug = ControlFsmDebug()
 
-  // 控制状态枚举 - 合并初始化、校准和训练状态
+  // Control state enumeration - merge initialization, calibration and training states
   object ControlState extends SpinalEnum {
     val IDLE, POWER_UP, RESET, CKE_LOW, MRS, ZQ_CALIBRATION,
          READ_LEVELING, WRITE_LEVELING, CA_TRAINING, DONE, ERROR = newElement()
   }
 
-  // 状态寄存器
+  // State registers using common constants (REQ-CS-008 compliance)
   val currentState = Reg(ControlState()) init ControlState.IDLE
-  val initCount = Reg(UInt(32 bits)) init 0
-  val calibrationCount = Reg(UInt(32 bits)) init 0
-  val errorCount = Reg(UInt(32 bits)) init 0
+  val initCount = Reg(UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)) init 0
+  val calibrationCount = Reg(UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)) init 0
+  val errorCount = Reg(UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)) init 0
 
-  // 初始化定时器
-  val initTimer = Reg(UInt(16 bits)) init 0
-  val initDelay = Reg(UInt(16 bits)) init 0
+  // Initialization timer using common constants (REQ-CS-008 compliance)
+  val initTimer = Reg(UInt(DfiCommonConstants.TIMER_WIDTH bits)) init 0
+  val initDelay = Reg(UInt(DfiCommonConstants.TIMER_WIDTH bits)) init 0
 
-  // 默认赋值以避免latch
+  // Default assignments to avoid latches using common constants (REQ-CS-008 compliance)
   mrCommand.valid := False
-  mrCommand.mr0 := B"16'h0000"
-  mrCommand.mr1 := B"16'h0000"
-  mrCommand.mr2 := B"16'h0000"
-  mrCommand.mr3 := B"16'h0000"
+  mrCommand.mr0 := B(DfiCommonConstants.MR_DEFAULT_INT, 16 bits)
+  mrCommand.mr1 := B(DfiCommonConstants.MR_DEFAULT_INT, 16 bits)
+  mrCommand.mr2 := B(DfiCommonConstants.MR_DEFAULT_INT, 16 bits)
+  mrCommand.mr3 := B(DfiCommonConstants.MR_DEFAULT_INT, 16 bits)
   ddrCommand.valid := False
   ddrCommand.cmd := DdrCommand.NOP
 
-  // 默认训练响应赋值 - 作为slave接口，需要驱动resp信号
-  // 使用条件检查避免访问不可访问的信号
+  // Default training response assignments - as slave interface, need to drive resp signals
+  // Use conditional checks to avoid accessing inaccessible signals
   if (training.readTraining.resp != null) {
-    training.readTraining.resp := B"1'b1" // 默认成功
+    training.readTraining.resp := B(DfiCommonConstants.TRAINING_SUCCESS_1BIT_INT, 1 bits) // Default success
   }
   if (training.writeTraining.resp != null) {
-    training.writeTraining.resp := B"1'b1" // 默认成功
+    training.writeTraining.resp := B(DfiCommonConstants.TRAINING_SUCCESS_1BIT_INT, 1 bits) // Default success
   }
   if (training.caTraining.resp != null) {
-    training.caTraining.resp := B"2'b11" // 默认成功
+    training.caTraining.resp := B(DfiCommonConstants.TRAINING_SUCCESS_2BIT_INT, 2 bits) // Default success
   }
 
-  // 状态机逻辑 - 合并初始化序列和校准训练
+  // State machine logic - merge initialization sequence and calibration training
+  // Define timing constants for initialization sequence (REQ-CS-008 compliance)
+  val POWER_UP_CYCLES = 200  // 200us power up time
+  val RESET_CYCLES = 200      // 200us reset time
+  val CKE_LOW_CYCLES = 10     // 10 cycles CKE low
+
   switch(currentState) {
     is(ControlState.IDLE) {
       when(init.initStart) {
         currentState := ControlState.POWER_UP
         initTimer := 0
-        initDelay := 200 // 200us power up time
+        initDelay := POWER_UP_CYCLES
       } elsewhen(training.readTraining.req) {
         currentState := ControlState.READ_LEVELING
       } elsewhen(training.writeTraining.req) {
@@ -123,13 +128,13 @@ case class ControlFsm(config: ControlConfig,
       }
     }
 
-    // 初始化序列状态
+    // Initialization sequence states
     is(ControlState.POWER_UP) {
       initTimer := initTimer + 1
       when(initTimer >= initDelay) {
         currentState := ControlState.RESET
         initTimer := 0
-        initDelay := 200 // 200us reset time
+        initDelay := RESET_CYCLES
       }
     }
 
@@ -138,7 +143,7 @@ case class ControlFsm(config: ControlConfig,
       when(initTimer >= initDelay) {
         currentState := ControlState.CKE_LOW
         initTimer := 0
-        initDelay := 10 // 10 cycles CKE low
+        initDelay := CKE_LOW_CYCLES
       }
     }
 
@@ -150,12 +155,12 @@ case class ControlFsm(config: ControlConfig,
     }
 
     is(ControlState.MRS) {
-      // 执行模式寄存器设置
+      // Execute mode register settings using common constants (REQ-CS-008 compliance)
       mrCommand.valid := True
-      mrCommand.mr0 := B"16'h0520" // 示例MR0设置
-      mrCommand.mr1 := B"16'h0000"
-      mrCommand.mr2 := B"16'h0000"
-      mrCommand.mr3 := B"16'h0000"
+      mrCommand.mr0 := B(DfiCommonConstants.MR0_DDR3_INT, 16 bits) // DDR3 MR0 setting
+      mrCommand.mr1 := B(DfiCommonConstants.MR_DEFAULT_INT, 16 bits)
+      mrCommand.mr2 := B(DfiCommonConstants.MR_DEFAULT_INT, 16 bits)
+      mrCommand.mr3 := B(DfiCommonConstants.MR_DEFAULT_INT, 16 bits)
 
       when(mrCommand.done) {
         when(init.zqCalibration) {
@@ -167,7 +172,7 @@ case class ControlFsm(config: ControlConfig,
     }
 
     is(ControlState.ZQ_CALIBRATION) {
-      // 执行ZQ校准
+      // Execute ZQ calibration
       ddrCommand.valid := True
       ddrCommand.cmd := DdrCommand.ZQCS
 
@@ -176,9 +181,9 @@ case class ControlFsm(config: ControlConfig,
       }
     }
 
-    // 校准训练状态
+    // Calibration training states
     is(ControlState.READ_LEVELING) {
-      // 执行读电平校准
+      // Execute read leveling calibration
       when(training.readTraining.resp.orR) {
         currentState := ControlState.DONE
         calibrationCount := calibrationCount + 1
@@ -186,7 +191,7 @@ case class ControlFsm(config: ControlConfig,
     }
 
     is(ControlState.WRITE_LEVELING) {
-      // 执行写电平校准
+      // Execute write leveling calibration
       when(training.writeTraining.resp.orR) {
         currentState := ControlState.DONE
         calibrationCount := calibrationCount + 1
@@ -194,10 +199,10 @@ case class ControlFsm(config: ControlConfig,
     }
 
     is(ControlState.CA_TRAINING) {
-      // 执行CA训练
+      // Execute CA training
       when(training.caTraining.req) {
         if (training.caTraining.resp != null) {
-          training.caTraining.resp := B"2'b11" // 设置训练成功响应
+          training.caTraining.resp := B(DfiCommonConstants.TRAINING_SUCCESS_2BIT_INT, 2 bits) // Set training success response
         }
         currentState := ControlState.DONE
         calibrationCount := calibrationCount + 1
@@ -219,10 +224,10 @@ case class ControlFsm(config: ControlConfig,
     }
   }
 
-  // 初始化完成信号
+  // Initialization complete signal
   init.initComplete := currentState === ControlState.DONE
 
-  // 调试信号 - 符合REQ-CS-018：使用直接对象访问
+  // Debug signals - REQ-CS-018 compliance: direct object access
   debug.initCount := initCount
   debug.calibrationCount := calibrationCount
   debug.errorCount := errorCount
@@ -230,15 +235,15 @@ case class ControlFsm(config: ControlConfig,
 }
 
 /**
- * DDR接口控制器（从InitializationManager复用）
+ * DDR interface controller (repurposed from InitializationManager)
  */
 case class ControlDdrInterfaceController(config: ControlConfig,
                                          initCommand: DdrInitCommandInterface) extends Area {
 
-  // 输出信号 - directionless
+  // Output signals - directionless
   val sdram = DdrInterface(config.sdramConfig)
 
-  // DDR接口信号生成
+  // DDR interface signal generation
   sdram.clk := ClockDomain.current.readClockWire
   sdram.clk_n := !ClockDomain.current.readClockWire
   sdram.cke(0) := True
@@ -246,71 +251,71 @@ case class ControlDdrInterfaceController(config: ControlConfig,
   sdram.ras_n := True
   sdram.cas_n := True
   sdram.we_n := True
-  sdram.addr := B"0".resized
-  sdram.ba := B"0".resized
-  sdram.dq := B"0".resized
-  sdram.dqs := B"0".resized
-  sdram.dqs_n := B"0".resized
-  sdram.dm := B"0".resized
+  sdram.addr := B(0).resized
+  sdram.ba := B(0).resized
+  sdram.dq := B(0).resized
+  sdram.dqs := B(0).resized
+  sdram.dqs_n := B(0).resized
+  sdram.dm := B(0).resized
   sdram.odt(0) := False
   sdram.reset_n := True
 
-  // 根据命令设置控制信号
+  // Set control signals based on command
   when(initCommand.valid) {
     switch(initCommand.cmd) {
       is(DdrCommand.NOP) {
-        sdram.cs_n := B"1"
+        sdram.cs_n := B(1)
       }
       is(DdrCommand.ACT) {
         sdram.ras_n := False
-        sdram.cs_n := B"0"
+        sdram.cs_n := B(0)
       }
       is(DdrCommand.READ) {
         sdram.cas_n := False
-        sdram.cs_n := B"0"
+        sdram.cs_n := B(0)
         sdram.we_n := True
       }
       is(DdrCommand.WRITE) {
         sdram.cas_n := False
         sdram.we_n := False
-        sdram.cs_n := B"0"
+        sdram.cs_n := B(0)
       }
       is(DdrCommand.PRE) {
         sdram.ras_n := False
         sdram.we_n := False
-        sdram.cs_n := B"0"
+        sdram.cs_n := B(0)
       }
       is(DdrCommand.REF) {
         sdram.ras_n := False
         sdram.cas_n := False
-        sdram.cs_n := B"0"
+        sdram.cs_n := B(0)
       }
       is(DdrCommand.MRS) {
         sdram.ras_n := False
         sdram.cas_n := False
         sdram.we_n := False
-        sdram.cs_n := B"0"
+        sdram.cs_n := B(0)
       }
       is(DdrCommand.ZQCS) {
         sdram.ras_n := False
         sdram.cas_n := False
         sdram.we_n := False
-        sdram.cs_n := B"0"
+        sdram.cs_n := B(0)
       }
     }
   }
 
-  // 添加 done 信号驱动
+  // Add done signal drive
   initCommand.done := initCommand.valid
 }
 
 /**
- * 模式寄存器控制器（从InitializationManager复用）
+ * Mode register controller (repurposed from InitializationManager)
  */
 case class ControlModeRegisterController(config: ControlConfig,
                                          mrCommand: ModeRegisterCommandInterface) extends Area {
 
-  // 模式寄存器设置状态机
+  // Mode register setup state machine
   object MrState extends SpinalEnum {
     val IDLE, MR0, MR1, MR2, MR3, DONE = newElement()
   }
@@ -318,7 +323,7 @@ case class ControlModeRegisterController(config: ControlConfig,
   val currentState = Reg(MrState()) init MrState.IDLE
   val done = Reg(Bool()) init False
 
-  // 状态机逻辑
+  // State machine logic
   switch(currentState) {
     is(MrState.IDLE) {
       when(mrCommand.valid) {
@@ -328,22 +333,22 @@ case class ControlModeRegisterController(config: ControlConfig,
     }
 
     is(MrState.MR0) {
-      // 设置MR0
+      // Setup MR0
       currentState := MrState.MR1
     }
 
     is(MrState.MR1) {
-      // 设置MR1
+      // Setup MR1
       currentState := MrState.MR2
     }
 
     is(MrState.MR2) {
-      // 设置MR2
+      // Setup MR2
       currentState := MrState.MR3
     }
 
     is(MrState.MR3) {
-      // 设置MR3
+      // Setup MR3
       currentState := MrState.DONE
     }
 
@@ -357,18 +362,18 @@ case class ControlModeRegisterController(config: ControlConfig,
 }
 
 /**
- * 调试接口定义
+ * Debug interface definition
  */
 case class ControlManagerDebug() extends Bundle {
-  val initCount = UInt(32 bits)
-  val calibrationCount = UInt(32 bits)
-  val errorCount = UInt(32 bits)
-  val currentState = Bits(4 bits)
+  val initCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
+  val calibrationCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
+  val errorCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
+  val currentState = Bits(DfiCommonConstants.PHASE_COUNT bits)
 }
 
 case class ControlFsmDebug() extends Bundle {
-  val initCount = UInt(32 bits)
-  val calibrationCount = UInt(32 bits)
-  val errorCount = UInt(32 bits)
-  val currentState = Bits(4 bits)
+  val initCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
+  val calibrationCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
+  val errorCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
+  val currentState = Bits(DfiCommonConstants.PHASE_COUNT bits)
 }

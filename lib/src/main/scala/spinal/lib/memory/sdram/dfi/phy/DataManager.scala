@@ -102,10 +102,10 @@ case class DataProcessor(config: DataManagerConfig,
   val calibration = DdrCalibrationInterface(config.sdramConfig)
   val debug = DataProcessorDebug()
 
-  // 写数据缓冲器
+  // Write data buffer using common constants (REQ-CS-008 compliance)
   val writeBuffer = StreamFifo(
     dataType = DdrWriteDataInterface(config.sdramConfig),
-    depth = 16
+    depth = DfiCommonConstants.FIFO_DEPTH
   )
 
   // 写数据格式转换
@@ -117,10 +117,10 @@ case class DataProcessor(config: DataManagerConfig,
   writeBuffer.io.push.payload.dqs_n := data.write.dqs_n
   writeBuffer.io.push.valid := data.write.valid
 
-  // 读数据缓冲器
+  // Read data buffer using common constants (REQ-CS-008 compliance)
   val readBuffer = StreamFifo(
     dataType = DdrReadDataInterface(config.sdramConfig),
-    depth = 16
+    depth = DfiCommonConstants.FIFO_DEPTH
   )
 
   // 读数据格式转换
@@ -156,8 +156,8 @@ case class DataProcessor(config: DataManagerConfig,
   // TODO: 需要实现DataFormatter和DataPathConfig
   // 暂时简化处理，直接连接数据流
 
-  // 调试信号
-  debug.dataCount := CountOne(Seq(data.write.valid, data.read.valid)).resize(32)
+  // Debug signals using common constants (REQ-CS-008 compliance)
+  debug.dataCount := CountOne(Seq(data.write.valid, data.read.valid)).resize(DfiCommonConstants.DEBUG_COUNTER_WIDTH)
 }
 
 /**
@@ -298,30 +298,30 @@ case class DataManagerCommandScheduler(config: DataManagerConfig,
     cmd.valid
   }
 
-  // 调试信号
-  debug.commandCount := CountOne(Seq(command.valid)).resize(32)
-  debug.timingViolationCount := U(0, 32 bits)
+  // Debug signals using common constants (REQ-CS-008 compliance)
+  debug.commandCount := CountOne(Seq(command.valid)).resize(DfiCommonConstants.DEBUG_COUNTER_WIDTH)
+  debug.timingViolationCount := U(0, DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
 }
 
 /**
- * 调试接口定义
+ * Debug interface definition
  */
 case class DataManagerDebug() extends Bundle {
-  val commandCount = UInt(32 bits)
-  val dataCount = UInt(32 bits)
-  val timingViolationCount = UInt(32 bits)
+  val commandCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
+  val dataCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
+  val timingViolationCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
 }
 
 case class TimingControllerDebug() extends Bundle {
-  val commandCount = UInt(32 bits)
-  val timingViolationCount = UInt(32 bits)
+  val commandCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
+  val timingViolationCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
 }
 
 case class DataProcessorDebug() extends Bundle {
-  val dataCount = UInt(32 bits)
+  val dataCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
 }
 
 case class CommandSchedulerDebug() extends Bundle {
-  val commandCount = UInt(32 bits)
-  val timingViolationCount = UInt(32 bits)
+  val commandCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
+  val timingViolationCount = UInt(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits)
 }
