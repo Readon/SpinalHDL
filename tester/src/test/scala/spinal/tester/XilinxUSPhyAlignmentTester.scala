@@ -11,8 +11,7 @@ import spinal.lib.sim.Phase
  * XilinxUSPhy对齐验证测试器
  * 验证与LiteX usphy.py的对齐结果
  */
-abstract class XilinxUSPhyAlignmentTester extends SpinalTesterGhdlBase {
-  override def getName: String = "XilinxUSPhyAlignmentTester"
+abstract class XilinxUSPhyAlignmentTester extends SpinalAnyFunSuite {
   
   def createAlignedToplevel: Component = {
     // 创建与LiteX对齐的DDR3 SDRAM配置
@@ -73,10 +72,6 @@ abstract class XilinxUSPhyAlignmentTester extends SpinalTesterGhdlBase {
 
     new XilinxUSPhy(dfiConfig)
   }
-
-  override def backendConfig(config: SpinalConfig) = config.copy(
-    defaultClockDomainFrequency = FixedFrequency(200 MHz)
-  )
 
   test("odelay_cntvaluein_alignment") {
     // 验证ODELAYE3 CNTVALUEIN驱动对齐 - HDL生成验证
