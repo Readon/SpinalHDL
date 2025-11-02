@@ -7,8 +7,7 @@ import spinal.lib.memory.sdram.dfi.phy._
 import spinal.lib.sim._
 import spinal.lib.sim.Phase
 
-class XilinxUSPhyTester extends SpinalTesterGhdlBase {
-  override def getName: String = "XilinxUSPhyTester"
+class XilinxUSPhyTester extends SpinalAnyFunSuite {
   def createToplevel: Component = {
     // 创建DDR3 SDRAM配置
     val sdramConfig = SdramConfig(
@@ -68,10 +67,6 @@ class XilinxUSPhyTester extends SpinalTesterGhdlBase {
 
     new XilinxUSPhy(dfiConfig)
   }
-
-  override def backendConfig(config: SpinalConfig) = config.copy(
-    defaultClockDomainFrequency = FixedFrequency(200 MHz)
-  )
 
   test("basic_initialization") {
     // 测试基本初始化序列 - HDL生成验证
