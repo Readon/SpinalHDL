@@ -4,7 +4,7 @@ import spinal.lib.memory.sdram.dfi._
 
 case class XilinxUSPhyConfig(
   // 硬件宽度配置
-  byteWidth: Int = 8,                        // 数据字节宽度
+  bitsPerByte: Int = 8,                      // 每字节位数（固定为8）
   patternSelectWidth: Int = 2,               // 模式选择位宽
   phaseCount: Int = 4,                       // 相位数量
 
@@ -24,20 +24,34 @@ case class XilinxUSPhyConfig(
 )
 
 object XilinxUSPhyConfig {
-  def apply(): XilinxUSPhyConfig = XilinxUSPhyConfig()
+  // 直接返回标准配置，解决 hanging 问题
+  def apply(): XilinxUSPhyConfig = XilinxUSPhyConfig(
+    bitsPerByte = 8,
+    patternSelectWidth = 2,
+    phaseCount = 4,
+    delayCounterWidth = 9,
+    timeoutCounterWidth = 8,
+    timerCounterWidth = 16,
+    ckeTimerWidth = 6,
+    pulseCounterWidth = 5,
+    stableCounterWidth = 4,
+    tmrdCounterWidth = 3,
+    phaseSelectWidth = 2,
+    trainingResultWidth = 1,
+    trainingStateCodeWidth = 2
+  )
 
   // 预设配置
-  def ddr3 = XilinxUSPhyConfig()
+  def ddr3 = apply()
 
-  def ddr4 = XilinxUSPhyConfig()
+  def ddr4 = apply()
 
-  // 自定义配置方法
+  // 自定义配置方法 - 只包含可能变化的参数
   def custom(
-    byteWidth: Int = 8,
     delayCounterWidth: Int = 9,
     timerCounterWidth: Int = 16
   ) = XilinxUSPhyConfig(
-    byteWidth = byteWidth,
+    bitsPerByte = 8,  // 固定值，不暴露给自定义接口
     delayCounterWidth = delayCounterWidth,
     timerCounterWidth = timerCounterWidth
   )

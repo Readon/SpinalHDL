@@ -209,7 +209,7 @@ class XilinxUSPhy(
     // Control register group (0x00)
     val ctrlReg = busCtrl.createReadAndWrite(Bits(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits), 0x00).init(0)
     io.ctrl.reset := ctrlReg(0) // [0] Global reset
-    ctrlReg(byteWidth) := io.ctrl.initDone // [8] Initialization status (RO)
+    ctrlReg(phyConfig.bitsPerByte) := io.ctrl.initDone // [8] Initialization status (RO)
     // Use buffered training signals to avoid hierarchy violations
     ctrlReg(9) := trainingInterfaceArea.bufferedWriteLevelingDone // [9] Write leveling done
     ctrlReg(10) := trainingInterfaceArea.bufferedReadGateDone // [10] Read gate training done
@@ -553,11 +553,11 @@ class XilinxUSPhy(
   // to avoid forward reference issues
   val trainingCtrl = new Area {
     // Placeholder for sampled data - will be assigned after dataPath and cmdPath are defined
-    val writeLevelingSampledData = Bits(byteWidth bits)
-    val readGateSampledData = Bits(byteWidth bits)
-    val readEyeSampledData = Vec.fill(phaseCount)(Bits(byteWidth bits))
+    val writeLevelingSampledData = Bits(phyConfig.bitsPerByte bits)
+    val readGateSampledData = Bits(phyConfig.bitsPerByte bits)
+    val readEyeSampledData = Vec.fill(phaseCount)(Bits(phyConfig.bitsPerByte bits))
     val caSampledAddr = Bits(dfiConfig.addressWidth bits)
-    val caSampledBank = Bits(byteWidth bits)
+    val caSampledBank = Bits(phyConfig.bitsPerByte bits)
     val caCurrentCmd = DdrCmd()
 
     // Placeholder for controller - will be instantiated after data is available
@@ -788,23 +788,23 @@ class XilinxUSPhy(
 
       // Fixed: Create local copies of DFI signals to avoid hierarchy violations
       // Don't access handler's internal signals directly
-      val dfiSourceBits = Bits(byteWidth bits)
+      val dfiSourceBits = Bits(phyConfig.bitsPerByte bits)
       // Assign based on signal index to avoid direct access to handler internals
       if (i < syncedAddressOut.length) {
         // Address signals (0-14 for 15-bit address)
-        dfiSourceBits := handler.syncedAddressOut(i).asBits.resize(byteWidth)
+        dfiSourceBits := handler.syncedAddressOut(i).asBits.resize(phyConfig.bitsPerByte)
       } else if (i >= syncedAddressOut.length && i < syncedAddressOut.length + syncedBankOut.length) {
         // Bank signals (15-17 for 3-bit bank, if enabled)
         val bankIndex = i - syncedAddressOut.length
         if (bankIndex < handler.syncedBankOut.length) {
-          dfiSourceBits := handler.syncedBankOut(bankIndex).asBits.resize(byteWidth)
+          dfiSourceBits := handler.syncedBankOut(bankIndex).asBits.resize(phyConfig.bitsPerByte)
         } else {
-          dfiSourceBits := B(0, byteWidth bits)
+          dfiSourceBits := B(0, phyConfig.bitsPerByte bits)
         }
       } else {
         // Control signals (RAS_N, CAS_N, WE_N, etc.)
         // These need to be generated from DFI signals directly
-        dfiSourceBits := B(0, byteWidth bits) // Default for other signals
+        dfiSourceBits := B(0, phyConfig.bitsPerByte bits) // Default for other signals
       }
       serdes.D := dfiSourceBits
 
@@ -948,7 +948,7 @@ class XilinxUSPhy(
       delay.CLK := io.clk4x
       // EN_VTC follows same control logic as clockGen delay
       delay.EN_VTC := io.dfi.update.ctrlupdAck && !trainingParams.trainingActive
-      delay.CE := io.phyCtrl.dqInc & io.phyCtrl.dlySel(i / byteWidth) // Proper flattened phyCtrl signals
+      delay.CE := io.phyCtrl.dqInc & io.phyCtrl.dlySel(i / phyConfig.bitsPerByte) // Proper flattened phyCtrl signals
       delay.INC := True // Always increment (decrement handled by reset+increment)
       delay.ODATAIN := serdes.OQ
       // Fixed: Add missing CNTVALUEIN to prevent NO DRIVER ON error
@@ -1036,46 +1036,46 @@ class XilinxUSPhy(
     val dmOserdes = Seq.fill(dfiConfig.dataWidth / 8)(new OSERDESE3(hasTristate = true))
 
     // Data reordering for burst - optimized with pipelining
-    val reorderedWrData = Vec.fill(dfiConfig.dataWidth)(Reg(Bits(byteWidth bits)) init(0))
-    val reorderedWrMask = Vec.fill(dfiConfig.dataWidth / byteWidth)(Reg(Bits(byteWidth bits)) init(0))
+    val reorderedWrData = Vec.fill(dfiConfig.dataWidth)(Reg(Bits(phyConfig.bitsPerByte bits)) init(0))
+    val reorderedWrMask = Vec.fill(dfiConfig.dataWidth / phyConfig.bitsPerByte)(Reg(Bits(phyConfig.bitsPerByte bits)) init(0))
 
     // Initialize with current data (no reordering for now - can be enhanced later)
     for (i <- 0 until dfiConfig.dataWidth) {
-      val byteIndex = i / byteWidth
-      val bitIndex = i % byteWidth
+      val byteIndex = i / phyConfig.bitsPerByte
+      val bitIndex = i % phyConfig.bitsPerByte
       // Add bounds checking to prevent IndexOutOfBoundsException
       if (byteIndex < wrData.length) {
         // Fixed: Ensure proper bit range within data width
-        val maxBit = if (bitIndex * byteWidth + (byteWidth - 1) < wrData(byteIndex).getWidth) bitIndex * byteWidth + (byteWidth - 1) else wrData(byteIndex).getWidth - 1
-        val minBit = bitIndex * byteWidth
+        val maxBit = if (bitIndex * phyConfig.bitsPerByte + (phyConfig.bitsPerByte - 1) < wrData(byteIndex).getWidth) bitIndex * phyConfig.bitsPerByte + (phyConfig.bitsPerByte - 1) else wrData(byteIndex).getWidth - 1
+        val minBit = bitIndex * phyConfig.bitsPerByte
         if (minBit <= maxBit) {
-          reorderedWrData(i) := wrData(byteIndex)(maxBit downto minBit).resize(byteWidth)
+          reorderedWrData(i) := wrData(byteIndex)(maxBit downto minBit).resize(phyConfig.bitsPerByte)
         } else {
-          reorderedWrData(i) := B(0, byteWidth bits)
+          reorderedWrData(i) := B(0, phyConfig.bitsPerByte bits)
         }
       } else {
         // Default to first byte if out of bounds (safe fallback)
         if (wrData.nonEmpty) {
-          val maxBit = if (bitIndex * byteWidth + (byteWidth - 1) < wrData(0).getWidth) bitIndex * byteWidth + (byteWidth - 1) else wrData(0).getWidth - 1
-          val minBit = bitIndex * byteWidth
+          val maxBit = if (bitIndex * phyConfig.bitsPerByte + (phyConfig.bitsPerByte - 1) < wrData(0).getWidth) bitIndex * phyConfig.bitsPerByte + (phyConfig.bitsPerByte - 1) else wrData(0).getWidth - 1
+          val minBit = bitIndex * phyConfig.bitsPerByte
           if (minBit <= maxBit) {
-            reorderedWrData(i) := wrData(0)(maxBit downto minBit).resize(byteWidth)
+            reorderedWrData(i) := wrData(0)(maxBit downto minBit).resize(phyConfig.bitsPerByte)
           } else {
-            reorderedWrData(i) := B(0, byteWidth bits)
+            reorderedWrData(i) := B(0, phyConfig.bitsPerByte bits)
           }
         } else {
-          reorderedWrData(i) := B(0, byteWidth bits)
+          reorderedWrData(i) := B(0, phyConfig.bitsPerByte bits)
         }
       }
     }
     // Fixed: Ensure proper width for write mask
-    for (i <- 0 until dfiConfig.dataWidth / byteWidth) {
+    for (i <- 0 until dfiConfig.dataWidth / phyConfig.bitsPerByte) {
       if (i < wrDataMask.getWidth) {
         // Use proper bit extraction and width matching
         val maskBit = wrDataMask(i).asBits
-        reorderedWrMask(i) := maskBit.resize(byteWidth)
+        reorderedWrMask(i) := maskBit.resize(phyConfig.bitsPerByte)
       } else {
-        reorderedWrMask(i) := B(0, byteWidth bits)
+        reorderedWrMask(i) := B(0, phyConfig.bitsPerByte bits)
       }
     }
 

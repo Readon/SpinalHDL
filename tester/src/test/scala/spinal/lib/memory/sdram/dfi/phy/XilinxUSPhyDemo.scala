@@ -1,4 +1,4 @@
-package spinal.tester
+package spinal.lib.memory.sdram.dfi.phy
 
 import spinal.core._
 import spinal.lib.memory.sdram.dfi._
@@ -62,22 +62,7 @@ object XilinxUSPhyDemo extends App {
   )
 
   // 生成Verilog代码
-  val phyConfig = XilinxUSPhyConfig(
-    byteWidth = 8,
-    patternSelectWidth = 2,
-    phaseCount = 4,
-    delayCounterWidth = 9,
-    timeoutCounterWidth = 8,
-    timerCounterWidth = 16,
-    ckeTimerWidth = 6,
-    pulseCounterWidth = 5,
-    stableCounterWidth = 4,
-    tmrdCounterWidth = 3,
-    phaseSelectWidth = 2,
-    trainingResultWidth = 1,
-    trainingStateCodeWidth = 2
-  )
-  val dut = SpinalVerilog(new XilinxUSPhy(dfiConfig, phyConfig))
+  val dut = SpinalVerilog(new XilinxUSPhy(dfiConfig))
 
   // Xilinx USPhy Verilog generation completed successfully!
   // Generated files: USPhy.v (main Verilog file)
