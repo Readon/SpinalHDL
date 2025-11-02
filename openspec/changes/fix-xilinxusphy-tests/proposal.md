@@ -1,96 +1,87 @@
 # Proposal: Fix All XilinxUSPhy Test Code
 
-## 问题分析
-当前的XilinxUSPhy测试代码存在以下关键问题：
+## Why
+The current XilinxUSPhy test code has several critical issues that prevent it from working properly:
 
-1. **API兼容性问题**：测试使用过时的DFI配置API，与当前的DfiConfig结构不匹配
-2. **测试框架集成缺失**：测试未正确集成到当前测试框架中（SpinalSimFunSuite vs SpinalTesterGhdlBase）
-3. **配置不匹配**：测试配置与XilinxUSPhy实现要求不一致
-4. **仿真基础设施缺失**：测试缺乏适当的仿真设置和执行
-5. **测试覆盖不完整**：测试未覆盖更新后的XilinxUSPhy实现的所有功能
-6. **测试执行失败**：测试无法运行或在详细设计阶段卡住
+1. **API Compatibility Issues**: Tests are using outdated DFI configuration APIs that don't match the current DfiConfig structure
+2. **Test Framework Integration Problems**: Tests are not properly integrated with the current test framework (SpinalSimFunSuite vs SpinalTesterGhdlBase)
+3. **Configuration Mismatches**: Test configurations don't align with the XilinxUSPhy implementation requirements
+4. **Missing Simulation Infrastructure**: Tests lack proper simulation setup and execution
+5. **Incomplete Test Coverage**: Tests don't cover the full functionality of the updated XilinxUSPhy implementation
+6. **Test Execution Failures**: Tests fail to run or get stuck during elaboration
 
-## 实际实现状态评估
-根据代码审查，发现以下关键差距：
+## What Changes
+- **Modernize Test APIs**: Update all test code to use current DFI configuration APIs
+- **Fix Test Framework Integration**: Ensure all tests properly extend and use the appropriate test frameworks
+- **Standardize Configuration**: Create consistent, working test configurations that match XilinxUSPhy requirements
+- **Add Simulation Infrastructure**: Implement proper simulation setup, signal drivers, and verification logic
+- **Complete Test Coverage**: Add comprehensive tests for all XilinxUSPhy features including training, initialization, and data operations
+- **Fix Execution Issues**: Resolve all compilation and runtime issues that prevent tests from running successfully
 
-### 已完成的功能（45个任务，35%）
-- 基本DFI配置API更新
-- XilinxUSPhy实例化修复
-- 测试类层次结构统一
-- 基本初始化序列验证
+## Impact
+- **Affected code**: All XilinxUSPhy test files in `tester/src/test/scala/spinal/tester/` and `tester/src/test/scala/spinal/lib/memory/sdram/dfi/phy/`
+- **User impact**: Users will be able to run XilinxUSPhy tests successfully and verify PHY functionality
+- **Development impact**: Better validation of XilinxUSPhy changes and improvements
 
-### 部分完成的功能（32个任务，25%）
-- DfiConfig参数名称更新
-- 训练模块结构定义
-- 多后端基本兼容性
+## Non-goals
+- No changes to the core XilinxUSPhy implementation (only test fixes)
+- No introduction of new testing frameworks (use existing SpinalHDL testing infrastructure)
+- No changes to other PHY implementations or tests
 
-### 未完成的功能（50个任务，40%）
-- 训练算法完整实现
-- 错误处理机制
-- 仿真基础设施
-- 文档和示例
+## Background / Analysis
+Current test issues identified:
 
-## 需要修复的关键问题
+1. **DfiConfig API Mismatch**: Tests use parameter names that don't exist in current DfiConfig
+- No changes to other PHY implementations or tests
 
-### 1. API现代化和配置修复（优先级：高）
-- 修复DfiSignalConfig结构使用
-- 标准化时序配置参数
-- 完善信号连接和接口使用
+## Implementation Plan
 
-### 2. 测试框架集成问题
-- 混合使用SpinalTesterGhdlBase和SpinalSimFunSuite
-- 缺少适当的仿真设置
+### Phase 1: API Modernization (2-3 days)
+- Update all DfiConfig instantiations to use current API
+- Fix signal configuration mismatches
+- Standardize timing configuration parameters
 
-### 3. 训练和初始化测试（优先级：中）
-- 写水平训练验证
-- 读门训练测试
-- 读眼训练验证
-- CA训练测试（如适用）
+### Phase 2: Test Framework Integration (2-3 days)
+- Fix test class hierarchy and framework usage
+- Implement proper test setup and teardown
+- Add comprehensive test reporting
 
-## 实施计划调整
+### Phase 3: Simulation Infrastructure (3-4 days)
+- Add proper signal drivers and monitors
+- Implement clock domain management
+- Add reset sequence handling
+- Create verification logic for all interfaces
 
-### 阶段1: API现代化（3-4天）
-- 更新所有DfiConfig实例化以使用当前API
-- 修复信号配置不匹配
-- 标准化时序配置参数
+### Phase 4: Test Coverage Enhancement (2-3 days)
+- Add missing test cases for all XilinxUSPhy features
+- Implement parameterized test configurations
+- Add stress and edge case testing
 
-### 阶段2: 测试框架集成（3-4天）
-- 修复测试类层次结构和框架使用
-- 实施适当的测试设置和拆除
+### Phase 5: Validation and Integration (1-2 days)
+- Run full test suite across multiple backends
+- Verify all tests pass consistently
+- Update documentation and examples
 
-### 阶段3: 仿真基础设施（4-5天）
-- 添加适当的信号驱动器和监视器
-- 实现时钟域管理
-- 添加复位序列处理
-- 创建所有接口的验证逻辑
+## Acceptance Criteria
+- **All tests compile**: All XilinxUSPhy test files compile without errors
+- **All tests execute**: Tests run to completion without hanging or crashing
+- **All tests pass**: Tests provide meaningful verification of XilinxUSPhy functionality
+- **Multi-backend support**: Tests work with Verilator, GHDL, and other supported backends
+- **Documentation**: Updated test documentation and examples for users
 
-### 阶段4: 测试覆盖增强（3-4天）
-- 添加缺失的测试用例
-- 实施参数化测试配置
-- 添加压力和边界情况测试
+## Risks and Mitigations
+- **Risk**: Test fixes might reveal actual bugs in XilinxUSPhy implementation
+  **Mitigation**: Plan to fix any discovered implementation issues as part of this work
+- **Risk**: Complex simulation setup might introduce new test flakiness
+  **Mitigation**: Implement robust test infrastructure with proper synchronization and timing
+- **Risk**: API changes might break existing user test code
+  **Mitigation**: Provide migration guide and examples for users
 
-### 阶段5: 验证和集成（2-3天）
-- 跨多个后端运行完整测试套件
-- 验证所有测试一致通过
+## Maintainers
+SpinalHDL test infrastructure maintainers and XilinxUSPhy development team
 
-## 成功标准
-- **所有测试编译**：所有XilinxUSPhy测试文件编译无错误
-- **所有测试执行**：测试运行完成不卡住
-- **所有测试通过**：测试提供有意义的XilinxUSPhy功能验证
-- **多后端支持**：测试在Verilator、GHDL和其他支持的后端上工作
-- **文档**：更新的测试文档和用户示例
-
-## 风险缓解
-- **风险**：测试修复可能揭示XilinxUSPhy实现中的实际错误
-  **缓解**：作为此工作的一部分，计划修复任何发现的实现问题
-- **风险**：API变更可能破坏现有的用户测试代码
-  **缓解**：提供迁移指南和用户示例
-
-## 维护者
-SpinalHDL测试基础设施维护者和XilinxUSPhy开发团队
-
-## 参考资料
-- 当前XilinxUSPhy实现：`lib/src/main/scala/spinal/lib/memory/sdram/dfi/phy/XilinxUSPhy.scala`
-- DFI接口规范：`lib/src/main/scala/spinal/lib/memory/sdram/dfi/`
-- SpinalHDL测试框架文档
-- 相关OpenSpec：align-xilinxusphy-to-litex-usphy（提供XilinxUSPhy功能背景）
+## References
+- Current XilinxUSPhy implementation: `lib/src/main/scala/spinal/lib/memory/sdram/dfi/phy/XilinxUSPhy.scala`
+- DFI interface specification: `lib/src/main/scala/spinal/lib/memory/sdram/dfi/`
+- SpinalHDL testing framework documentation
+- Related OpenSpec: align-xilinxusphy-to-litex-usphy (provides context for XilinxUSPhy features)

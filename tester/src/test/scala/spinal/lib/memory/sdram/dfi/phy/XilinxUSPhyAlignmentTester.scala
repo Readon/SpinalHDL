@@ -1,17 +1,17 @@
-package spinal.tester
+package spinal.lib.memory.sdram.dfi.phy
 
 import spinal.core._
 import spinal.lib._
 import spinal.lib.memory.sdram.dfi._
-import spinal.lib.memory.sdram.dfi.phy._
 import spinal.lib.sim._
 import spinal.lib.sim.Phase
+import spinal.tester.SpinalAnyFunSuite
 
 /**
  * XilinxUSPhy对齐验证测试器
  * 验证与LiteX usphy.py的对齐结果
  */
-abstract class XilinxUSPhyAlignmentTester extends SpinalAnyFunSuite {
+class XilinxUSPhyAlignmentTester extends SpinalAnyFunSuite {
   
   def createAlignedToplevel: Component = {
     // 创建与LiteX对齐的DDR3 SDRAM配置

@@ -126,11 +126,11 @@ class DQSPattern(
     val postamble = in Bool ()
     val wlevel_en = in Bool ()
     val wlevel_strobe = in Bool ()
-    val output = out Bits (phyConfig.byteWidth bits)
+    val output = out Bits (phyConfig.bitsPerByte bits)
   }
 
   // Pattern generation logic - optimized with lookup table
-  val pattern = Bits(phyConfig.byteWidth bits)
+  val pattern = Bits(phyConfig.bitsPerByte bits)
   val patternSel = UInt(phyConfig.patternSelectWidth bits)
 
   // Encode pattern selection for better LUT usage
@@ -154,7 +154,7 @@ class DQSPattern(
 
   // Optional registered output - optimized
   if (register) {
-    val reg = Reg(Bits(phyConfig.byteWidth bits)) init (DQSPatterns.DEFAULT)
+    val reg = Reg(Bits(phyConfig.bitsPerByte bits)) init (DQSPatterns.DEFAULT)
     reg := pattern
     io.output := reg
   } else {
@@ -725,11 +725,11 @@ class TrainingController(
   val io = new Bundle {
     // Input signals (moved from constructor parameters)
     val initDone = in Bool()
-    val writeLevelingSampledData = in Bits(phyConfig.byteWidth bits)
-    val readGateSampledData = in Bits(phyConfig.byteWidth bits)
-    val readEyeSampledData = in(Vec(Bits(phyConfig.byteWidth bits), phyConfig.phaseCount))
+    val writeLevelingSampledData = in Bits(phyConfig.bitsPerByte bits)
+    val readGateSampledData = in Bits(phyConfig.bitsPerByte bits)
+    val readEyeSampledData = in(Vec(Bits(phyConfig.bitsPerByte bits), phyConfig.phaseCount))
     val caSampledAddr = in Bits(config.addressWidth bits)
-    val caSampledBank = in Bits(phyConfig.byteWidth bits)
+    val caSampledBank = in Bits(phyConfig.bitsPerByte bits)
     val caCurrentCmd = in(DdrCmd())
     val wrLvlEn = in Bool()
     val wrLvlStrobe = in Bool()
@@ -963,7 +963,7 @@ class WriteLevelingModule(
   val io = new Bundle {
     val wrLvlEn = in Bool()
     val wrLvlStrobe = in Bool()
-    val sampledData = in Bits(phyConfig.byteWidth bits)
+    val sampledData = in Bits(phyConfig.bitsPerByte bits)
     val done = out Bool()
     val cdlyCount = out UInt(phyConfig.delayCounterWidth bits)
     val dqsIncCount = out UInt(phyConfig.delayCounterWidth bits)
@@ -978,7 +978,7 @@ class WriteLevelingModule(
 
   // Write leveling pattern generation - alternating 0x55/0xAA pattern (aligned with LiteX)
   val patternGenerator = new Area {
-    val pattern = Reg(Bits(phyConfig.byteWidth bits)) init(DQSPatterns.DEFAULT) // Start with 0x55
+    val pattern = Reg(Bits(phyConfig.bitsPerByte bits)) init(DQSPatterns.DEFAULT) // Start with 0x55
     val patternToggle = RegInit(False)
 
     when(wrLvlEnReg) {
@@ -1010,7 +1010,7 @@ class WriteLevelingModule(
     val stableCounter = Reg(UInt(phyConfig.stableCounterWidth bits)) init(0) // Require stable pattern for multiple cycles
 
     // Sample received pattern during strobe from actual DQ sampling
-    val receivedPattern = Reg(Bits(phyConfig.byteWidth bits)) init(0)
+    val receivedPattern = Reg(Bits(phyConfig.bitsPerByte bits)) init(0)
     val expectedPattern = patternGenerator.pattern
     val currentMatch = Bool()
 
@@ -1059,7 +1059,7 @@ class ReadGateModule(
 ) extends Component {
   val io = new Bundle {
     val rdLvlEn = in Bool()
-    val sampledData = in Bits(phyConfig.byteWidth bits)
+    val sampledData = in Bits(phyConfig.bitsPerByte bits)
     val done = out Bool()
     val bitslip = out Bool()
     val dq_inc = out Bool()
@@ -1158,7 +1158,7 @@ class ReadEyeModule(
 ) extends Component {
   val io = new Bundle {
     val rdLvlGateEn = in Bool()
-    val sampledData = in(Vec(Bits(phyConfig.byteWidth bits), dataSampleCount))
+    val sampledData = in(Vec(Bits(phyConfig.bitsPerByte bits), dataSampleCount))
     val done = out Bool()
     val phase = out UInt(phyConfig.phaseSelectWidth bits)
     val response = out Bits(config.readLevelingResponseWidth bits)
@@ -1259,7 +1259,7 @@ class CATrainingModule(
   val io = new Bundle {
     val caLvlEn = in Bool()
     val sampledAddr = in Bits(config.addressWidth bits)
-    val sampledBank = in Bits(phyConfig.byteWidth bits)
+    val sampledBank = in Bits(phyConfig.bitsPerByte bits)
     val currentCmd = in(DdrCmd())
     val done = out Bool()
     val response = out Bits(config.caTrainingResponseWidth bits)
