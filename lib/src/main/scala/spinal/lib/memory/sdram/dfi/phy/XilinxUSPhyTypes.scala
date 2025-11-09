@@ -752,10 +752,10 @@ class TrainingController(
     val caTrainingDone = out Bool()
 
     // Expose training response signals as outputs to avoid hierarchy violations
-    val readGateResponse = out Bits(phyConfig.trainingResultWidth bits)
-    val readEyeResponse = out Bits(phyConfig.trainingResultWidth bits)
-    val writeLevelingResponse = out Bits(phyConfig.trainingResultWidth bits)
-    val caTrainingResponse = out Bits(phyConfig.trainingStateCodeWidth bits)
+    val readGateResponse = out Bits(config.readLevelingResponseWidth bits)
+    val readEyeResponse = out Bits(config.readLevelingResponseWidth bits)
+    val writeLevelingResponse = out Bits(config.writeLevelingResponseWidth bits)
+    val caTrainingResponse = out Bits(config.caTrainingResponseWidth bits)
 
     // Expose cdly_value as output to avoid hierarchy violations
     val cdly_value_out = out UInt(phyConfig.delayCounterWidth bits)
@@ -844,7 +844,7 @@ class TrainingController(
   } else {
     val writeLevelingArea = new Area {
       io.writeLevelingDone := False
-      io.writeLevelingResponse := B(0, 1 bits)
+      io.writeLevelingResponse := B(0, config.writeLevelingResponseWidth bits)
     }
   }
 
@@ -856,7 +856,7 @@ class TrainingController(
   } else {
     val readGateArea = new Area {
       io.readGateDone := False
-      io.readGateResponse := B(0, 1 bits)
+      io.readGateResponse := B(0, config.readLevelingResponseWidth bits)
     }
   }
 
@@ -868,7 +868,7 @@ class TrainingController(
   } else {
     val readEyeArea = new Area {
       io.readEyeDone := False
-      io.readEyeResponse := B(0, 1 bits)
+      io.readEyeResponse := B(0, config.readLevelingResponseWidth bits)
     }
   }
 
@@ -880,7 +880,7 @@ class TrainingController(
   } else {
     val caTrainingArea = new Area {
       io.caTrainingDone := False
-      io.caTrainingResponse := B(0, 2 bits)
+      io.caTrainingResponse := B(0, config.caTrainingResponseWidth bits)
     }
   }
 
@@ -1049,7 +1049,7 @@ class WriteLevelingModule(
   io.done := completionDetector.doneReg
   io.cdlyCount := dqsDelayControl.delayCounter
   io.dqsIncCount := dqsDelayControl.delayCounter
-  io.response := completionDetector.patternMatch ? B"1" | B"0"
+  io.response := completionDetector.patternMatch ? B(1, config.writeLevelingResponseWidth bits) | B(0, config.writeLevelingResponseWidth bits)
   io.dqIncrement := wrLvlEnReg && wrLvlStrobeReg // Increment only during active training with strobe
 }
 
@@ -1148,7 +1148,7 @@ class ReadGateModule(
   io.done := gateTraining.doneReg
   io.dq_inc := gateTraining.dqIncrement
   io.bitslip := gateTraining.bitslipTrigger
-  io.response := gateTraining.gateFound ? B"1" | B"0"
+  io.response := gateTraining.gateFound ? B(1, config.readLevelingResponseWidth bits) | B(0, config.readLevelingResponseWidth bits)
 }
 
 class ReadEyeModule(
@@ -1248,7 +1248,7 @@ class ReadEyeModule(
   // Centralized output assignments to avoid conflicts
   io.phase := eyeTraining.phaseReg
   io.done := eyeTraining.doneReg
-  io.response := eyeTraining.eyeFound ? B"1" | B"0"
+  io.response := eyeTraining.eyeFound ? B(1, config.readLevelingResponseWidth bits) | B(0, config.readLevelingResponseWidth bits)
   io.dqIncrement := rdLvlGateEnReg && eyeTraining.timeout(6 downto 0).andR // Increment only during active sweep
 }
 

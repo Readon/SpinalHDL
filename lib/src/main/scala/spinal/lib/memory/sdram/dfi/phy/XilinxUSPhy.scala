@@ -143,10 +143,10 @@ class XilinxUSPhy(
     val caTrainingDone = Bool()
 
     // Training response signals
-    val writeLevelingResponse = Bits(trainingResultWidth bits)
-    val readGateResponse = Bits(trainingResultWidth bits)
-    val readEyeResponse = Bits(trainingResultWidth bits)
-    val caTrainingResponse = Bits(trainingStateCodeWidth bits)
+    val writeLevelingResponse = Bits(dfiConfig.writeLevelingResponseWidth bits)
+    val readGateResponse = Bits(dfiConfig.readLevelingResponseWidth bits)
+    val readEyeResponse = Bits(dfiConfig.readLevelingResponseWidth bits)
+    val caTrainingResponse = Bits(dfiConfig.caTrainingResponseWidth bits)
 
     // Training delay values
     val cdlyValueOut = UInt(delayCounterWidth bits)
@@ -740,17 +740,21 @@ class XilinxUSPhy(
     // Command signals handling
     val handler = new CmdSignalHandler(dfiConfig, phyConfig) // Instantiate the handler
 
-    // Connect DFI signals to handler interface
+    // Connect DFI signals to handler interface with proper width handling
     handler.io.dfi.rasNor := io.dfi.control.rasN.orR
     handler.io.dfi.casNor := io.dfi.control.casN.orR
     handler.io.dfi.weNor := io.dfi.control.weN.orR
     handler.io.dfi.actNor := (if (dfiConfig.signalConfig.useAckN) io.dfi.control.actN.orR else True)
-    handler.io.dfi.address := io.dfi.control.address.asUInt
-    handler.io.dfi.csN := io.dfi.control.csN
+
+    // Handle frequency ratio scaling for address signals
+    handler.io.dfi.address := io.dfi.control.address.subdivideIn(dfiConfig.addressWidth bits).head.asUInt
+
+    // Handle frequency ratio and chip select scaling for control signals
+    handler.io.dfi.csN := io.dfi.control.csN.subdivideIn(dfiConfig.chipSelectNumber bits).head
     handler.io.dfi.bank := (if (dfiConfig.signalConfig.useBank) io.dfi.control.bank.orR.asBits.resize(dfiConfig.bankWidth) else B(0, dfiConfig.bankWidth bits))
-    handler.io.dfi.cke := io.dfi.control.cke
-    handler.io.dfi.odt := io.dfi.control.odt
-    handler.io.dfi.resetN := io.dfi.control.resetN
+    handler.io.dfi.cke := io.dfi.control.cke.subdivideIn(dfiConfig.chipSelectNumber bits).head
+    handler.io.dfi.odt := io.dfi.control.odt.subdivideIn(dfiConfig.chipSelectNumber bits).head
+    handler.io.dfi.resetN := io.dfi.control.resetN.subdivideIn(dfiConfig.chipSelectNumber bits).head
 
     // Create OSERDES and ODELAY for each signal identified by the handler
     val oserdesVec = Seq.fill(handler.signalMappings.length)(new OSERDESE3(hasTristate = true))
@@ -873,7 +877,7 @@ class XilinxUSPhy(
     // Write Latency and Timing Generation - Optimized
     //==========================================================================
     // Ensure writeLatency is at least 3 for proper preamble/postamble (REQ-CS-008 compliance)
-    val safeWriteLatency = Math.ceil(dfiConfig.sdram.ddrWrLat / dfiConfig.frequencyRatio).toInt - DDR3TimingConstants.WRITE_LATENCY_OFFSET
+    val safeWriteLatency = Math.max(1, Math.ceil(dfiConfig.sdram.ddrWrLat / dfiConfig.frequencyRatio).toInt - DDR3TimingConstants.WRITE_LATENCY_OFFSET)
 
     // Generate timing signals from delay taps with proper synchronization - pipelined
     val wrDataEnDelayed = History(wrDataEn, safeWriteLatency + 2)
@@ -889,7 +893,7 @@ class XilinxUSPhy(
     dqs_oe := dqsOeNext
 
     // Improved preamble/postamble generation with proper timing - pipelined
-    val preambleNext = wrDataEnDelayed(safeWriteLatency - 1) & ~wrDataEnDelayed(safeWriteLatency)
+    val preambleNext = if (safeWriteLatency > 0) wrDataEnDelayed(safeWriteLatency - 1) & ~wrDataEnDelayed(safeWriteLatency) else False
     val postambleNext = wrDataEnDelayed(safeWriteLatency + 1) & ~wrDataEnDelayed(safeWriteLatency)
 
     dqs_preamble := preambleNext
@@ -1232,7 +1236,8 @@ class XilinxUSPhy(
     
     // Expose cmdGen signals through handler to avoid hierarchy violations
     // Use DFI signals directly instead of accessing internal cmdGen signals
-    val dfiCsNReg = RegNext(io.dfi.control.csN) init(B(0, dfiConfig.chipSelectNumber bits))
+    // Handle frequency ratio scaling for chip select signals
+    val dfiCsNReg = RegNext(io.dfi.control.csN.subdivideIn(dfiConfig.chipSelectNumber bits).head) init(B(0, dfiConfig.chipSelectNumber bits))
     
     // Calculate active chip select from DFI signals directly
     when(dfiCsNReg === 0) { // All chips selected
@@ -1718,12 +1723,12 @@ class XilinxUSPhy(
   // Training responses are now handled through centralized trainingParams
   // This avoids hierarchy violations and assignment conflicts
   if (dfiConfig.useRdlvlResp && io.dfi.rdTraining != null) {
-    val rdLvlRespReg = Reg(Bits(1 bits)) init(0)
+    val rdLvlRespReg = Reg(Bits(dfiConfig.readLevelingResponseWidth bits)) init(0)
     // Use centralized training signals to avoid hierarchy violations
     val readGateDone = RegNext(trainingParams.readGateDone) init(False)
-    val readGateResponse = RegNext(trainingParams.readGateResponse) init(B(0, 1 bits))
+    val readGateResponse = RegNext(trainingParams.readGateResponse) init(B(0, dfiConfig.readLevelingResponseWidth bits))
     val readEyeDone = RegNext(trainingParams.readEyeDone) init(False)
-    val readEyeResponse = RegNext(trainingParams.readEyeResponse) init(B(0, 1 bits))
+    val readEyeResponse = RegNext(trainingParams.readEyeResponse) init(B(0, dfiConfig.readLevelingResponseWidth bits))
 
     // Assign response based on which training module is active and done
     when(readGateDone) {
@@ -1737,10 +1742,10 @@ class XilinxUSPhy(
   }
 
   if (dfiConfig.useWrlvlResp && io.dfi.wrTraining != null) {
-    val wrLvlRespReg = Reg(Bits(1 bits)) init(0)
+    val wrLvlRespReg = Reg(Bits(dfiConfig.writeLevelingResponseWidth bits)) init(0)
     // Use centralized training signals to avoid hierarchy violations
     val writeLevelingDone = RegNext(trainingParams.writeLevelingDone) init(False)
-    val writeLevelingResponse = RegNext(trainingParams.writeLevelingResponse) init(B(0, 1 bits))
+    val writeLevelingResponse = RegNext(trainingParams.writeLevelingResponse) init(B(0, dfiConfig.writeLevelingResponseWidth bits))
 
     when(writeLevelingDone) {
       wrLvlRespReg := writeLevelingResponse
