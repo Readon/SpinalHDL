@@ -2,61 +2,31 @@
 
 DFI DDR PHY组件提供DFI 3.1协议兼容的DDR物理层实现，支持多种DDR存储器标准（DDR2/3/4、LPDDR系列），通过简化后的3模块架构（UnifiedAdapter、DataManager、ControlManager）实现高效的协议转换和时序管理。
 ## Requirements
-### Requirement: 简化DFI PHY架构
-DFI PHY组件SHALL采用简化的3模块架构（UnifiedAdapter、DataManager、ControlManager），通过合并相关功能模块减少复杂度，同时保持DFI 3.1合规性和多标准支持。
-
-#### Scenario: 合并适配器模块
-- **WHEN** 设计PHY架构时合并DfiAdapter和StandardAdapter
-- **AND** 创建UnifiedAdapter统一处理协议转换和标准适配
-- **THEN** 必须减少模块实例化数量
-- **AND** 简化模块间接口连接
-
-#### Scenario: 合并数据和时序管理
-- **WHEN** 合并TimingGenerator和DataPath为DataManager
-- **AND** 统一管理时序控制和数据流
-- **THEN** 必须优化关键路径时序
-- **AND** 减少延迟开销
-
-#### Scenario: 合并控制功能
-- **WHEN** 合并CalibrationEngine和InitializationManager为ControlManager
-- **AND** 统一处理校准和初始化
-- **THEN** 必须简化状态机逻辑
-- **AND** 提高调试可维护性
-
-### Requirement: 多标准DDR PHY支持
-DFI PHY组件SHALL通过配置参数支持多种DDR存储器标准，包括DDR2、DDR3、DDR4以及LP系列（LPDDR2、LPDDR3、LPDDR4）。
-
-#### Scenario: 标准配置和切换
-- **WHEN** 系统需要支持不同DDR标准与DfiController集成
-- **AND** 提供相应的配置参数
-- **THEN** PHY必须根据配置正确适配目标DDR标准的电气特性和协议要求
-- **AND** 支持运行时标准切换（在系统复位后）
-
-#### Scenario: 向后兼容性
-- **WHEN** 使用旧版DDR标准
-- **AND** 与DfiController集成
-- **THEN** PHY必须提供兼容接口和时序
-- **AND** 确保与现有DFI基础设施的互操作性
-
 ### Requirement: DFI 3.1协议兼容性
-DFI PHY组件SHALL完全兼容DFI 3.1规范，支持所有必需的接口组和时序参数。
+DFI PHY组件SHALL完全兼容DFI 3.1规范，通过XilinxUSPhy实现提供完整的接口信号组和时序参数支持。
+
+#### Scenario: XilinxUSPhy作为主要PHY实现
+- **WHEN** 系统需要DFI 3.1兼容的PHY实现
+- **AND** 与DfiController集成
+- **THEN** XilinxUSPhy必须提供所有必需的DFI 3.1接口支持
+- **AND** 维护完整的时序关系和协议合规性
 
 #### Scenario: 控制接口合规性
 - **WHEN** DfiController通过dfi接口发送命令
-- **AND** 符合DFI 3.1控制接口规范
-- **THEN** PHY必须正确解析和响应所有命令类型
+- **AND** 使用XilinxUSPhy作为PHY实现
+- **THEN** XilinxUSPhy必须正确解析和响应所有命令类型
 - **AND** 维持必需的时序关系（tctrl_delay、tcmd_lat等）
 
 #### Scenario: 数据接口合规性
 - **WHEN** DfiController通过dfi接口传输读写数据
-- **AND** 符合DFI 3.1数据接口规范
-- **THEN** PHY必须正确处理所有数据传输模式
+- **AND** 使用XilinxUSPhy作为PHY实现
+- **THEN** XilinxUSPhy必须正确处理所有数据传输模式
 - **AND** 支持频率比系统（1:1、1:2、1:4）
 
 #### Scenario: 训练接口合规性
 - **WHEN** DfiController通过dfi接口发起训练操作
-- **AND** 符合DFI 3.1训练接口规范
-- **THEN** PHY必须支持读训练、写电平校准和CA训练
+- **AND** 使用XilinxUSPhy作为PHY实现
+- **THEN** XilinxUSPhy必须支持读训练、写电平校准和CA训练
 - **AND** 正确响应训练请求和状态查询
 
 ### Requirement: JEDEC标准时序支持
@@ -102,40 +72,30 @@ DFI PHY组件SHALL提供标准化的接口，支持不同应用场景和配置�
 - **AND** 支持错误恢复和处理
 
 ### Requirement: 高级PHY特性支持
-DFI PHY组件SHALL支持现代DDR接口所需的高级特性。
+DFI PHY组件SHALL通过XilinxUSPhy支持现代DDR接口所需的高级特性。
 
-#### Scenario: 数据总线反转（DBI）
-- **WHEN** 启用DBI功能
-- **AND** 传输数据过程中
-- **THEN** PHY必须正确处理读写DBI操作
-- **AND** 维持数据完整性
+#### Scenario: XilinxUSPhy高级特性
+- **WHEN** 启用DDR高级功能
+- **AND** 使用XilinxUSPhy作为PHY实现
+- **THEN** XilinxUSPhy必须正确处理数据总线反转（DBI）
+- **AND** 支持循环冗余校验（CRC）
+- **AND** 支持命令地址奇偶校验
 
-#### Scenario: 循环冗余校验（CRC）
-- **WHEN** 启用CRC功能
-- **AND** 传输写数据
-- **THEN** PHY必须支持CRC生成和验证
-- **AND** 正确报告CRC错误
-
-#### Scenario: 命令地址奇偶校验
-- **WHEN** 启用CA奇偶校验
-- **AND** 发送命令
-- **THEN** PHY必须支持奇偶校验生成和验证
-- **AND** 正确处理校验错误
+#### Scenario: 高级DDR功能集成
+- **WHEN** 系统需要DDR4或LPDDR特定功能
+- **AND** 通过BmbToDdrBridge集成
+- **THEN** XilinxUSPhy必须正确支持所有相关高级特性
+- **AND** 确保与BMB桥接的兼容性
 
 ### Requirement: 性能和资源优化
-DFI PHY组件SHALL在性能和资源使用之间提供良好的平衡。
+DFI PHY组件SHALL通过XilinxUSPhy在性能和资源使用之间提供良好的平衡。
 
-#### Scenario: 高性能操作
-- **WHEN** 在高频条件下运行
-- **AND** 需要最大化带宽利用
-- **THEN** PHY必须优化关键路径时序
+#### Scenario: XilinxUSPhy性能优化
+- **WHEN** 系统要求高性能DDR访问
+- **AND** 使用XilinxUSPhy作为PHY实现
+- **THEN** XilinxUSPhy必须优化关键路径时序
 - **AND** 最小化延迟开销
-
-#### Scenario: 资源效率
-- **WHEN** 在资源受限环境中部署
-- **AND** 需要最小化FPGA资源使用
-- **THEN** PHY必须提供可配置的资源使用选项
-- **AND** 支持不同优化级别的实现
+- **AND** 提供可配置的资源使用选项
 
 ### Requirement: 测试和验证支持
 DFI PHY组件SHALL提供完整的测试和验证支持。
@@ -371,6 +331,82 @@ XilinxUSPhy测试套件SHALL提供配置接口的完整测试覆盖，验证配�
 - **THEN** 测试必须验证运行时配置的正确性
 - **AND** 确保配置切换的平滑性
 - **AND** 验证配置更改的安全性
+
+### Requirement: BMB到DDR桥接支持
+系统SHALL提供完整的BMB总线到DDR存储器接口的桥接功能，通过XilinxUSPhy实现高效可靠的DDR3和DDR4支持。
+
+#### Scenario: BMB总线桥接
+- **WHEN** BMB总线需要访问DDR存储器
+- **AND** 通过BmbToDdrBridge组件
+- **THEN** 桥接器必须正确处理BMB协议到DDR命令的转换
+- **AND** 维护数据完整性和时序约束
+
+#### Scenario: DDR3标准支持
+- **WHEN** 系统配置为DDR3存储器
+- **AND** 使用BmbToDdrBridge和XilinxUSPhy
+- **THEN** 桥接器必须完全支持DDR3 JEDEC规范（JESD79-3）
+- **AND** 正确处理DDR3特定的时序参数和功能
+
+#### Scenario: DDR4标准支持
+- **WHEN** 系统配置为DDR4存储器
+- **AND** 使用BmbToDdrBridge和XilinxUSPhy
+- **THEN** 桥接器必须完全支持DDR4 JEDEC规范（JESD79-4）
+- **AND** 正确处理DDR4特有功能（Bank Group、DBI、CRC等）
+
+#### Scenario: 地址映射和事务管理
+- **WHEN** BMB总线发起DDR访问
+- **AND** 通过BmbToDdrBridge
+- **THEN** 桥接器必须正确实现地址映射
+- **AND** 管理DDR时序约束和事务调度
+- **AND** 处理刷新和初始化序列
+
+### Requirement: 完整测试和验证覆盖
+BMB到DDR桥接解决方案SHALL提供全面的测试覆盖，确保系统在各种配置下的正确性和可靠性。
+
+#### Scenario: 桥接功能测试
+- **WHEN** 进行BMB到DDR桥接测试
+- **AND** 使用BmbToDdrBridge和XilinxUSPhy
+- **THEN** 测试套件必须验证完整的读写操作
+- **AND** 确保数据正确性和时序合规性
+
+#### Scenario: DDR3/DDR4兼容性测试
+- **WHEN** 测试不同DDR标准支持
+- **AND** 使用统一的BmbToDdrBridge接口
+- **THEN** 测试必须验证DDR3和DDR4模式的正确切换
+- **AND** 确保每种标准的特定功能正常工作
+
+#### Scenario: 错误处理和恢复测试
+- **WHEN** 系统遇到DDR访问错误
+- **AND** 使用BmbToDdrBridge
+- **THEN** 测试必须验证错误检测机制
+- **AND** 确保错误恢复和系统稳定性
+
+#### Scenario: 性能和压力测试
+- **WHEN** 系统在高负载下运行
+- **AND** 通过BmbToDdrBridge访问DDR
+- **THEN** 测试必须验证性能指标
+- **AND** 确保系统在高压力下的稳定性
+
+### Requirement: 简化架构和维护性
+代码库SHALL通过清理重复实现和标准化接口来提高维护性和开发效率。
+
+#### Scenario: 代码清理和去重
+- **WHEN** 清理DDR DFI实现代码
+- **AND** 移除重复的DfiDdrPhy实现
+- **THEN** 必须保留所有XilinxUSPhy相关功能
+- **AND** 确保清理不破坏现有功能
+
+#### Scenario: 标准化接口设计
+- **WHEN** 设计BMB到DDR桥接接口
+- **AND** 参考现有最佳实践
+- **THEN** 必须使用清晰一致的API设计
+- **AND** 确保接口的向后兼容性
+
+#### Scenario: 文档和示例完整性
+- **WHEN** 开发者使用BMB到DDR桥接
+- **AND** 需要参考文档和示例
+- **THEN** 必须提供完整的使用指南
+- **AND** 包含DDR3和DDR4配置示例
 
 ## Requirement: 简化DFI PHY架构
 DFI PHY组件必须采用简化的3模块架构（UnifiedAdapter、DataManager、ControlManager），通过合并相关功能模块减少复杂度，同时保持DFI 3.1合规性和多标准支持。
