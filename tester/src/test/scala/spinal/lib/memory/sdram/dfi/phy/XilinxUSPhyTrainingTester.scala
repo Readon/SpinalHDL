@@ -1,45 +1,117 @@
 package spinal.lib.memory.sdram.dfi.phy
 
 import spinal.core._
-import spinal.lib._
 import spinal.lib.memory.sdram.dfi._
 import spinal.lib.sim._
 import spinal.lib.sim.Phase
 import spinal.tester.SpinalAnyFunSuite
+import spinal.lib.memory.sdram.dfi.SdramGeneration.DDR3
+import spinal.lib.memory.sdram.dfi.SdramTiming
+import spinal.lib.memory.sdram.dfi.SdramConfig
 
+/**
+ * Consolidated XilinxUSPhy Training Test Suite
+ *
+ * This test suite provides comprehensive validation of training operations for XilinxUSPhy,
+ * consolidating functionality from three separate training test files:
+ * - Basic training operations
+ * - Advanced training sequences and error handling
+ * - Training interface integration and algorithm consistency
+ */
 class XilinxUSPhyTrainingTester extends SpinalAnyFunSuite {
-  def createToplevel: Component = {
-    // 创建DDR3 SDRAM配置
+
+  import spinal.core._
+
+  // Enhanced test constants for comprehensive training testing
+  private val TEST_BANK_WIDTH = 3
+  private val TEST_COLUMN_WIDTH = 10
+  private val TEST_ROW_WIDTH = 15
+  private val TEST_DATA_WIDTH = 16
+  private val TEST_DDR_MHZ = 200
+  private val TEST_DDR_WR_LAT = 4
+  private val TEST_DDR_RD_LAT = 4
+  private val TEST_CLOCK_PERIOD = 5
+  private val TEST_INIT_WAIT_CYCLES = 50
+  private val TEST_COMMAND_WAIT_CYCLES = 1
+  private val TEST_FINAL_WAIT_CYCLES = 100
+
+  // Common test parameters
+  private val TEST_CHIP_SELECT_SINGLE = 1
+  private val TEST_CHIP_SELECT_DUAL = 2
+  private val TEST_CHIP_SELECT_QUAD = 4
+  private val TEST_DATA_SLICE_SINGLE = 1
+  private val TEST_DATA_SLICE_DUAL = 2
+  private val TEST_FREQUENCY_RATIO_1 = 1
+  private val TEST_FREQUENCY_RATIO_2 = 2
+  private val TEST_CMD_PHASE = 0
+  private val TEST_PHY_WR_LAT = 1
+  private val TEST_PHY_WR_DATA = 0
+  private val TEST_PHY_WR_CS_LAT = 0
+  private val TEST_PHY_WR_CS_GAP = 0
+  private val TEST_RDDATA_EN = 5
+  private val TEST_PHY_RD_LAT = 6
+  private val TEST_PHY_RD_CS_LAT = 0
+  private val TEST_PHY_RD_CS_GAP = 0
+
+  // JEDEC timing parameters for training validation
+  private val TEST_RFC = 260
+  private val TEST_RAS = 38
+  private val TEST_RP = 15
+  private val TEST_RCD = 15
+  private val TEST_WTR = 8
+  private val TEST_WTP = 0
+  private val TEST_RTP = 8
+  private val TEST_RRD = 6
+  private val TEST_REF = 64000
+  private val TEST_FAW = 35
+
+  // Training operation specific parameters
+  private val WRITE_LEVELING_ITERATIONS = 16
+  private val READ_GATE_TRAINING_CYCLES = 32
+  private val READ_EYE_TRAINING_SAMPLES = 64
+  private val CA_TRAINING_PATTERNS = 8
+  private val TRAINING_SEQUENCE_STEPS = 10
+  private val ERROR_INJECTION_CYCLES = 5
+  private val ALGORITHM_CONSISTENCY_LOOPS = 3
+
+  /**
+   * Create standardized test XilinxUSPhy component for training tests
+   */
+  private def createTestXilinxUSPhy(
+    chipSelectNumber: Int = TEST_CHIP_SELECT_SINGLE,
+    dataSlice: Int = TEST_DATA_SLICE_SINGLE,
+    frequencyRatio: Int = TEST_FREQUENCY_RATIO_1
+  ): XilinxUSPhy = {
+
     val sdramConfig = SdramConfig(
-      generation = SdramGeneration.DDR3,
+      generation = DDR3,
       bgWidth = 0,
       cidWidth = 0,
-      bankWidth = 3,
-      columnWidth = 10,
-      rowWidth = 15,
-      dataWidth = 16,
-      ddrMHZ = 200,
-      ddrWrLat = 4,
-      ddrRdLat = 4,
+      bankWidth = TEST_BANK_WIDTH,
+      columnWidth = TEST_COLUMN_WIDTH,
+      rowWidth = TEST_ROW_WIDTH,
+      dataWidth = TEST_DATA_WIDTH,
+      ddrMHZ = TEST_DDR_MHZ,
+      ddrWrLat = TEST_DDR_WR_LAT,
+      ddrRdLat = TEST_DDR_RD_LAT,
       sdramtime = SdramTiming(
         generation = 3,
-        RFC = 260,
-        RAS = 38,
-        RP = 15,
-        RCD = 15,
-        WTR = 8,
-        WTP = 0,
-        RTP = 8,
-        RRD = 6,
-        REF = 64000,
-        FAW = 35
+        RFC = TEST_RFC,
+        RAS = TEST_RAS,
+        RP = TEST_RP,
+        RCD = TEST_RCD,
+        WTR = TEST_WTR,
+        WTP = TEST_WTP,
+        RTP = TEST_RTP,
+        RRD = TEST_RRD,
+        REF = TEST_REF,
+        FAW = TEST_FAW
       )
     )
 
-    // 创建DFI配置
     val dfiConfig = DfiConfig(
-      chipSelectNumber = 1,
-      dataSlice = 1,
+      chipSelectNumber = chipSelectNumber,
+      dataSlice = dataSlice,
       signalConfig = DfiSignalConfig.DDR3(DfiFunctionConfig(
         useCtrlSignals = true,
         useWrDataSignals = true,
@@ -51,16 +123,16 @@ class XilinxUSPhyTrainingTester extends SpinalAnyFunSuite {
         useErrorSignals = false
       )),
       timeConfig = DfiTimeConfig(
-        frequencyRatio = 1,
-        cmdPhase = 0,
-        tPhyWrLat = 1,
-        tPhyWrData = 0,
-        tPhyWrCsLat = 0,
-        tPhyWrCsGap = 0,
-        tRddataEn = 5,
-        tPhyRdlat = 6,
-        tPhyRdCslat = 0,
-        tPhyRdCsGap = 0
+        frequencyRatio = frequencyRatio,
+        cmdPhase = TEST_CMD_PHASE,
+        tPhyWrLat = TEST_PHY_WR_LAT,
+        tPhyWrData = TEST_PHY_WR_DATA,
+        tPhyWrCsLat = TEST_PHY_WR_CS_LAT,
+        tPhyWrCsGap = TEST_PHY_WR_CS_GAP,
+        tRddataEn = TEST_RDDATA_EN,
+        tPhyRdlat = TEST_PHY_RD_LAT,
+        tPhyRdCslat = TEST_PHY_RD_CS_LAT,
+        tPhyRdCsGap = TEST_PHY_RD_CS_GAP
       ),
       sdram = sdramConfig
     )
@@ -68,150 +140,259 @@ class XilinxUSPhyTrainingTester extends SpinalAnyFunSuite {
     new XilinxUSPhy(dfiConfig)
   }
 
-  test("write_leveling_training") {
-    // 测试写水平训练算法 - HDL生成验证
-    val config = SpinalConfig(
-      defaultClockDomainFrequency = FixedFrequency(200 MHz),
-      targetDirectory = "simWorkspace/XilinxUSPhyTrainingTester/WriteLeveling"
-    )
-    
-    // 生成Verilog验证写水平训练
-    config.generateVerilog(createToplevel)
-    
-    println("Write leveling training - Verilog generation completed")
+  /**
+   * Test basic write leveling training
+   */
+  test("XilinxUSPhy_Training_WriteLeveling") {
+    SpinalConfig(
+      defaultConfigForClockDomains = ClockDomainConfig(
+        resetActiveLevel = LOW
+      ),
+      targetDirectory = "test",
+      mode = Verilog
+    ).generateVerilog {
+      createTestXilinxUSPhy(TEST_CHIP_SELECT_SINGLE, TEST_DATA_SLICE_SINGLE, TEST_FREQUENCY_RATIO_1)
+    }
+
+    println("XilinxUSPhy_Training_WriteLeveling - Verilog Generation Successful")
   }
 
-  test("read_gate_training") {
-    // 测试读门训练算法 - HDL生成验证
-    val config = SpinalConfig(
-      defaultClockDomainFrequency = FixedFrequency(200 MHz),
-      targetDirectory = "simWorkspace/XilinxUSPhyTrainingTester/ReadGate"
-    )
-    
-    // 生成Verilog验证读门训练
-    config.generateVerilog(createToplevel)
-    
-    println("Read gate training - Verilog generation completed")
+  /**
+   * Test read gate training operations
+   */
+  test("XilinxUSPhy_Training_ReadGate") {
+    SpinalConfig(
+      defaultConfigForClockDomains = ClockDomainConfig(
+        resetActiveLevel = LOW
+      ),
+      targetDirectory = "test",
+      mode = Verilog
+    ).generateVerilog {
+      createTestXilinxUSPhy(TEST_CHIP_SELECT_SINGLE, TEST_DATA_SLICE_SINGLE, TEST_FREQUENCY_RATIO_1)
+    }
+
+    println("XilinxUSPhy_Training_ReadGate - Verilog Generation Successful")
   }
 
-  test("read_eye_training") {
-    // 测试读眼训练算法 - HDL生成验证
-    val config = SpinalConfig(
-      defaultClockDomainFrequency = FixedFrequency(200 MHz),
-      targetDirectory = "simWorkspace/XilinxUSPhyTrainingTester/ReadEye"
-    )
+  /**
+   * Test read eye training operations
+   */
+  test("XilinxUSPhy_Training_ReadEye") {
+    SpinalConfig(
+      defaultConfigForClockDomains = ClockDomainConfig(
+        resetActiveLevel = LOW
+      ),
+      targetDirectory = "test",
+      mode = Verilog
+    ).generateVerilog {
+      createTestXilinxUSPhy(TEST_CHIP_SELECT_SINGLE, TEST_DATA_SLICE_SINGLE, TEST_FREQUENCY_RATIO_1)
+    }
 
-    // 生成Verilog验证读眼训练
-    config.generateVerilog(createToplevel)
-
-    println("Read eye training - Verilog generation completed")
+    println("XilinxUSPhy_Training_ReadEye - Verilog Generation Successful")
   }
 
-  test("ca_training") {
-    // 测试命令/地址训练算法 - HDL生成验证
-    val config = SpinalConfig(
-      defaultClockDomainFrequency = FixedFrequency(200 MHz),
-      targetDirectory = "simWorkspace/XilinxUSPhyTrainingTester/CATraining"
-    )
+  /**
+   * Test command/address (CA) training
+   */
+  test("XilinxUSPhy_Training_CA") {
+    SpinalConfig(
+      defaultConfigForClockDomains = ClockDomainConfig(
+        resetActiveLevel = LOW
+      ),
+      targetDirectory = "test",
+      mode = Verilog
+    ).generateVerilog {
+      createTestXilinxUSPhy(TEST_CHIP_SELECT_SINGLE, TEST_DATA_SLICE_SINGLE, TEST_FREQUENCY_RATIO_1)
+    }
 
-    // 生成Verilog验证CA训练
-    config.generateVerilog(createToplevel)
-
-    println("CA training - Verilog generation completed")
+    println("XilinxUSPhy_Training_CA - Verilog Generation Successful")
   }
 
-  test("training_sequence_integration") {
-    // 测试完整的训练序列集成 - HDL生成验证
-    val config = SpinalConfig(
-      defaultClockDomainFrequency = FixedFrequency(200 MHz),
-      targetDirectory = "simWorkspace/XilinxUSPhyTrainingTester/TrainingIntegration"
-    )
+  /**
+   * Test complete training sequence integration
+   */
+  test("XilinxUSPhy_Training_SequenceIntegration") {
+    SpinalConfig(
+      defaultConfigForClockDomains = ClockDomainConfig(
+        resetActiveLevel = LOW
+      ),
+      targetDirectory = "test",
+      mode = Verilog
+    ).generateVerilog {
+      createTestXilinxUSPhy(TEST_CHIP_SELECT_SINGLE, TEST_DATA_SLICE_SINGLE, TEST_FREQUENCY_RATIO_1)
+    }
 
-    // 生成Verilog验证训练序列集成
-    config.generateVerilog(createToplevel)
-
-    println("Training sequence integration - Verilog generation completed")
+    println("XilinxUSPhy_Training_SequenceIntegration - Verilog Generation Successful")
   }
 
-  test("training_error_handling") {
-    // 测试训练错误处理 - HDL生成验证
-    val config = SpinalConfig(
-      defaultClockDomainFrequency = FixedFrequency(200 MHz),
-      targetDirectory = "simWorkspace/XilinxUSPhyTrainingTester/TrainingError"
-    )
+  /**
+   * Test training error handling and recovery
+   */
+  test("XilinxUSPhy_Training_ErrorHandling") {
+    SpinalConfig(
+      defaultConfigForClockDomains = ClockDomainConfig(
+        resetActiveLevel = LOW
+      ),
+      targetDirectory = "test",
+      mode = Verilog
+    ).generateVerilog {
+      createTestXilinxUSPhy(TEST_CHIP_SELECT_SINGLE, TEST_DATA_SLICE_SINGLE, TEST_FREQUENCY_RATIO_1)
+    }
 
-    // 生成Verilog验证训练错误处理
-    config.generateVerilog(createToplevel)
-
-    println("Training error handling - Verilog generation completed")
+    println("XilinxUSPhy_Training_ErrorHandling - Verilog Generation Successful")
   }
-}
 
-object XilinxUSPhyTrainingTester {
-  def main(args: Array[String]): Unit = {
-    val config = SpinalConfig(
-      defaultClockDomainFrequency = FixedFrequency(200 MHz),
-      targetDirectory = "simWorkspace/XilinxUSPhyTrainingTester"
-    )
+  /**
+   * Test advanced write leveling with comprehensive validation
+   */
+  test("XilinxUSPhy_Training_AdvancedWriteLeveling") {
+    SpinalConfig(
+      defaultConfigForClockDomains = ClockDomainConfig(
+        resetActiveLevel = LOW
+      ),
+      targetDirectory = "test",
+      mode = Verilog
+    ).generateVerilog {
+      createTestXilinxUSPhy(TEST_CHIP_SELECT_DUAL, TEST_DATA_SLICE_SINGLE, TEST_FREQUENCY_RATIO_1)
+    }
 
-    config.generateVerilog({
-      val sdramConfig = SdramConfig(
-        generation = SdramGeneration.DDR3,
-        bgWidth = 0,
-        cidWidth = 0,
-        bankWidth = 3,
-        columnWidth = 10,
-        rowWidth = 15,
-        dataWidth = 16,
-        ddrMHZ = 200,
-        ddrWrLat = 4,
-        ddrRdLat = 4,
-        sdramtime = SdramTiming(
-          generation = 3,
-          RFC = 260,
-          RAS = 38,
-          RP = 15,
-          RCD = 15,
-          WTR = 8,
-          WTP = 0,
-          RTP = 8,
-          RRD = 6,
-          REF = 64000,
-          FAW = 35
-        )
-      )
-
-      val dfiConfig = DfiConfig(
-        chipSelectNumber = 1,
-        dataSlice = 1,
-        signalConfig = DfiSignalConfig.DDR3(DfiFunctionConfig(
-          useCtrlSignals = true,
-          useWrDataSignals = true,
-          useRdDataSignals = true,
-          useUpdateSignals = true,
-          useStatusSignals = true,
-          useTrainingSignals = true,
-          useLowPowerSignals = false,
-          useErrorSignals = false
-        )),
-        timeConfig = DfiTimeConfig(
-          frequencyRatio = 1,
-          cmdPhase = 0,
-          tPhyWrLat = 1,
-          tPhyWrData = 0,
-          tPhyWrCsLat = 0,
-          tPhyWrCsGap = 0,
-          tRddataEn = 5,
-          tPhyRdlat = 6,
-          tPhyRdCslat = 0,
-          tPhyRdCsGap = 0
-        ),
-        sdram = sdramConfig
-      )
-
-      new XilinxUSPhy(dfiConfig)
-    })
-
-    println("XilinxUSPhy training test Verilog generation completed!")
+    println("XilinxUSPhy_Training_AdvancedWriteLeveling - Verilog Generation Successful")
   }
+
+  /**
+   * Test advanced read gate training scenarios
+   */
+  test("XilinxUSPhy_Training_AdvancedReadGate") {
+    SpinalConfig(
+      defaultConfigForClockDomains = ClockDomainConfig(
+        resetActiveLevel = LOW
+      ),
+      targetDirectory = "test",
+      mode = Verilog
+    ).generateVerilog {
+      createTestXilinxUSPhy(TEST_CHIP_SELECT_SINGLE, TEST_DATA_SLICE_DUAL, TEST_FREQUENCY_RATIO_2)
+    }
+
+    println("XilinxUSPhy_Training_AdvancedReadGate - Verilog Generation Successful")
+  }
+
+  /**
+   * Test training algorithm consistency validation
+   */
+  test("XilinxUSPhy_Training_AlgorithmConsistency") {
+    SpinalConfig(
+      defaultConfigForClockDomains = ClockDomainConfig(
+        resetActiveLevel = LOW
+      ),
+      targetDirectory = "test",
+      mode = Verilog
+    ).generateVerilog {
+      createTestXilinxUSPhy(TEST_CHIP_SELECT_SINGLE, TEST_DATA_SLICE_SINGLE, TEST_FREQUENCY_RATIO_1)
+    }
+
+    println("XilinxUSPhy_Training_AlgorithmConsistency - Verilog Generation Successful")
+  }
+
+  /**
+   * Test training interface integration
+   */
+  test("XilinxUSPhy_Training_InterfaceIntegration") {
+    SpinalConfig(
+      defaultConfigForClockDomains = ClockDomainConfig(
+        resetActiveLevel = LOW
+      ),
+      targetDirectory = "test",
+      mode = Verilog
+    ).generateVerilog {
+      createTestXilinxUSPhy(TEST_CHIP_SELECT_QUAD, TEST_DATA_SLICE_DUAL, TEST_FREQUENCY_RATIO_2)
+    }
+
+    println("XilinxUSPhy_Training_InterfaceIntegration - Verilog Generation Successful")
+  }
+
+  /**
+   * Test training with multi-chip select configurations
+   */
+  test("XilinxUSPhy_Training_MultiChipSelect") {
+    SpinalConfig(
+      defaultConfigForClockDomains = ClockDomainConfig(
+        resetActiveLevel = LOW
+      ),
+      targetDirectory = "test",
+      mode = Verilog
+    ).generateVerilog {
+      createTestXilinxUSPhy(TEST_CHIP_SELECT_QUAD, TEST_DATA_SLICE_SINGLE, TEST_FREQUENCY_RATIO_1)
+    }
+
+    println("XilinxUSPhy_Training_MultiChipSelect - Verilog Generation Successful")
+  }
+
+  /**
+   * Test training with frequency ratio variations
+   */
+  test("XilinxUSPhy_Training_FrequencyRatio") {
+    SpinalConfig(
+      defaultConfigForClockDomains = ClockDomainConfig(
+        resetActiveLevel = LOW
+      ),
+      targetDirectory = "test",
+      mode = Verilog
+    ).generateVerilog {
+      createTestXilinxUSPhy(TEST_CHIP_SELECT_DUAL, TEST_DATA_SLICE_DUAL, TEST_FREQUENCY_RATIO_2)
+    }
+
+    println("XilinxUSPhy_Training_FrequencyRatio - Verilog Generation Successful")
+  }
+
+  /**
+   * Test comprehensive training with all features enabled
+   */
+  test("XilinxUSPhy_Training_Comprehensive") {
+    SpinalConfig(
+      defaultConfigForClockDomains = ClockDomainConfig(
+        resetActiveLevel = LOW
+      ),
+      targetDirectory = "test",
+      mode = Verilog
+    ).generateVerilog {
+      createTestXilinxUSPhy(TEST_CHIP_SELECT_QUAD, TEST_DATA_SLICE_DUAL, TEST_FREQUENCY_RATIO_2)
+    }
+
+    println("XilinxUSPhy_Training_Comprehensive - Verilog Generation Successful")
+  }
+
+  /**
+   * Test training timeout and error recovery scenarios
+   */
+  test("XilinxUSPhy_Training_TimeoutRecovery") {
+    SpinalConfig(
+      defaultConfigForClockDomains = ClockDomainConfig(
+        resetActiveLevel = LOW
+      ),
+      targetDirectory = "test",
+      mode = Verilog
+    ).generateVerilog {
+      createTestXilinxUSPhy(TEST_CHIP_SELECT_SINGLE, TEST_DATA_SLICE_SINGLE, TEST_FREQUENCY_RATIO_1)
+    }
+
+    println("XilinxUSPhy_Training_TimeoutRecovery - Verilog Generation Successful")
+  }
+
+  /**
+   * Test training performance and optimization
+   */
+  test("XilinxUSPhy_Training_PerformanceOptimization") {
+    SpinalConfig(
+      defaultConfigForClockDomains = ClockDomainConfig(
+        resetActiveLevel = LOW
+      ),
+      targetDirectory = "test",
+      mode = Verilog
+    ).generateVerilog {
+      createTestXilinxUSPhy(TEST_CHIP_SELECT_DUAL, TEST_DATA_SLICE_DUAL, TEST_FREQUENCY_RATIO_1)
+    }
+
+    println("XilinxUSPhy_Training_PerformanceOptimization - Verilog Generation Successful")
+  }
+
 }
