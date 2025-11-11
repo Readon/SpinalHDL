@@ -7,12 +7,7 @@ package object phy {
 
   import spinal.lib.memory.sdram.dfi._
 
-
-
-  // 类型别名简化使用 - 避免循环引用
-  type PhyDfiDdrPhyConfig = DfiDdrPhyConfig
-  type PhyDdrStandard = DdrStandard.E
-  type PhyDfiDdrPhyFeatures = DfiDdrPhyFeatures
-  type PhyDfiDdrPhyStatus = DfiDdrPhyStatus
-  type PhyDfiDdrPhyDebug = DfiDdrPhyDebug
+  // 类型别名简化使用 - 专注于XilinxUSPhy
+  type PhyXilinxUSPhyConfig = XilinxUSPhyConfig
+  type PhySdramIO = SdramIO
 }
