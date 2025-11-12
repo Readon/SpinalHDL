@@ -63,35 +63,47 @@ object DfiController {
 
     val sdramConfig = SdramConfig(
       generation = SdramGeneration.DDR3,
-      timing = SdramTiming.DDR3.default,
-      layout = SdramLayout(
-        addressWidth = addressWidth,
-        bankWidth = bankWidth,
-        columnWidth = columnWidth,
-        dataWidth = dataWidth,
-        chipSelectNumber = chipSelectNumber
+      bgWidth = 0,
+      cidWidth = 0,
+      bankWidth = bankWidth,
+      columnWidth = columnWidth,
+      rowWidth = addressWidth,
+      dataWidth = dataWidth,
+      ddrMHZ = 800,
+      ddrWrLat = 11,
+      ddrRdLat = 11,
+      sdramtime = SdramTiming(
+        generation = 3,
+        RFC = 160,
+        RAS = 35,
+        RP = 35,
+        RCD = 14,
+        WTR = 8,
+        WTP = 15,
+        RTP = 8,
+        RRD = 6,
+        REF = 64,
+        FAW = 40
       )
     )
 
     val dfiConfig = DfiConfig(
-      dataRate = 2,
-      dataWidth = dataWidth,
       chipSelectNumber = chipSelectNumber,
-      frequencyRatio = 1,
-      timingConfig = DfiTimeConfig(
+      dataSlice = 8,
+      signalConfig = DfiSignalConfig.DDR3,
+      timeConfig = DfiTimeConfig(
         frequencyRatio = 1,
         cmdPhase = 0,
-        tPhyWrLat = 0,
-        tPhyWrData = 0,
+        tPhyWrLat = 9,
+        tPhyWrData = 1,
         tPhyWrCsLat = 0,
-        tPhyWrCsGap = 3,
-        tRddataEn = 0,
-        tPhyRdlat = 0,
+        tPhyWrCsGap = 0,
+        tRddataEn = 9,
+        tPhyRdlat = 9,
         tPhyRdCslat = 0,
-        tPhyRdCsGap = 3
+        tPhyRdCsGap = 0
       ),
-      signalConfig = DfiSignalConfig.DDR3,
-      sdramConfig = Some(sdramConfig)
+      sdram = sdramConfig
     )
 
     DfiController(bmbParameter, dfiConfig)
@@ -109,36 +121,47 @@ object DfiController {
 
     val sdramConfig = SdramConfig(
       generation = SdramGeneration.DDR4,
-      timing = SdramTiming.DDR4.default,
-      layout = SdramLayout(
-        addressWidth = addressWidth,
-        bankWidth = bankWidth,
-        bankGroupWidth = Some(bankGroupWidth),
-        columnWidth = columnWidth,
-        dataWidth = dataWidth,
-        chipSelectNumber = chipSelectNumber
+      bgWidth = bankGroupWidth,
+      cidWidth = 0,
+      bankWidth = bankWidth,
+      columnWidth = columnWidth,
+      rowWidth = addressWidth,
+      dataWidth = dataWidth,
+      ddrMHZ = 1600,
+      ddrWrLat = 12,
+      ddrRdLat = 12,
+      sdramtime = SdramTiming(
+        generation = 4,
+        RFC = 295,
+        RAS = 35,
+        RP = 35,
+        RCD = 14,
+        WTR = 8,
+        WTP = 15,
+        RTP = 8,
+        RRD = 6,
+        REF = 64,
+        FAW = 30
       )
     )
 
     val dfiConfig = DfiConfig(
-      dataRate = 2,
-      dataWidth = dataWidth,
       chipSelectNumber = chipSelectNumber,
-      frequencyRatio = 1,
-      timingConfig = DfiTimeConfig(
+      dataSlice = 8,
+      signalConfig = DfiSignalConfig.DDR4,
+      timeConfig = DfiTimeConfig(
         frequencyRatio = 1,
         cmdPhase = 0,
-        tPhyWrLat = 0,
-        tPhyWrData = 0,
+        tPhyWrLat = 10,
+        tPhyWrData = 1,
         tPhyWrCsLat = 0,
-        tPhyWrCsGap = 3,
-        tRddataEn = 0,
-        tPhyRdlat = 0,
+        tPhyWrCsGap = 0,
+        tRddataEn = 10,
+        tPhyRdlat = 10,
         tPhyRdCslat = 0,
-        tPhyRdCsGap = 3
+        tPhyRdCsGap = 0
       ),
-      signalConfig = DfiSignalConfig.DDR4,
-      sdramConfig = Some(sdramConfig)
+      sdram = sdramConfig
     )
 
     DfiController(bmbParameter, dfiConfig)

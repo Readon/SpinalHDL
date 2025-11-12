@@ -482,6 +482,136 @@ dut.io.dataIn := 0x55  // Error: := is for hardware logic only
 | Type domains | Strict separation | Mixed usage |
 | Numeric constants | Named constants | Magic numbers |
 
+### Requirement: REQ-CS-010: SpinalHDL SBT Build Tool Enforcement
+All SpinalHDL project compilation, testing, and packaging operations SHALL be executed through SBT tools, with strict prohibition of direct scalac or java command usage, ensuring build consistency across the SpinalHDL ecosystem.
+
+#### Scenario: SpinalHDL Compilation Operations Must Use SBT
+- **WHEN** compiling SpinalHDL projects or any modules (projects containing SpinalHDL code)
+- **THEN** developers or AI assistants SHALL use SBT commands such as `sbt compile`, `sbt ++${version} compile`, or `sbt project/compile`
+- **AND** SHALL NOT directly use `scalac` commands to compile SpinalHDL source files
+- **AND** SHALL NOT directly use `javac` commands to compile Java source files
+- **AND** SHALL ensure SpinalHDL compiler plugins are properly loaded through SBT
+- **AND** SHALL ensure all dependencies are correctly resolved through SBT dependency management
+
+#### Scenario: SpinalHDL Test Execution Must Use SBT
+- **WHEN** running any tests for SpinalHDL projects (HDL generation tests, simulation tests, etc.)
+- **THEN** developers or AI assistants SHALL use SBT test commands such as `sbt test`, `sbt project/test`, or `sbt "testOnly TestClass"`
+- **AND** SHALL NOT directly use `scala` or `java` commands to execute SpinalHDL test classes
+- **AND** SHALL manage SpinalHDL test classpaths and compiler plugins through SBT configuration
+- **AND** SHALL use SBT's parallel testing and sharding features for improved efficiency
+- **AND** SHALL ensure SpinalHDL simulator integration is properly configured through SBT
+
+#### Scenario: SpinalHDL Packaging and Publishing Must Use SBT
+- **WHEN** creating JAR files for SpinalHDL projects or publishing projects containing SpinalHDL code
+- **THEN** developers or AI assistants SHALL use SBT commands such as `sbt assembly`, `sbt package`, or `sbt publish`
+- **AND** SHALL NOT manually create JAR files or use external packaging tools
+- **AND** SHALL manage packaging configuration through SBT plugins (such as sbt-assembly)
+- **AND** SHALL ensure generated JAR files contain all required SpinalHDL dependencies and metadata
+
+#### Scenario: SpinalHDL Dependency Management Must Use SBT
+- **WHEN** adding, updating, or managing dependencies for SpinalHDL projects (including SpinalHDL itself, simulators, etc.)
+- **THEN** developers or AI assistants SHALL declare dependencies in `build.sbt` files
+- **AND** SHALL NOT manually download SpinalHDL JAR files or use other dependency management tools
+- **AND** SHALL leverage SBT's dependency resolution and conflict resolution mechanisms
+- **AND** SHALL use SBT's forced version override functionality to ensure SpinalHDL version consistency
+
+#### Scenario: SpinalHDL Project Configuration Management Must Use SBT
+- **WHEN** configuring SpinalHDL project compilation options, SpinalHDL compiler plugin parameters, or project settings
+- **THEN** developers or AI assistants SHALL configure in `build.sbt`
+- **AND** SHALL manage Scala versions, SpinalHDL compiler plugins, and other plugins through SBT settings
+- **AND** SHALL use SBT's environment variable and system property configuration mechanisms
+- **AND** SHALL ensure all SpinalHDL-related configuration changes take effect through SBT
+
+### Requirement: REQ-CS-011: SpinalHDL AI Assistant SBT Command Usage Guidelines
+AI assistants SHALL strictly follow SBT command patterns and best practices when executing SpinalHDL project-related operations, ensuring consistent development experience across the SpinalHDL ecosystem.
+
+#### Scenario: SpinalHDL Standard Compilation Mode
+- **WHEN** AI assistants need to compile SpinalHDL project code
+- **THEN** SHALL use `sbt compile` for full project compilation
+- **AND** SHALL use `sbt project/compile` for specific module compilation (such as: core, lib, etc.)
+- **AND** SHALL use `sbt ++${scalaVersion} compile` to specify Scala version compilation (SpinalHDL supports multiple versions)
+- **AND** SHALL use `sbt clean compile` for clean full compilation
+
+#### Scenario: SpinalHDL Test Execution Mode
+- **WHEN** AI assistants need to run SpinalHDL project tests (including HDL generation, simulation, waveform, etc.)
+- **THEN** SHALL use `sbt test` to run all SpinalHDL-related tests
+- **AND** SHALL use `sbt "testOnly TestClassName"` to run specific SpinalHDL test classes
+- **AND** SHALL use `sbt project/test` to run tests for specific SpinalHDL modules
+- **AND** SHALL use filtering parameters based on SpinalHDL test tags (such as `-l formal`, `-n formal`, `-l simulation`)
+
+#### Scenario: SpinalHDL Development and Debugging Mode
+- **WHEN** AI assistants need to perform interactive development or debugging for SpinalHDL projects
+- **THEN** SHALL use `sbt console` to start Scala console with SpinalHDL libraries
+- **AND** SHALL use `sbt project/console` to start SpinalHDL console for specific modules
+- **AND** SHALL use `sbt run` to run SpinalHDL code generation or simulation applications
+- **AND** SHALL use SBT's continuous compilation (`~compile`) functionality for SpinalHDL development-time compilation
+
+### Requirement: REQ-CS-012: SpinalHDL Project SBT Configuration and Plugin Management
+SpinalHDL project SBT configurations, plugins, and settings SHALL follow standard patterns of the SpinalHDL ecosystem, ensuring build consistency and maintainability.
+
+#### Scenario: SpinalHDL Plugin Dependency Management
+- **WHEN** configuring SBT plugins for SpinalHDL projects
+- **THEN** SHALL declare plugin dependencies in `project/plugins.sbt`
+- **AND** SHALL include SpinalHDL compiler plugins (spinalhdl-idsl-plugin)
+- **AND** SHALL use SpinalHDL ecosystem standard plugin versions (such as sbt-assembly, scalafmt, etc.)
+- **AND** SHALL ensure plugin configuration is compatible with SpinalHDL version requirements
+- **AND** SHALL avoid using non-standard plugins that may affect SpinalHDL code generation
+
+#### Scenario: SpinalHDL Multi-Module Project Configuration
+- **WHEN** handling SpinalHDL multi-module SBT project structures (such as: core, lib, tester module separation)
+- **THEN** SHALL correctly configure project dependency relationships (`dependsOn`)
+- **AND** SHALL ensure SpinalHDL compiler plugins are properly loaded in all required subprojects
+- **AND** SHALL use appropriate configuration scopes (Compile, Test, Runtime)
+- **AND** SHALL manage cross-project SpinalHDL settings and configuration inheritance
+
+#### Scenario: SpinalHDL Build Optimization and Parallelization
+- **WHEN** optimizing SpinalHDL project SBT build performance
+- **THEN** SHALL reasonably use SBT parallel execution features (especially suitable for SpinalHDL code generation)
+- **AND** SHALL configure appropriate memory settings (`SBT_OPTS`) to support large SpinalHDL projects
+- **AND** SHALL use SBT's incremental compilation and caching mechanisms (especially important for SpinalHDL development)
+- **AND** SHALL avoid unnecessary SpinalHDL code regeneration and dependency resolution
+
+## Prohibited Command Patterns in SpinalHDL Projects
+
+### Strictly Prohibited Commands
+The following commands are strictly prohibited in any SpinalHDL project as they bypass SpinalHDL compiler plugins and dependency management:
+
+```bash
+# ❌ PROHIBITED: Direct scalac compilation of SpinalHDL code (cannot load compiler plugins)
+scalac -classpath "lib/*" src/main/scala/*.scala
+
+# ❌ PROHIBITED: Direct java execution of SpinalHDL applications
+java -cp "target/classes:lib/*" com.example.MySpinalHDLApp
+
+# ❌ PROHIBITED: Manual creation of JAR files containing SpinalHDL code
+jar cf myapp.jar -C target/classes .
+
+# ❌ PROHIBITED: Manual download and management of SpinalHDL JAR dependencies
+wget https://repo1.maven.org/.../spinalhdl-core.jar
+```
+
+### Correct SpinalHDL SBT Command Patterns
+```bash
+# ✅ CORRECT: Use SBT to compile SpinalHDL projects (automatically loads compiler plugins)
+sbt compile
+sbt ++2.12.15 compile
+sbt core/compile
+
+# ✅ CORRECT: Use SBT to test SpinalHDL code
+sbt test
+sbt project/test  # Determine specific module based on project structure
+sbt "testOnly spinal.lib.*"
+
+# ✅ CORRECT: Use SBT to package SpinalHDL projects
+sbt package
+sbt assembly
+sbt publishLocal
+
+# ✅ CORRECT: Use SBT console for SpinalHDL development
+sbt console
+sbt "~compile"  # Continuous compilation of SpinalHDL code
+```
+
 ---
 
-This specification provides the foundation for consistent, maintainable SpinalHDL code development, with particular emphasis on helping AI assistants understand the critical differences between hardware description and software programming.
+This specification provides the foundation for consistent, maintainable SpinalHDL code development, with particular emphasis on helping AI assistants understand the critical differences between hardware description and software programming, and enforcing proper SBT build practices across the SpinalHDL ecosystem.

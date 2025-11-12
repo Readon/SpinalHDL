@@ -137,6 +137,7 @@ SpinalHDL/
   - ScalaUnidoc (API 文档生成)
 
 ## Build Configuration
+- **构建工具强制要求**: 所有SpinalHDL项目的编译、测试和打包操作必须通过SBT执行，严禁直接使用scalac或java命令
 - **Scala 版本**: 2.11.12 (主要), 支持多个 Scala 版本 (2.11, 2.12, 2.13)
 - **Java 版本**: 1.8
 - **编译选项**: -unchecked, -target:jvm-1.8, -language:reflectiveCalls
