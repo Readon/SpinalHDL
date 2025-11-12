@@ -135,3 +135,58 @@ case class SdramTiming(
     REF: Int, // us // Refresh Cycle Time (single row)
     FAW: Int
 ) //ns // Four ACTIVATE windows
+
+// Example configurations
+object SdramConfigExample {
+  val ddr3Example = SdramConfig(
+    generation = SdramGeneration.DDR3,
+    bgWidth = 0, // DDR3 doesn't have bank groups
+    cidWidth = 0,
+    bankWidth = 3, // 8 banks
+    columnWidth = 10,
+    rowWidth = 16,
+    dataWidth = 64,
+    ddrMHZ = 800,
+    ddrWrLat = 11,
+    ddrRdLat = 11,
+    sdramtime = SdramTiming(
+      generation = 3,
+      RFC = 160,
+      RAS = 35,
+      RP = 35,
+      RCD = 14,
+      WTR = 8,
+      WTP = 15,
+      RTP = 8,
+      RRD = 6,
+      REF = 64,
+      FAW = 40
+    )
+  )
+
+  val ddr4Example = SdramConfig(
+    generation = SdramGeneration.DDR4,
+    bgWidth = 2, // 4 bank groups
+    cidWidth = 0,
+    bankWidth = 2, // 4 banks per group
+    columnWidth = 10,
+    rowWidth = 17,
+    dataWidth = 64,
+    ddrMHZ = 1600,
+    ddrWrLat = 12,
+    ddrRdLat = 12,
+    sdramtime = SdramTiming(
+      generation = 4,
+      RFC = 295,
+      RAS = 35,
+      RP = 35,
+      RCD = 14,
+      WTR = 8,
+      WTP = 15,
+      RTP = 8,
+      RRD = 6,
+      REF = 64,
+      FAW = 30
+    )
+  )
+}
