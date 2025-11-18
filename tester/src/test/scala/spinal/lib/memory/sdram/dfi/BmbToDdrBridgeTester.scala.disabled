@@ -4,14 +4,15 @@ import spinal.core._
 import spinal.lib._
 import spinal.lib.bus.bmb.BmbParameter
 import spinal.lib.memory.sdram.dfi.phy.XilinxUSPhy
-import spinal.lib.sim.SimHeap
+import spinal.tester.code.SpinalAnyFunSuite
+import spinal.core.sim._
 
 /**
  * BmbToDdrBridge综合测试
  */
-class BmbToDdrBridgeTester extends SpinalTester {
+class BmbToDdrBridgeTester extends SpinalAnyFunSuite {
 
-  def main(args: Array[String]): Unit = {
+  test("BmbToDdrBridge basic functionality") {
     // 配置测试参数 - 使用正确的BMB API
     val accessConfig = spinal.lib.bus.bmb.BmbAccessParameter(
       addressWidth = 32,
@@ -39,60 +40,12 @@ class BmbToDdrBridgeTester extends SpinalTester {
       sdram = SdramConfigExample.ddr3Example
     )
 
-    // DDR4配置
-    val ddr4Config = DfiConfig(
-      chipSelectNumber = 1,
-      dataSlice = 8,
-      signalConfig = DfiSignalConfig.DDR4(),
-      timeConfig = DfiTimeConfig(
-        frequencyRatio = 1,
-        cmdPhase = 0,
-        tPhyWrLat = 10,
-        tPhyWrData = 1,
-        tPhyWrCsLat = 0,
-        tPhyWrCsGap = 0,
-        tRddataEn = 10,
-        tPhyRdlat = 10,
-        tPhyRdCslat = 0,
-        tPhyRdCsGap = 0
-      ),
-      sdram = SdramConfigExample.ddr4Example
-    )
-
-    // 运行测试
-    runAllTests(bmbParameter, ddr3Config, ddr4Config)
-  }
-
-  def runAllTests(bmbParameter: BmbParameter, ddr3Config: DfiConfig, ddr4Config: DfiConfig): Unit = {
-    println("=== BmbToDdrBridge 综合测试开始 ===")
-
-    // 基本功能测试
-    testBasicFunctionality(bmbParameter, ddr3Config)
-
-    // DDR3兼容性测试
-    testDDR3Compatibility(bmbParameter, ddr3Config)
-
-    // DDR4兼容性测试
-    testDDR4Compatibility(bmbParameter, ddr4Config)
-
-    // 错误处理测试
-    testErrorHandling(bmbParameter, ddr3Config)
-
-    // 性能测试
-    testPerformance(bmbParameter, ddr3Config)
-
-    println("=== 所有测试完成 ===")
-  }
-
-  def testBasicFunctionality(bmbParameter: BmbParameter, dfiConfig: DfiConfig): Unit = {
-    println("--- 基本功能测试 ---")
-
     SimConfig.withConfig(SpinalConfig(
       defaultConfigForClockDomains = ClockDomainConfig(
         resetActiveLevel = LOW
       )
     )).withFstWave.compile {
-      val bridge = BmbToDdrBridge(bmbParameter, dfiConfig)
+      val bridge = BmbToDdrBridge(bmbParameter, ddr3Config)
       bridge
     }.doSim { dut =>
       dut.clockDomain.forkStimulus(10 ns)
@@ -149,14 +102,35 @@ class BmbToDdrBridgeTester extends SpinalTester {
 
       dut.clockDomain.waitSampling(10)
     }
-
-    println("基本功能测试完成")
   }
 
-  def testDDR3Compatibility(bmbParameter: BmbParameter, ddr3Config: DfiConfig): Unit = {
-    println("--- DDR3兼容性测试 ---")
+  test("BmbToDdrBridge DDR3 compatibility") {
+    val accessConfig = spinal.lib.bus.bmb.BmbAccessParameter(
+      addressWidth = 32,
+      dataWidth = 64
+    )
+    val bmbParameter = BmbParameter(accessConfig)
 
-    SimConfig.withConfig(SpinalConfig()).withFstWave.compile {
+    val ddr3Config = DfiConfig(
+      chipSelectNumber = 1,
+      dataSlice = 8,
+      signalConfig = DfiSignalConfig.DDR3(),
+      timeConfig = DfiTimeConfig(
+        frequencyRatio = 1,
+        cmdPhase = 0,
+        tPhyWrLat = 9,
+        tPhyWrData = 1,
+        tPhyWrCsLat = 0,
+        tPhyWrCsGap = 0,
+        tRddataEn = 9,
+        tPhyRdlat = 9,
+        tPhyRdCslat = 0,
+        tPhyRdCsGap = 0
+      ),
+      sdram = SdramConfigExample.ddr3Example
+    )
+
+    SimConfig.withFstWave.compile {
       val bridge = BmbToDdrBridge(bmbParameter, ddr3Config)
       bridge
     }.doSim { dut =>
@@ -167,14 +141,35 @@ class BmbToDdrBridgeTester extends SpinalTester {
 
       dut.clockDomain.waitSampling(10)
     }
-
-    println("DDR3兼容性测试完成")
   }
 
-  def testDDR4Compatibility(bmbParameter: BmbParameter, ddr4Config: DfiConfig): Unit = {
-    println("--- DDR4兼容性测试 ---")
+  test("BmbToDdrBridge DDR4 compatibility") {
+    val accessConfig = spinal.lib.bus.bmb.BmbAccessParameter(
+      addressWidth = 32,
+      dataWidth = 64
+    )
+    val bmbParameter = BmbParameter(accessConfig)
 
-    SimConfig.withConfig(SpinalConfig()).withFstWave.compile {
+    val ddr4Config = DfiConfig(
+      chipSelectNumber = 1,
+      dataSlice = 8,
+      signalConfig = DfiSignalConfig.DDR4(),
+      timeConfig = DfiTimeConfig(
+        frequencyRatio = 1,
+        cmdPhase = 0,
+        tPhyWrLat = 10,
+        tPhyWrData = 1,
+        tPhyWrCsLat = 0,
+        tPhyWrCsGap = 0,
+        tRddataEn = 10,
+        tPhyRdlat = 10,
+        tPhyRdCslat = 0,
+        tPhyRdCsGap = 0
+      ),
+      sdram = SdramConfigExample.ddr4Example
+    )
+
+    SimConfig.withFstWave.compile {
       val bridge = BmbToDdrBridge(bmbParameter, ddr4Config)
       bridge
     }.doSim { dut =>
@@ -185,15 +180,36 @@ class BmbToDdrBridgeTester extends SpinalTester {
 
       dut.clockDomain.waitSampling(10)
     }
-
-    println("DDR4兼容性测试完成")
   }
 
-  def testErrorHandling(bmbParameter: BmbParameter, dfiConfig: DfiConfig): Unit = {
-    println("--- 错误处理测试 ---")
+  test("BmbToDdrBridge error handling") {
+    val accessConfig = spinal.lib.bus.bmb.BmbAccessParameter(
+      addressWidth = 32,
+      dataWidth = 64
+    )
+    val bmbParameter = BmbParameter(accessConfig)
 
-    SimConfig.withConfig(SpinalConfig()).withFstWave.compile {
-      val bridge = BmbToDdrBridge(bmbParameter, dfiConfig)
+    val ddr3Config = DfiConfig(
+      chipSelectNumber = 1,
+      dataSlice = 8,
+      signalConfig = DfiSignalConfig.DDR3(),
+      timeConfig = DfiTimeConfig(
+        frequencyRatio = 1,
+        cmdPhase = 0,
+        tPhyWrLat = 9,
+        tPhyWrData = 1,
+        tPhyWrCsLat = 0,
+        tPhyWrCsGap = 0,
+        tRddataEn = 9,
+        tPhyRdlat = 9,
+        tPhyRdCslat = 0,
+        tPhyRdCsGap = 0
+      ),
+      sdram = SdramConfigExample.ddr3Example
+    )
+
+    SimConfig.withFstWave.compile {
+      val bridge = BmbToDdrBridge(bmbParameter, ddr3Config)
       bridge
     }.doSim { dut =>
       dut.clockDomain.forkStimulus(10 ns)
@@ -220,15 +236,36 @@ class BmbToDdrBridgeTester extends SpinalTester {
       dut.io.bmb.cmd.valid #= false
       dut.clockDomain.waitSampling(10)
     }
-
-    println("错误处理测试完成")
   }
 
-  def testPerformance(bmbParameter: BmbParameter, dfiConfig: DfiConfig): Unit = {
-    println("--- 性能测试 ---")
+  test("BmbToDdrBridge performance") {
+    val accessConfig = spinal.lib.bus.bmb.BmbAccessParameter(
+      addressWidth = 32,
+      dataWidth = 64
+    )
+    val bmbParameter = BmbParameter(accessConfig)
 
-    SimConfig.withConfig(SpinalConfig()).withFstWave.compile {
-      val bridge = BmbToDdrBridge(bmbParameter, dfiConfig)
+    val ddr3Config = DfiConfig(
+      chipSelectNumber = 1,
+      dataSlice = 8,
+      signalConfig = DfiSignalConfig.DDR3(),
+      timeConfig = DfiTimeConfig(
+        frequencyRatio = 1,
+        cmdPhase = 0,
+        tPhyWrLat = 9,
+        tPhyWrData = 1,
+        tPhyWrCsLat = 0,
+        tPhyWrCsGap = 0,
+        tRddataEn = 9,
+        tPhyRdlat = 9,
+        tPhyRdCslat = 0,
+        tPhyRdCsGap = 0
+      ),
+      sdram = SdramConfigExample.ddr3Example
+    )
+
+    SimConfig.withFstWave.compile {
+      val bridge = BmbToDdrBridge(bmbParameter, ddr3Config)
       bridge
     }.doSim { dut =>
       dut.clockDomain.forkStimulus(10 ns)
@@ -257,8 +294,6 @@ class BmbToDdrBridgeTester extends SpinalTester {
       println(f"性能测试完成，耗时: ${duration}%.2f ms")
       println(f"平均每次操作耗时: ${duration/100}%.2f ms")
     }
-
-    println("性能测试完成")
   }
 
   private def testDDR3Sequence(dut: BmbToDdrBridge): Unit = {
@@ -303,109 +338,5 @@ class BmbToDdrBridgeTester extends SpinalTester {
       } else {
         println("DDR4测试序列超时")
       }
-  }
-}
-
-/**
- * DDR3特定功能测试
- */
-class BmbToDdrBridgeDDR3Tester extends SpinalTester {
-  def main(args: Array[String]): Unit = {
-    println("=== DDR3专项测试 ===")
-
-    val accessConfig = spinal.lib.bus.bmb.BmbAccessParameter(
-      addressWidth = 32,
-      dataWidth = 64
-    )
-    val bmbParameter = BmbParameter(accessConfig)
-    val ddr3Config = DfiConfig(
-      chipSelectNumber = 1,
-      dataSlice = 8,
-      signalConfig = DfiSignalConfig.DDR3(),
-      timeConfig = DfiTimeConfig(
-        frequencyRatio = 1,
-        cmdPhase = 0,
-        tPhyWrLat = 9,
-        tPhyWrData = 1,
-        tPhyWrCsLat = 0,
-        tPhyWrCsGap = 0,
-        tRddataEn = 9,
-        tPhyRdlat = 9,
-        tPhyRdCslat = 0,
-        tPhyRdCsGap = 0
-      ),
-      sdram = SdramConfigExample.ddr3Example
-    )
-
-    SimConfig.withFstWave.compile {
-      BmbToDdrBridge(bmbParameter, ddr3Config)
-    }.doSim { dut =>
-      dut.clockDomain.forkStimulus(10 ns)
-
-      // DDR3时序参数测试
-      testDDR3Timing(dut)
-
-      dut.clockDomain.waitSampling(10)
-    }
-
-    println("DDR3专项测试完成")
-  }
-
-  private def testDDR3Timing(dut: BmbToDdrBridge): Unit = {
-    // 测试DDR3特定时序约束
-    // tRCD, tCL, tRP等
-    println("测试DDR3时序参数...")
-  }
-}
-
-/**
- * DDR4特定功能测试
- */
-class BmbToDdrBridgeDDR4Tester extends SpinalTester {
-  def main(args: Array[String]): Unit = {
-    println("=== DDR4专项测试 ===")
-
-    val accessConfig = spinal.lib.bus.bmb.BmbAccessParameter(
-      addressWidth = 32,
-      dataWidth = 64
-    )
-    val bmbParameter = BmbParameter(accessConfig)
-    val ddr4Config = DfiConfig(
-      chipSelectNumber = 1,
-      dataSlice = 8,
-      signalConfig = DfiSignalConfig.DDR4(),
-      timeConfig = DfiTimeConfig(
-        frequencyRatio = 1,
-        cmdPhase = 0,
-        tPhyWrLat = 10,
-        tPhyWrData = 1,
-        tPhyWrCsLat = 0,
-        tPhyWrCsGap = 0,
-        tRddataEn = 10,
-        tPhyRdlat = 10,
-        tPhyRdCslat = 0,
-        tPhyRdCsGap = 0
-      ),
-      sdram = SdramConfigExample.ddr4Example
-    )
-
-    SimConfig.withFstWave.compile {
-      BmbToDdrBridge(bmbParameter, ddr4Config)
-    }.doSim { dut =>
-      dut.clockDomain.forkStimulus(10 ns)
-
-      // DDR4特有功能测试
-      testDDR4Features(dut)
-
-      dut.clockDomain.waitSampling(10)
-    }
-
-    println("DDR4专项测试完成")
-  }
-
-  private def testDDR4Features(dut: BmbToDdrBridge): Unit = {
-    // 测试DDR4特有功能
-    // Bank Group, DBI, CRC等
-    println("测试DDR4特有功能...")
   }
 }

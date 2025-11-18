@@ -12,7 +12,8 @@ module OSERDESE3 #(
     parameter IS_RST_INVERTED = 1'b0,
     parameter SIM_DEVICE = "ULTRASCALE",
     parameter SRVAL = 0,
-    parameter has_tristate = 1
+    // Match UltraScale OSERDESE3 parameter naming used in generated RTL
+    parameter HAS_TRISTATE = "TRUE"
 ) (
     input  wire                  CLK,
     input  wire                  CLKDIV,

@@ -59,3 +59,7 @@
 - 第2周：实现DDR3/DDR4特定功能支持
 - 第3周：完善测试套件和错误处理
 - 第4周：性能优化、文档和最终验证
+
+## Git Management Note
+
+**注意**: AI模型在实现此proposal时不需要管理git相关记录（如commit、push、branch等）。所有git操作由项目维护者手动处理。AI模型专注于代码实现和测试验证。

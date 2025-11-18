@@ -21,7 +21,7 @@ module IDELAYE3 #(
     input  wire                  CE,
     input  wire                  CASC_IN,
     input  wire                  CASC_RETURN,
-    input  wire                  CNTVALUEIN,
+    input  wire [8:0]            CNTVALUEIN,
     output wire [8:0]            CNTVALUEOUT,
     input  wire                  DATAIN,
     input  wire                  IDATAIN,
@@ -29,6 +29,7 @@ module IDELAYE3 #(
     input  wire                  INC,
     input  wire                  LOAD,
     output wire                  CASC_OUT,
+    input  wire                  EN_VTC,
     input  wire                  RST
 );
 

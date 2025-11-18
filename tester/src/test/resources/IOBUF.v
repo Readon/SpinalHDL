@@ -11,7 +11,7 @@ module IOBUF #(
 ) (
     inout  wire                  IO,
     input  wire                  I,
-    output wire                  O,
+    output reg                   O,
     input  wire                  T
 );
 
