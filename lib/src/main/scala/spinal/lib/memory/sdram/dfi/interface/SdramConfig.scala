@@ -138,6 +138,32 @@ case class SdramTiming(
 
 // Example configurations
 object SdramConfigExample {
+  val ddr2Example = SdramConfig(
+    generation = SdramGeneration.DDR2,
+    bgWidth = 0, // DDR2 doesn't have bank groups
+    cidWidth = 0,
+    bankWidth = 3, // 8 banks
+    columnWidth = 10,
+    rowWidth = 15,
+    dataWidth = 64,
+    ddrMHZ = 400,
+    ddrWrLat = 9,
+    ddrRdLat = 9,
+    sdramtime = SdramTiming(
+      generation = 2,
+      RFC = 127,
+      RAS = 40,
+      RP = 15,
+      RCD = 15,
+      WTR = 8,
+      WTP = 15,
+      RTP = 8,
+      RRD = 10,
+      REF = 64,
+      FAW = 45
+    )
+  )
+
   val ddr3Example = SdramConfig(
     generation = SdramGeneration.DDR3,
     bgWidth = 0, // DDR3 doesn't have bank groups

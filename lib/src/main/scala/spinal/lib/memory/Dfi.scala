@@ -287,7 +287,7 @@ case class Dfi(config: DfiConfig, timeConfig: DfiTimeConfig) extends Bundle with
     val control = DfiControlInterface(config)
     val write = DfiWriteInterface(config)
     val read = DfiReadInterface(config)
-    val updata = DfiUpdateInterface(config)
+    val update = DfiUpdateInterface(config)
     val status = DfiStatusInterface(config)
     val rdTraining = DfiReadTrainingInterface(config)
     val wrTraining = DfiWriteTrainingInterface(config)
