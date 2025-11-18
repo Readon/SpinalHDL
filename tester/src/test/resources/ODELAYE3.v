@@ -20,13 +20,15 @@ module ODELAYE3 #(
     input  wire                  CE,
     input  wire                  CASC_IN,
     input  wire                  CASC_RETURN,
-    input  wire                  CNTVALUEIN,
+    input  wire [8:0]            CNTVALUEIN,
     output wire [8:0]            CNTVALUEOUT,
     input  wire                  DATAIN,
+    input  wire                  ODATAIN,
     output wire                  DATAOUT,
     input  wire                  INC,
     input  wire                  LOAD,
     output wire                  CASC_OUT,
+    input  wire                  EN_VTC,
     input  wire                  RST
 );
 
@@ -93,8 +95,9 @@ module ODELAYE3 #(
     
     // Output assignments
     assign CNTVALUEOUT = delay_value;
-    assign DATAOUT = DATAIN; // Simplified: no actual delay for simulation
-    
+    // In UltraScale ODELAYE3 used by XilinxUSPhy, ODATAIN is the delayed data source
+    assign DATAOUT = ODATAIN; // Simplified: no actual delay for simulation
+
     // For simulation purposes, we could add a simple delay model
     // but this would require more complex timing modeling
     // For now, we pass through the data with minimal delay modeling

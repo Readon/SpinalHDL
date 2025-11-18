@@ -55,7 +55,7 @@ object DfiController {
   def ddr3(
     bmbParameter: BmbParameter,
     addressWidth: Int = 16,
-    bankWidth: Int = 3,
+    bankWidth: Int = 3,  // DDR3: 8 banks
     columnWidth: Int = 10,
     dataWidth: Int = 64,
     chipSelectNumber: Int = 1
@@ -69,7 +69,7 @@ object DfiController {
       columnWidth = columnWidth,
       rowWidth = addressWidth,
       dataWidth = dataWidth,
-      ddrMHZ = 800,
+      ddrMHZ = 800,  // DDR3 default frequency
       ddrWrLat = 11,
       ddrRdLat = 11,
       sdramtime = SdramTiming(
@@ -112,8 +112,8 @@ object DfiController {
   def ddr4(
     bmbParameter: BmbParameter,
     addressWidth: Int = 17,
-    bankWidth: Int = 2,
-    bankGroupWidth: Int = 2,
+    bankWidth: Int = 4,  // DDR4: 4 banks per group
+    bankGroupWidth: Int = 2,  // DDR4: 4 bank groups
     columnWidth: Int = 10,
     dataWidth: Int = 64,
     chipSelectNumber: Int = 1
@@ -127,7 +127,7 @@ object DfiController {
       columnWidth = columnWidth,
       rowWidth = addressWidth,
       dataWidth = dataWidth,
-      ddrMHZ = 1600,
+      ddrMHZ = 1600, // DDR4 default frequency
       ddrWrLat = 12,
       ddrRdLat = 12,
       sdramtime = SdramTiming(

@@ -7,13 +7,15 @@
 module IOBUFDSE3 #(
     parameter CAPACITANCE = "DONT_CARE",
     parameter IOSTANDARD = "DEFAULT",
-    parameter SLEW = "SLOW"
+    parameter SLEW = "SLOW",
+    // Match UltraScale IOBUFDSE3 parameter naming used in generated RTL
+    parameter SIM_DEVICE  = "ULTRASCALE"
 ) (
     inout  wire                  IO,
     input  wire                  I,
-    output wire                  O,
+    output reg                   O,
     input  wire                  T,
-    output wire                  IOB
+    inout  wire                  IOB
 );
 
     // Simple differential tri-state buffer

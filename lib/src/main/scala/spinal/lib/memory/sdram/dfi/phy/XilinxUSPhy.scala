@@ -689,8 +689,12 @@ class XilinxUSPhy(
     val delay = new ODELAYE3(delayType = "VARIABLE")
     delay.RST := io.ctrl.reset | io.phyCtrl.cdlyRst
     delay.CLK := io.clk4x
-    // EN_VTC controlled by DFI interface - disabled during training
-    delay.EN_VTC := io.dfi.update.ctrlupdAck && !trainingParams.trainingActive
+    // EN_VTC controlled by DFI interface when update signals are present; otherwise just gate with training
+    if (dfiConfig.signalConfig.useCtrlupdReq) {
+      delay.EN_VTC := io.dfi.update.ctrlupdAck && !trainingParams.trainingActive
+    } else {
+      delay.EN_VTC := !trainingParams.trainingActive
+    }
     delay.CE := io.phyCtrl.cdlyInc
     delay.INC := True
     delay.ODATAIN := serdes.OQ
@@ -761,8 +765,9 @@ class XilinxUSPhy(
     val odelayVec = Seq.fill(handler.signalMappings.length)(new ODELAYE3(delayType = "VARIABLE", refClkFrequency = DfiCommonConstants.DEFAULT_FIFO_DEPTH * DfiCommonConstants.FIFO_DEPTH + DfiCommonConstants.FIFO_DEPTH))
 
     // Expose synced signals as Area outputs to avoid hierarchy violations
-    val syncedAddressOut = Vec.fill(15)(Bool())
-    val syncedBankOut = Vec.fill(3)(Bool())
+    val syncedAddressOut = Vec.fill(handler.syncedAddressOut.length)(Bool())
+    // Match bank signal width to the DFI configuration to support DDR3/DDR4 variants
+    val syncedBankOut = Vec.fill(handler.syncedBankOut.length)(Bool())
 
     // Register synced signals locally - use RegNext to avoid direct access
     for (i <- 0 until syncedAddressOut.length) {
@@ -794,14 +799,14 @@ class XilinxUSPhy(
       // Don't access handler's internal signals directly
       val dfiSourceBits = Bits(phyConfig.bitsPerByte bits)
       // Assign based on signal index to avoid direct access to handler internals
-      if (i < syncedAddressOut.length) {
-        // Address signals (0-14 for 15-bit address)
-        dfiSourceBits := handler.syncedAddressOut(i).asBits.resize(phyConfig.bitsPerByte)
-      } else if (i >= syncedAddressOut.length && i < syncedAddressOut.length + syncedBankOut.length) {
-        // Bank signals (15-17 for 3-bit bank, if enabled)
-        val bankIndex = i - syncedAddressOut.length
-        if (bankIndex < handler.syncedBankOut.length) {
-          dfiSourceBits := handler.syncedBankOut(bankIndex).asBits.resize(phyConfig.bitsPerByte)
+      if (i < syncedAddressLocal.length) {
+        // Address signals
+        dfiSourceBits := syncedAddressLocal(i).asBits.resize(phyConfig.bitsPerByte)
+      } else if (i >= syncedAddressLocal.length && i < syncedAddressLocal.length + syncedBankLocal.length) {
+        // Bank signals (if enabled)
+        val bankIndex = i - syncedAddressLocal.length
+        if (bankIndex < syncedBankLocal.length) {
+          dfiSourceBits := syncedBankLocal(bankIndex).asBits.resize(phyConfig.bitsPerByte)
         } else {
           dfiSourceBits := B(0, phyConfig.bitsPerByte bits)
         }
@@ -840,14 +845,14 @@ class XilinxUSPhy(
       // Fixed: Connect directly to pads to avoid hierarchy violations
       // Don't use handler's connectOutput method which tries to assign to child component outputs
       // Instead, connect directly to the appropriate pad based on signal index
-      if (i < 15) {
+      if (i < syncedAddressOut.length) {
         // Address signals
         if (i < io.pads.a.getWidth) {
           io.pads.a(i) := padSignalLocal
         }
-      } else if (i >= 15 && i < 18) {
+      } else if (i >= syncedAddressOut.length && i < syncedAddressOut.length + syncedBankOut.length) {
         // Bank signals
-        val bankIndex = i - 15
+        val bankIndex = i - syncedAddressOut.length
         if (dfiConfig.signalConfig.useBank && bankIndex < io.pads.ba.getWidth) {
           io.pads.ba(bankIndex) := padSignalLocal
         }
@@ -950,8 +955,12 @@ class XilinxUSPhy(
       // Configure delay line with proper reset and control signals
       delay.RST := io.ctrl.reset
       delay.CLK := io.clk4x
-      // EN_VTC follows same control logic as clockGen delay
-      delay.EN_VTC := io.dfi.update.ctrlupdAck && !trainingParams.trainingActive
+      // EN_VTC follows same control logic as clockGen delay when update signals are present; otherwise just gate with training
+      if (dfiConfig.signalConfig.useCtrlupdReq) {
+        delay.EN_VTC := io.dfi.update.ctrlupdAck && !trainingParams.trainingActive
+      } else {
+        delay.EN_VTC := !trainingParams.trainingActive
+      }
       delay.CE := io.phyCtrl.dqInc & io.phyCtrl.dlySel(i / phyConfig.bitsPerByte) // Proper flattened phyCtrl signals
       delay.INC := True // Always increment (decrement handled by reset+increment)
       delay.ODATAIN := serdes.OQ
@@ -1173,7 +1182,11 @@ class XilinxUSPhy(
     val enVtcShared = Bool()
 
     // Use centralized training active signal to avoid assignment conflicts
-    enVtcShared := io.dfi.update.ctrlupdAck && !trainingParams.trainingActive
+    if (dfiConfig.signalConfig.useCtrlupdReq) {
+      enVtcShared := io.dfi.update.ctrlupdAck && !trainingParams.trainingActive
+    } else {
+      enVtcShared := !trainingParams.trainingActive
+    }
 
     for (((serdes, delay), i) <- rdIserdes.zip(rdDelay).zipWithIndex) {
       // Configure delay line with proper reset and control signals - shared parameters
@@ -1556,10 +1569,10 @@ class XilinxUSPhy(
     trainingParams.readGateDone := True
     trainingParams.readEyeDone := True
     trainingParams.caTrainingDone := True
-    trainingParams.writeLevelingResponse := B(0, 1 bits)
-    trainingParams.readGateResponse := B(0, 1 bits)
-    trainingParams.readEyeResponse := B(0, 1 bits)
-    trainingParams.caTrainingResponse := B(0, 2 bits)
+    trainingParams.writeLevelingResponse := B(0, dfiConfig.writeLevelingResponseWidth bits)
+    trainingParams.readGateResponse := B(0, dfiConfig.readLevelingResponseWidth bits)
+    trainingParams.readEyeResponse := B(0, dfiConfig.readLevelingResponseWidth bits)
+    trainingParams.caTrainingResponse := B(0, dfiConfig.caTrainingResponseWidth bits)
   }
 
   // Connect to PHY control interface through buffered signals to avoid hierarchy violations
@@ -1643,10 +1656,13 @@ class XilinxUSPhy(
   if (dfiConfig.useAlertN) {
     io.dfi.status.alertN := B((BigInt(1) << (dfiConfig.alertWidth * dfiConfig.frequencyRatio)) - 1, dfiConfig.alertWidth * dfiConfig.frequencyRatio bits) // No alert by default
   }
-  io.dfi.status.initComplete := initManager.initComplete
+  // Only drive initComplete when status/init signals are enabled in the DFI config
+  if (dfiConfig.signalConfig.useInitStart) {
+    io.dfi.status.initComplete := initManager.initComplete
+  }
   // Connect initDone to both DFI status and external control interface
   io.ctrl.initDone := initManager.initComplete
-  
+
   // Drive DFI training request signals (PHY responds to controller requests)
   if (dfiConfig.useRdlvlReq) {
     io.dfi.rdTraining.rdlvlReq := B(0, dfiConfig.readLevelingPhyIFWidth bits) // No read leveling request by default
