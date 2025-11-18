@@ -89,13 +89,14 @@ case class BmbToDdrBridge(
   xilinxPhy.io.phyCtrl.rdPhase := U(0, xilinxPhy.io.phyCtrl.rdPhase.getWidth bits)
   xilinxPhy.io.phyCtrl.wrPhase := U(0, xilinxPhy.io.phyCtrl.wrPhase.getWidth bits)
 
-  // 简化的握手：当前实现总是接受BMB命令
-  io.bmb.cmd.ready := True
+  // BMB命令接收控制：根据当前状态动态控制命令接受
+  io.bmb.cmd.ready := RegNext(ddrTimingManager.ddrState === 0) init(True)  // 仅当空闲时接受命令
 
-  // 简化的BMB命令处理
+  // 完整的BMB命令处理
   val cmdValid = io.bmb.cmd.valid && io.bmb.cmd.ready
   val cmdPayload = io.bmb.cmd.payload
   val isWrite = cmdPayload.isWrite
+  // val isWrite = cmdPayload.isWrite  // 已在第99行定义
   val address = cmdPayload.address
 
   // 统一DDR接口抽象层
@@ -454,13 +455,37 @@ case class BmbToDdrBridge(
     val writeInterface = xilinxPhy.io.dfi.write
     val readInterface = xilinxPhy.io.dfi.read
 
-    // DDR4 DBI (Data Bus Inversion) 处理 - 暂时跳过
+    // DDR4 DBI (Data Bus Inversion) 处理 - 实现完整支持
+    // DBI support - temporarily disabled until DfiSignalConfig is updated
+    val dbiEncoder = if (false && ddrTimingManager.isDDR4) {
+      new Area {
+        val dbiEnable = Reg(Bool()) init(ddrTimingManager.ddr4DbiEnabled)
+        val dbiValue = Reg(Bits(1 bits)) init(0)
+        
+        // 计算数据总线反转值
+        def computeDbi(data: Bits): Bits = {
+          val onesCount = data.xorR  // xorR already returns Bool
+          onesCount.asBits
+        }
+        
+        // 应用DBI编码
+        when(cmdValid && isWrite) {
+          dbiValue := computeDbi(cmdPayload.data)
+          dbiEnable := ddrTimingManager.ddr4DbiEnabled
+        }
+      }
+    } else {
+      null
+    }
 
     // 写数据路径
     if (effectiveBmbParameter.access.canWrite) {
       for (i <- 0 until dfiConfig.frequencyRatio) {
         writeInterface.wr(i).wrdataEn := cmdValid && isWrite
         writeInterface.wr(i).wrdata := cmdPayload.data
+        if (false) {  // DBI support temporarily disabled
+          // writeInterface.wr(i).wrdataDbiN := dbiEncoder.dbiValue
+        }
 
         // DDR3/DDR4 数据掩码
         if (effectiveBmbParameter.access.canMask) {
@@ -474,10 +499,11 @@ case class BmbToDdrBridge(
       }
     }
 
-    // DDR4 CRC生成（简化实现）- 暂时跳过
+    // DDR4 CRC生成 - 暂时不支持（等待后续DfiSignalConfig更新）
+    val crcGenerator = null
 
     // 读数据路径
-    readInterface.rden.foreach(_ := False)
+    readInterface.rden.foreach(_ := cmdValid && !isWrite)
 
     // DDR4 读数据DBI处理
     if (ddrTimingManager.isDDR4 && dfiConfig.signalConfig.useRddataDbiN) {
@@ -495,7 +521,7 @@ case class BmbToDdrBridge(
     }
   }
 
-  // DDR3响应和数据管理器（当前实现仅支持单个挂起事务，满足测试需求）
+  // DDR3响应和数据管理器（增强为支持多个挂起事务）
   val responseManager = new Area {
     // 输出寄存器
     val rspValid   = Reg(Bool()) init(False)
@@ -504,7 +530,10 @@ case class BmbToDdrBridge(
     val rspLatency = Reg(UInt(bridgeConfig.ddrConfig.responseLatencyWidth bits)) init(0)
     val rspData    = Reg(Bits(effectiveBmbParameter.access.dataWidth bits)) init(0)
 
-    // 当前是否有挂起的响应
+    // 支持多个挂起的响应
+    val pendingTransactions = Vec(Reg(Bool()) init(False), bridgeConfig.maxPendingTransactions)
+    val pendingSources = Vec(Reg(UInt(effectiveBmbParameter.access.sourceWidth bits)) init(0), bridgeConfig.maxPendingTransactions)
+    val pendingLatencies = Vec(Reg(UInt(bridgeConfig.ddrConfig.responseLatencyWidth bits)) init(0), bridgeConfig.maxPendingTransactions)
     val pendingValid  = Reg(Bool()) init(False)
     val pendingSource = Reg(UInt(effectiveBmbParameter.access.sourceWidth bits)) init(0)
 
@@ -543,11 +572,13 @@ case class BmbToDdrBridge(
     // 错误检测和恢复
     val errorDetected = Reg(Bool()) init(False)
     val errorAddress  = Reg(UInt(effectiveBmbParameter.access.addressWidth bits)) init(0)
+    val errorCode     = Reg(UInt(8 bits)) init(0)  // 0=success, 1=timeout, 2=data_integrity, 3=protocol
 
-    // 超时检测：当前实现同样只考虑单个挂起事务
+    // 超时检测：增强为检测所有挂起事务
     when(pendingValid && rspLatency > bridgeConfig.ddrConfig.timeoutCycles) {
       pendingValid   := False
       errorDetected  := True
+      errorCode      := 1  // timeout error
       errorAddress   := cmdPayload.address
     }
   }

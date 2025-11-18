@@ -30,22 +30,22 @@ case class DfiController(
     s"BMB data width (${bmbParameter.access.dataWidth}) must match DFI data width (${dfiConfig.dataWidth})"
   )
 
+  // XilinxUSPhy物理层
+  val xilinxPhy = new XilinxUSPhy(dfiConfig, phyConfig)
+  xilinxPhy.io.clk4x := io.clk4x
+  xilinxPhy.io.clk4xN := io.clk4xN
+
   // BMB到DDR桥接器
   val bmbToDdrBridge = BmbToDdrBridge(bmbParameter, dfiConfig, phyConfig)
   bmbToDdrBridge.io.bmb <> io.bmb
   bmbToDdrBridge.io.clk4x := io.clk4x
   bmbToDdrBridge.io.clk4xN := io.clk4xN
 
-  // XilinxUSPhy物理层
-  val xilinxPhy = new XilinxUSPhy(dfiConfig, phyConfig)
-  xilinxPhy.io.clk4x := io.clk4x
-  xilinxPhy.io.clk4xN := io.clk4xN
-
-  // 连接桥接器到PHY的DFI接口
+  // 连接桥接器内部PHY的DFI接口到外部DFI接口
   xilinxPhy.io.dfi <> io.dfi
 
-  // 直接连接DDR物理接口
-  // 在实际系统中，xilinxPhy.io.pads 会连接到实际的DDR芯片
+  // 连接桥接器内部PHY到外部PHY的DDR物理接口
+  xilinxPhy.io.pads <> bmbToDdrBridge.xilinxPhy.io.pads
 }
 
 /**
