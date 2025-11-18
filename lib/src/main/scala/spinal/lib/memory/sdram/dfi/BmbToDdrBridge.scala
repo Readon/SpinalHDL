@@ -79,7 +79,7 @@ case class BmbToDdrBridge(
   // 将PHY控制接口连接到安全的默认值，避免未驱动输入
   xilinxPhy.io.ctrl.reset := False
 
-  xilinxPhy.io.phyCtrl.dlySel := B(0, xilinxPhy.io.phyCtrl.dlySel.getWidth bits)
+  xilinxPhy.io.phyCtrl.dlySel := B(0, 8 bits) // 确保位宽匹配
   xilinxPhy.io.phyCtrl.cdlyRst := False
   xilinxPhy.io.phyCtrl.cdlyInc := False
   xilinxPhy.io.phyCtrl.dqRst := False
@@ -89,11 +89,8 @@ case class BmbToDdrBridge(
   xilinxPhy.io.phyCtrl.rdPhase := U(0, xilinxPhy.io.phyCtrl.rdPhase.getWidth bits)
   xilinxPhy.io.phyCtrl.wrPhase := U(0, xilinxPhy.io.phyCtrl.wrPhase.getWidth bits)
 
-  // BMB命令接收控制：根据当前状态动态控制命令接受
-  io.bmb.cmd.ready := RegNext(ddrTimingManager.ddrState === 0) init(True)  // 仅当空闲时接受命令
-
-  // 完整的BMB命令处理
-  val cmdValid = io.bmb.cmd.valid && io.bmb.cmd.ready
+  // 完整的BMB命令处理（注意：cmdValid在io.bmb.cmd.ready定义后更新）
+  var cmdValid = False // 临时定义，稍后更新
   val cmdPayload = io.bmb.cmd.payload
   val isWrite = cmdPayload.isWrite
   // val isWrite = cmdPayload.isWrite  // 已在第99行定义
@@ -241,6 +238,12 @@ case class BmbToDdrBridge(
       }
     }
   }
+
+  // BMB命令接收控制：根据当前状态动态控制命令接受
+  io.bmb.cmd.ready := RegNext(ddrTimingManager.ddrState === 0) init(True)  // 仅当空闲时接受命令
+
+  // 更新cmdValid定义，现在io.bmb.cmd.ready已经定义
+  cmdValid := io.bmb.cmd.valid && io.bmb.cmd.ready
 
   // DFI控制信号生成
   val dfiControl = xilinxPhy.io.dfi.control
