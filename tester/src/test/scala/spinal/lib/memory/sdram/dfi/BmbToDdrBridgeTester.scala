@@ -150,9 +150,9 @@ class BmbToDdrBridgeTester extends SpinalAnyFunSuite {
 
   test("BmbToDdrBridge parameter validation") {
     val testCases = List(
-      (32, 128),  // addressWidth, dataWidth
-      (64, 128),
-      (32, 256)
+      (32, 128),  // addressWidth, dataWidth (must match DFI dataWidth)
+      (64, 128)
+      // Note: 256-bit data width not supported with current DDR3 config (DFI dataWidth = 128)
     )
 
     for ((addrWidth, dataWidth) <- testCases) {

@@ -65,7 +65,7 @@ class XilinxUSPhy(
       val dqs_inc_count = out UInt(delayCounterWidth bits)
 
       // Control signals
-      val dlySel = in Bits(timeoutCounterWidth bits) // Byte lane select
+      val dlySel = in Bits(dfiConfig.dataWidth / 8 bits) // Byte lane select (one bit per byte lane)
       val cdlyRst = in Bool() // Command delay reset
       val cdlyInc = in Bool() // Command delay increment
       val cdlyValue = out UInt(delayCounterWidth bits) // Current command delay
@@ -217,7 +217,8 @@ class XilinxUSPhy(
 
     // Delay control register (0x04)
     val delayCtrlReg = busCtrl.createReadAndWrite(Bits(DfiCommonConstants.DEBUG_COUNTER_WIDTH bits), 0x04).init(0)
-    io.phyCtrl.dlySel := delayCtrlReg(16 to 23) // [16:23] Byte lane select
+    val byteLaneCount = dfiConfig.dataWidth / 8
+    io.phyCtrl.dlySel := delayCtrlReg(16 until (16 + byteLaneCount)).resize(byteLaneCount) // Byte lane select (one bit per byte lane)
     io.phyCtrl.cdlyRst := delayCtrlReg(0) // [0] CDLY reset
     io.phyCtrl.cdlyInc := delayCtrlReg(1) // [1] CDLY increment
     // Use buffered training signals to avoid hierarchy violations
@@ -758,7 +759,9 @@ class XilinxUSPhy(
     handler.io.dfi.bank := (if (dfiConfig.signalConfig.useBank) io.dfi.control.bank.orR.asBits.resize(dfiConfig.bankWidth) else B(0, dfiConfig.bankWidth bits))
     handler.io.dfi.cke := io.dfi.control.cke.subdivideIn(dfiConfig.chipSelectNumber bits).head
     handler.io.dfi.odt := io.dfi.control.odt.subdivideIn(dfiConfig.chipSelectNumber bits).head
-    handler.io.dfi.resetN := io.dfi.control.resetN.subdivideIn(dfiConfig.chipSelectNumber bits).head
+    if (dfiConfig.useResetN) {
+      handler.io.dfi.resetN := io.dfi.control.resetN.subdivideIn(dfiConfig.chipSelectNumber bits).head
+    }
 
     // Create OSERDES and ODELAY for each signal identified by the handler
     val oserdesVec = Seq.fill(handler.signalMappings.length)(new OSERDESE3(hasTristate = true))

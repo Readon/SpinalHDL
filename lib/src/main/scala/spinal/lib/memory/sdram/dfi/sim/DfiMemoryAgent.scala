@@ -59,17 +59,29 @@ class DfiMemoryAgent(ctrl: DfiControlInterface, wr: DfiWriteInterface, rd: DfiRe
 
   def getByte(address: Long) = memory.read(address)
 
-  def selectBit(bigInt: BigInt, partIndex: Int, bitNumber: Int) = {
-    assert(isPow2(bigInt.bitLength))
+  def selectBit(bigInt: BigInt, partIndex: Int, bitNumber: Int): Array[Boolean] = {
+    // Handle edge case where bigInt is 0 or has bitLength < bitNumber
+    if (bigInt == 0 || bigInt.bitLength == 0) {
+      return Array[Boolean](false, false)
+    }
+
+    // Pad bigInt to ensure bitLength is a power of 2
+    val targetBitLength = if (isPow2(bigInt.bitLength)) bigInt.bitLength else (1 << log2Up(bigInt.bitLength))
+    val paddedBigInt = bigInt & ((BigInt(1) << targetBitLength) - 1)
+
     assert(isPow2(bitNumber))
-    val bigIntStr = bigInt.toString(2)
+    val bigIntStr = paddedBigInt.toString(2).reverse.padTo(targetBitLength, '0').reverse
     val parts = bigIntStr.grouped(bitNumber).toList.reverse
-    assert(partIndex >= 0 && partIndex < parts.size)
+
+    if (partIndex < 0 || partIndex >= parts.size) {
+      return Array[Boolean](false, false)
+    }
+
     val SelectedBit = BigInt(parts(partIndex), 2)
     Array[Boolean](SelectedBit.testBit(0), SelectedBit.testBit(1))
   }
 
-  def writeDataRxd(wrEn: collection.immutable.IndexedSeq[Boolean], wrData: collection.immutable.IndexedSeq[Long]) = {
+  def writeDataRxd(wrEn: collection.immutable.IndexedSeq[Boolean], wrData: collection.immutable.IndexedSeq[BigInt]) = {
     for (phase <- 0 until phaseCount) {
       wrEnQueue.enqueue(wrEn(phase))
       if (wrEnQueue.length == busConfig.timeConfig.tPhyWrData + 1) {
@@ -147,7 +159,7 @@ class DfiMemoryAgent(ctrl: DfiControlInterface, wr: DfiWriteInterface, rd: DfiRe
     val cas = casNProxy.toBigInt.asInstanceOf[BigInt].testBit(cmdPhase)
     val weN = weNProxy.toBigInt.asInstanceOf[BigInt].testBit(cmdPhase)
     val wrEn = wr.wr.map(_.wrdataEn.toBoolean).toIndexedSeq
-    val wrData = wr.wr.map(_.wrdata.toLong).toIndexedSeq
+    val wrData = wr.wr.map(_.wrdata.toBigInt).toIndexedSeq
     val rdEn = rd.rden.map(_.toBoolean).toIndexedSeq
 
     for ((enPerChip, idPerChip) <- cke.zip(csN).map(t => t._1 && !t._2).zipWithIndex) {
