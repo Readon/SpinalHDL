@@ -79,7 +79,7 @@ case class BmbToDdrBridge(
   // 将PHY控制接口连接到安全的默认值，避免未驱动输入
   xilinxPhy.io.ctrl.reset := False
 
-  xilinxPhy.io.phyCtrl.dlySel := B(0, 8 bits) // 确保位宽匹配
+  xilinxPhy.io.phyCtrl.dlySel := B(0, xilinxPhy.io.phyCtrl.dlySel.getWidth bits) // 使用实际位宽
   xilinxPhy.io.phyCtrl.cdlyRst := False
   xilinxPhy.io.phyCtrl.cdlyInc := False
   xilinxPhy.io.phyCtrl.dqRst := False
@@ -90,7 +90,7 @@ case class BmbToDdrBridge(
   xilinxPhy.io.phyCtrl.wrPhase := U(0, xilinxPhy.io.phyCtrl.wrPhase.getWidth bits)
 
   // 完整的BMB命令处理（注意：cmdValid在io.bmb.cmd.ready定义后更新）
-  var cmdValid = False // 临时定义，稍后更新
+  val cmdValid = Bool() // 将在后面定义
   val cmdPayload = io.bmb.cmd.payload
   val isWrite = cmdPayload.isWrite
   // val isWrite = cmdPayload.isWrite  // 已在第99行定义
@@ -108,23 +108,33 @@ case class BmbToDdrBridge(
     val banksPerGroup = if (isDDR4) bridgeConfig.ddrConfig.actualBanksPerGroup else 0
 
     // 统一的地址解码器
+    // BMB地址是线性字节地址，需要转换为DDR的bank/row/column格式
+    // 地址格式: [bank][row][column][byteOffset]
     def decodeAddress(address: UInt): DdrAddressInfo = {
+      // 计算字节偏移位宽
+      val byteOffsetWidth = log2Up(dfiConfig.sdram.bytePerWord)
+
+      // 去掉字节偏移，得到字地址
+      val wordAddress = address >> byteOffsetWidth
+
       if (isDDR3) {
-        val bank = address(dfiConfig.bankWidth - 1 downto 0)
-        val row = address(dfiConfig.bankWidth + dfiConfig.sdram.rowWidth - 1 downto dfiConfig.bankWidth)
-        val column = address(dfiConfig.bankWidth + dfiConfig.sdram.rowWidth + dfiConfig.sdram.columnWidth - 1 downto
+        // DDR3地址格式: [column][row][bank]
+        val bank = wordAddress(dfiConfig.bankWidth - 1 downto 0)
+        val row = wordAddress(dfiConfig.bankWidth + dfiConfig.sdram.rowWidth - 1 downto dfiConfig.bankWidth)
+        val column = wordAddress(dfiConfig.bankWidth + dfiConfig.sdram.rowWidth + dfiConfig.sdram.columnWidth - 1 downto
                                      dfiConfig.bankWidth + dfiConfig.sdram.rowWidth)
         DdrAddressInfo(bank, row, column, U(0, 2 bits), U(0))
       } else if (isDDR4) {
-        val bank = address(dfiConfig.bankWidth - 1 downto 0)
+        // DDR4地址格式: [column][row][bg][bank]
+        val bank = wordAddress(dfiConfig.bankWidth - 1 downto 0)
         val bg = if (dfiConfig.sdram.bgWidth > 0) {
-          address(dfiConfig.bankWidth + dfiConfig.sdram.bgWidth - 1 downto dfiConfig.bankWidth)
+          wordAddress(dfiConfig.bankWidth + dfiConfig.sdram.bgWidth - 1 downto dfiConfig.bankWidth)
         } else {
           U(0, dfiConfig.sdram.bgWidth bits)
         }
-        val row = address(dfiConfig.bankWidth + dfiConfig.sdram.bgWidth + dfiConfig.sdram.rowWidth - 1 downto
+        val row = wordAddress(dfiConfig.bankWidth + dfiConfig.sdram.bgWidth + dfiConfig.sdram.rowWidth - 1 downto
                            dfiConfig.bankWidth + dfiConfig.sdram.bgWidth)
-        val column = address(dfiConfig.bankWidth + dfiConfig.sdram.bgWidth + dfiConfig.sdram.rowWidth +
+        val column = wordAddress(dfiConfig.bankWidth + dfiConfig.sdram.bgWidth + dfiConfig.sdram.rowWidth +
                                      dfiConfig.sdram.columnWidth - 1 downto
                            dfiConfig.bankWidth + dfiConfig.sdram.bgWidth + dfiConfig.sdram.rowWidth)
         val globalBank = (bg << bridgeConfig.ddrConfig.bankGroupShift) + bank
@@ -187,8 +197,8 @@ case class BmbToDdrBridge(
     val isDDR3 = ddrInterfaceAbstraction.isDDR3
     val isDDR4 = ddrInterfaceAbstraction.isDDR4
 
-    // DDR时序状态
-    val ddrState = Reg(UInt(2 bits)) init(0) // 0=IDLE, 1=PRECHARGE, 2=REFRESH, 3=ACTIVATE
+    // DDR时序状态 - 移除未使用的状态机，简化为直接控制
+    // val ddrState = Reg(UInt(2 bits)) init(0) // 0=IDLE, 1=PRECHARGE, 2=REFRESH, 3=ACTIVATE
     val timingCounter = Reg(UInt(bridgeConfig.ddrConfig.timingCounterWidth bits)) init(0)
 
     // 时序参数
@@ -239,11 +249,8 @@ case class BmbToDdrBridge(
     }
   }
 
-  // BMB命令接收控制：根据当前状态动态控制命令接受
-  io.bmb.cmd.ready := RegNext(ddrTimingManager.ddrState === 0) init(True)  // 仅当空闲时接受命令
-
-  // 更新cmdValid定义，现在io.bmb.cmd.ready已经定义
-  cmdValid := io.bmb.cmd.valid && io.bmb.cmd.ready
+  // BMB命令接收控制将在responseManager中定义（避免重复赋值）
+  // cmdValid将在responseManager定义io.bmb.cmd.ready后更新
 
   // DFI控制信号生成
   val dfiControl = xilinxPhy.io.dfi.control
@@ -285,13 +292,17 @@ case class BmbToDdrBridge(
   dfiControl.cke := allOnes(dfiControl.cke.getWidth)
 
   when(cmdValid) {
+    // 计算字地址（去掉字节偏移）
+    val byteOffsetWidth = log2Up(dfiConfig.sdram.bytePerWord)
+    val wordAddress = address >> byteOffsetWidth
+
     // DDR3/DDR4特定的时序约束检查
     val bankNotBusy = if (ddrTimingManager.isDDR3) {
-      val bankIndex = address(dfiConfig.bankWidth - 1 downto 0).resized
+      val bankIndex = wordAddress(dfiConfig.bankWidth - 1 downto 0).resized
       !ddrTimingManager.ddr3BankBusy(bankIndex)
     } else if (ddrTimingManager.isDDR4) {
-      val bgIndex = address(dfiConfig.bankWidth + dfiConfig.sdram.bgWidth - 1 downto dfiConfig.bankWidth).resized
-      val bankIndex = address(dfiConfig.bankWidth - 1 downto 0).resized
+      val bgIndex = wordAddress(dfiConfig.bankWidth + dfiConfig.sdram.bgWidth - 1 downto dfiConfig.bankWidth).resized
+      val bankIndex = wordAddress(dfiConfig.bankWidth - 1 downto 0).resized
       val globalBankIndex = (bgIndex << bridgeConfig.ddrConfig.bankGroupShift) + bankIndex
       !ddrTimingManager.ddr4BankBusy(globalBankIndex) && !ddrTimingManager.activateWindow(bgIndex)
     } else {
@@ -301,9 +312,9 @@ case class BmbToDdrBridge(
     val noRefreshPending = !ddrTimingManager.refreshPending
 
     when(bankNotBusy && noRefreshPending) {
-      // 地址映射
-      val bankBits = address(dfiConfig.bankWidth - 1 downto 0)
-      val rowBits = address(dfiConfig.bankWidth + dfiConfig.sdram.rowWidth - 1 downto dfiConfig.bankWidth)
+      // 地址映射（使用字地址）
+      val bankBits = wordAddress(dfiConfig.bankWidth - 1 downto 0)
+      val rowBits = wordAddress(dfiConfig.bankWidth + dfiConfig.sdram.rowWidth - 1 downto dfiConfig.bankWidth)
 
       dfiControl.address := rowBits.asBits
 
@@ -313,13 +324,13 @@ case class BmbToDdrBridge(
 
       // DDR4 Bank Group支持
       if (ddrTimingManager.isDDR4 && dfiConfig.signalConfig.useBg && dfiConfig.sdram.bgWidth > 0) {
-        val bgBits = address(dfiConfig.bankWidth + dfiConfig.sdram.bgWidth - 1 downto dfiConfig.bankWidth)
+        val bgBits = wordAddress(dfiConfig.bankWidth + dfiConfig.sdram.bgWidth - 1 downto dfiConfig.bankWidth)
         dfiControl.bg := bgBits.asBits
       }
 
       // DDR4 Chip ID支持
       if (ddrTimingManager.isDDR4 && dfiConfig.signalConfig.useCid && dfiConfig.sdram.cidWidth > 0) {
-        val cidBits = address(dfiConfig.bankWidth + dfiConfig.sdram.bgWidth + dfiConfig.sdram.cidWidth - 1 downto
+        val cidBits = wordAddress(dfiConfig.bankWidth + dfiConfig.sdram.bgWidth + dfiConfig.sdram.cidWidth - 1 downto
                              dfiConfig.bankWidth + dfiConfig.sdram.bgWidth)
         dfiControl.cid := cidBits.asBits
       }
@@ -351,7 +362,7 @@ case class BmbToDdrBridge(
         // DDR4写操作时序
         else if (ddrTimingManager.isDDR4) {
           val bgIndex = if (dfiConfig.sdram.bgWidth > 0) {
-            address(dfiConfig.bankWidth + dfiConfig.sdram.bgWidth - 1 downto dfiConfig.bankWidth).resized
+            wordAddress(dfiConfig.bankWidth + dfiConfig.sdram.bgWidth - 1 downto dfiConfig.bankWidth).resized
           } else {
             U(0)
           }
@@ -388,7 +399,7 @@ case class BmbToDdrBridge(
         // DDR4读操作时序
         else if (ddrTimingManager.isDDR4) {
           val bgIndex = if (dfiConfig.sdram.bgWidth > 0) {
-            address(dfiConfig.bankWidth + dfiConfig.sdram.bgWidth - 1 downto dfiConfig.bankWidth).resized
+            wordAddress(dfiConfig.bankWidth + dfiConfig.sdram.bgWidth - 1 downto dfiConfig.bankWidth).resized
           } else {
             U(0)
           }
@@ -524,80 +535,167 @@ case class BmbToDdrBridge(
     }
   }
 
-  // DDR3响应和数据管理器（增强为支持多个挂起事务）
+  // DDR3响应和数据管理器
   val responseManager = new Area {
-    // 输出寄存器
-    val rspValid   = Reg(Bool()) init(False)
-    val rspSource  = Reg(UInt(effectiveBmbParameter.access.sourceWidth bits)) init(0)
-    // 复用rspLatency作为当前挂起事务的剩余延迟计数器
-    val rspLatency = Reg(UInt(bridgeConfig.ddrConfig.responseLatencyWidth bits)) init(0)
-    val rspData    = Reg(Bits(effectiveBmbParameter.access.dataWidth bits)) init(0)
+    import spinal.lib.Stream
+    import spinal.lib.StreamFifo
 
-    // 支持多个挂起的响应
-    val pendingTransactions = Vec(Reg(Bool()) init(False), bridgeConfig.maxPendingTransactions)
-    val pendingSources = Vec(Reg(UInt(effectiveBmbParameter.access.sourceWidth bits)) init(0), bridgeConfig.maxPendingTransactions)
-    val pendingLatencies = Vec(Reg(UInt(bridgeConfig.ddrConfig.responseLatencyWidth bits)) init(0), bridgeConfig.maxPendingTransactions)
-    val pendingValid  = Reg(Bool()) init(False)
-    val pendingSource = Reg(UInt(effectiveBmbParameter.access.sourceWidth bits)) init(0)
-
-    // DDR3特定的延迟计算
-    val readLatency = if (ddrTimingManager.isDDR3) {
-      U(dfiConfig.sdram.tRCD + dfiConfig.sdram.ddrRdLat + 10, bridgeConfig.ddrConfig.responseLatencyWidth bits)
-    } else {
-      U(dfiConfig.sdram.tRCD + 10, bridgeConfig.ddrConfig.responseLatencyWidth bits)
+    // 待处理事务FIFO - 存储source、context、地址和长度信息
+    // Note: beatCount must be calculated based on address alignment and total bytes
+    case class PendingTransaction() extends Bundle {
+      val source = UInt(effectiveBmbParameter.access.sourceWidth bits)
+      val context = Bits(effectiveBmbParameter.access.contextWidth bits)
+      val isWrite = Bool()
+      val address = UInt(effectiveBmbParameter.access.addressWidth bits)
+      val length = UInt(effectiveBmbParameter.access.lengthWidth bits)
+      val beatCount = UInt(effectiveBmbParameter.access.beatCounterWidth bits)  // Pre-computed beat count
+      val beatsSent = UInt(effectiveBmbParameter.access.beatCounterWidth bits)
     }
 
-    // 接收到新的命令时，记录source并启动延迟计数
-    when(cmdValid) {
-      pendingValid  := True
-      pendingSource := cmdPayload.source.resized
-      val writeLatency = U(bridgeConfig.ddrConfig.writeLatencyCycles, bridgeConfig.ddrConfig.responseLatencyWidth bits)
-      rspLatency := (isWrite ? writeLatency | readLatency)
-    }
+    val pendingFifo = StreamFifo(
+      dataType = PendingTransaction(),
+      depth = 16  // 足够深度以处理读延迟
+    )
 
-    // 默认情况下本周期不产生响应
-    rspValid := False
+    // 当接受新命令时，将事务信息推入FIFO
+    // Compute beat count according to BMB protocol:
+    // beatCount = (((endAddress + wordMask) & ~wordMask) - (startAddress & ~wordMask)) / byteCount
+    val byteCount = effectiveBmbParameter.access.byteCount
+    val wordMask = effectiveBmbParameter.access.wordMask
+    val cmdAddress = io.bmb.cmd.address
+    val cmdLength = io.bmb.cmd.length
+    val startAddress = cmdAddress
+    val endAddress = cmdAddress + cmdLength + 1
+    // Align start down and end up to word boundaries, then compute beat count
+    val alignedStart = startAddress & ~U(wordMask, startAddress.getWidth bits)
+    val alignedEnd = (endAddress + wordMask) & ~U(wordMask, endAddress.getWidth bits)
+    val computedBeatCount = ((alignedEnd - alignedStart) >> log2Up(byteCount)).resized
 
-    // 简化的延迟管理：只跟踪单个挂起事务
-    when(pendingValid && rspLatency =/= 0) {
-      rspLatency := rspLatency - 1
-      when(rspLatency === 1) {
-        // 下一个周期返回响应
-        rspValid    := True
-        pendingValid := False
-        rspSource   := pendingSource
+    // Only push to FIFO on the LAST beat of a command
+    // For READ: there's only one CMD beat (last=true)
+    // For WRITE: there are N CMD beats, push only when last=true (final beat)
+    pendingFifo.io.push.valid := io.bmb.cmd.fire && io.bmb.cmd.last
+    pendingFifo.io.push.payload.source := io.bmb.cmd.source
+    pendingFifo.io.push.payload.context := io.bmb.cmd.context
+    pendingFifo.io.push.payload.isWrite := io.bmb.cmd.opcode === Bmb.Cmd.Opcode.WRITE
+    pendingFifo.io.push.payload.address := io.bmb.cmd.address
+    pendingFifo.io.push.payload.length := io.bmb.cmd.length
+    pendingFifo.io.push.payload.beatCount := computedBeatCount
+    pendingFifo.io.push.payload.beatsSent := 0
 
-        // 简化的读响应数据占位，当前实现与DDR代际无关
-        rspData := B(0x12345678L, effectiveBmbParameter.access.dataWidth bits)
+    // 读数据缓冲 - 从DFI读接口接收数据
+    val readDataBuffer = Reg(Bits(effectiveBmbParameter.access.dataWidth bits)) init(0)
+    val readDataValid = Reg(Bool()) init(False)
+
+    // 错误检测和恢复
+    val errorDetected = Reg(Bool()) init(False) allowUnsetRegToAvoidLatch()
+    val errorAddress  = Reg(UInt(effectiveBmbParameter.access.addressWidth bits)) init(0) allowUnsetRegToAvoidLatch()
+    val errorCode     = Reg(UInt(8 bits)) init(0) allowUnsetRegToAvoidLatch()  // 0=success, 1=timeout, 2=data_integrity, 3=protocol
+
+    // Current transaction tracking registers
+    val currentTransaction = Reg(PendingTransaction())
+    currentTransaction.init({
+      val t = PendingTransaction()
+      t.source := 0
+      t.context := 0
+      t.isWrite := False
+      t.address := 0
+      t.length := 0
+      t.beatCount := 0
+      t.beatsSent := 0
+      t
+    })
+    val currentTransactionValid = Reg(Bool()) init(False)
+
+    // 从DFI读接口接收数据
+    if (effectiveBmbParameter.access.canRead) {
+      // 监控DFI读数据有效信号
+      when(dataPathManager.readInterface.rd.map(_.rddataValid).orR) {
+        // 从第一个有效的读数据中获取数据
+        for (i <- 0 until dfiConfig.frequencyRatio) {
+          when(dataPathManager.readInterface.rd(i).rddataValid) {
+            readDataBuffer := dataPathManager.readInterface.rd(i).rddata
+            readDataValid := True
+          }
+        }
+      }
+
+      // 当读数据被消费且是最后一个beat时才清除有效标志
+      // 这样对于多拍读事务，同一份数据可以用于所有beats的响应
+      when(io.bmb.rsp.fire && !currentTransaction.isWrite && io.bmb.rsp.payload.last) {
+        readDataValid := False
       }
     }
 
-    // 错误检测和恢复
-    val errorDetected = Reg(Bool()) init(False)
-    val errorAddress  = Reg(UInt(effectiveBmbParameter.access.addressWidth bits)) init(0)
-    val errorCode     = Reg(UInt(8 bits)) init(0)  // 0=success, 1=timeout, 2=data_integrity, 3=protocol
+    // Load new transaction when needed
+    pendingFifo.io.pop.ready := (!currentTransactionValid && pendingFifo.io.pop.valid)
+    when(pendingFifo.io.pop.fire) {
+      currentTransaction := pendingFifo.io.pop.payload
+      currentTransactionValid := True
+    }
 
-    // 超时检测：增强为检测所有挂起事务
-    when(pendingValid && rspLatency > bridgeConfig.ddrConfig.timeoutCycles) {
-      pendingValid   := False
-      errorDetected  := True
-      errorCode      := 1  // timeout error
-      errorAddress   := cmdPayload.address
+    // 响应生成逻辑
+    // 对于写操作：立即响应（下一个周期）
+    // 对于读操作：等待DFI读数据有效
+    val canRespond = currentTransactionValid && (
+      currentTransaction.isWrite ||  // 写操作总是可以响应
+      readDataValid                   // 读操作需要等待数据有效
+    )
+
+    io.bmb.rsp.valid := canRespond
+    io.bmb.rsp.payload.source := currentTransaction.source
+    io.bmb.rsp.payload.context := currentTransaction.context
+    io.bmb.rsp.payload.opcode := Bmb.Rsp.Opcode.SUCCESS
+
+    // 区分读写操作的响应策略
+    when(currentTransaction.isWrite) {
+      // 写操作：单个响应，无论长度如何
+      io.bmb.rsp.payload.last := True
+      if (effectiveBmbParameter.access.canRead) {
+        io.bmb.rsp.payload.data := 0  // 写操作返回的数据不重要
+      }
+    } otherwise {
+      // 读操作：可能需要多个beat响应
+      // Use pre-computed beatCount (which is already the count, not count-1)
+      io.bmb.rsp.payload.last := currentTransaction.beatsSent === currentTransaction.beatCount - 1
+
+      if (effectiveBmbParameter.access.canRead) {
+        // 返回从DFI读取的实际数据
+        io.bmb.rsp.payload.data := readDataBuffer
+      }
+    }
+
+    // 当响应被接受时，更新beat counter或完成事务
+    when(io.bmb.rsp.fire) {
+      when(currentTransaction.isWrite) {
+        // 写操作：单个响应后立即完成事务
+        currentTransactionValid := False
+        currentTransaction.beatsSent := 0
+      } otherwise {
+        // 读操作：检查是否是最后一个beat
+        when(io.bmb.rsp.payload.last) {
+          // 最后一个beat，完成事务
+          currentTransactionValid := False
+          currentTransaction.beatsSent := 0
+        } otherwise {
+          // 不是最后一个beat，更新beat counter
+          // 只有当beatCounterWidth > 0时才进行递增操作
+          if (effectiveBmbParameter.access.beatCounterWidth > 0) {
+            currentTransaction.beatsSent := currentTransaction.beatsSent + 1
+          }
+        }
+      }
     }
   }
 
-  // 生成BMB响应
-  io.bmb.rsp.valid := responseManager.rspValid
-  io.bmb.rsp.payload.source := responseManager.rspSource
-  // 当前实现总是返回SUCCESS，错误通过debug接口暴露
-  io.bmb.rsp.payload.opcode := Bmb.Rsp.Opcode.SUCCESS
-  io.bmb.rsp.payload.last := True
-  if (effectiveBmbParameter.access.canRead) {
-    io.bmb.rsp.payload.data := responseManager.rspData
-  }
+  // BMB命令接受逻辑 - 当FIFO有空间时接受命令
+  io.bmb.cmd.ready := responseManager.pendingFifo.io.push.ready && !io.bmb.rsp.isStall
+
+  // 现在io.bmb.cmd.ready已定义，更新cmdValid
+  cmdValid := io.bmb.cmd.valid && io.bmb.cmd.ready
 
   // 调试状态输出
   io.debug.error := responseManager.errorDetected
-  io.debug.busy := cmdValid || responseManager.rspLatency > 0 || ddrTimingManager.refreshPending
-  io.debug.pendingTransactions := responseManager.pendingValid ? U(1, bridgeConfig.pendingTransactionsWidth bits) | U(0, bridgeConfig.pendingTransactionsWidth bits)
+  io.debug.busy := cmdValid || ddrTimingManager.refreshPending
+  io.debug.pendingTransactions := cmdValid ? U(1, bridgeConfig.pendingTransactionsWidth bits) | U(0, bridgeConfig.pendingTransactionsWidth bits)
 }

@@ -144,6 +144,11 @@ abstract class BmbMasterAgent(bus : Bmb, clockDomain: ClockDomain, cmdFactor : F
       pendingCounter -= 1
       rspSourceLocked = false
     }
-    rspQueue(source).dequeue()()
+    // Safe dequeue with error handling
+    if (rspQueue(source).nonEmpty) {
+      rspQueue(source).dequeue()()
+    } else {
+      println(s"[WARNING] Unexpected response from source $source with empty queue at cycle ${simTime()}")
+    }
   }
 }

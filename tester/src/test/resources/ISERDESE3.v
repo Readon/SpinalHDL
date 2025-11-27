@@ -44,7 +44,10 @@ module ISERDESE3 #(
     reg [7:0] fifo_memory [15:0];
     reg fifo_read_ptr;
     reg fifo_write_ptr;
-    
+
+    // Loop variable for initialization
+    integer i;
+
     // Initialize registers
     initial begin
         input_shift_reg = 8'b0;
@@ -57,9 +60,8 @@ module ISERDESE3 #(
         fifo_count = 4'b0;
         fifo_read_ptr = 1'b0;
         fifo_write_ptr = 1'b0;
-        
+
         // Initialize FIFO memory
-        integer i;
         for (i = 0; i < 16; i = i + 1) begin
             fifo_memory[i] = 8'b0;
         end

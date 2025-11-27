@@ -114,9 +114,14 @@ case class SdramConfig(
 
   def tFAW = timeCycle(sdramtime.FAW, cycleTime_ns)
 
-  def timeCycle(time: Int, cycTime: Int) = (time + cycTime - 1) / cycTime
+  def timeCycle(time: Int, cycTime: Int) = {
+    if (cycTime <= 0) {
+      throw new IllegalArgumentException(s"Invalid cycle time: $cycTime (ddrMHZ: $ddrMHZ)")
+    }
+    (time + cycTime - 1) / cycTime
+  }
 
-  def cycleTime_ns = 1000 / ddrMHZ
+  def cycleTime_ns = math.max(1, (1000.0 / ddrMHZ).toInt)
 
   def tPhyWrlat = ddrWrLat - 2
   def tRddataEn = ddrRdLat - 2
