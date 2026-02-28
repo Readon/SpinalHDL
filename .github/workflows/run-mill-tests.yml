@@ -1,4 +1,4 @@
-name: Run scala 2.11 tests
+name: Run mill tests
 
 on:
   push:
@@ -14,11 +14,10 @@ on:
         required: true
         default: 'warning'
 
-jobs:  
-  run-test:
-    uses: ./.github/workflows/sbt-tests.yml
+jobs:
+  run-mill-test:
+    uses: ./.github/workflows/mill-tests.yml
     with:
-      scala_version: '2.11.12'
+      scala_version: '2.13.12'
       runner_os: 'Linux'
       github_sha: ${{ github.sha }}
-      docker_image_version: 'v1.2.0'
