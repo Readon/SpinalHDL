@@ -1039,7 +1039,7 @@ class PhaseMemBlackBoxingDefault(policy: MemBlackboxingPolicy) extends PhaseMemB
             wrDataWidth = wr.data.getWidth,
             rdAddressWidth = rd.getAddressWidth,
             rdDataWidth = rd.getWidth,
-            rdLatency = twoLatTags.nonEmpty.mux(2, 1),
+            rdLatency = if (twoLatTags.nonEmpty) 2 else 1,
             wrMaskWidth = if (wr.mask != null) wr.mask.getWidth else 1,
             wrMaskEnable = wr.mask != null,
             readUnderWrite = rd.readUnderWrite,
@@ -1373,21 +1373,21 @@ class PhasePullClockDomains(pc: PhaseContext) extends PhaseNetlist{
         if(cd.reset != null && cd.reset.component != c){
           c.pulledDataCache.get(cd.reset).foreach{pin =>
             if(pin.component == c){
-              pin.setName("reset" + (cd.config.resetActiveLevel == HIGH).mux("","n"))
+              pin.setName("reset" + (if (cd.config.resetActiveLevel == HIGH) "" else "n"))
             }
           }
         }
         if(cd.softReset != null && cd.softReset.component != c){
           c.pulledDataCache.get(cd.softReset).foreach{pin =>
             if(pin.component == c){
-              pin.setName("soft_reset" + (cd.config.softResetActiveLevel == HIGH).mux("","n"))
+              pin.setName("soft_reset" + (if (cd.config.softResetActiveLevel == HIGH) "" else "n"))
             }
           }
         }
         if(cd.clockEnable != null && cd.clockEnable.component != c){
           c.pulledDataCache.get(cd.clockEnable).foreach{pin =>
             if(pin.component == c){
-              pin.setName("clkEn" + (cd.config.softResetActiveLevel == HIGH).mux("","n"))
+              pin.setName("clkEn" + (if (cd.config.softResetActiveLevel == HIGH) "" else "n"))
             }
           }
         }
