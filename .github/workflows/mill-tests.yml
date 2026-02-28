@@ -73,7 +73,7 @@ jobs:
         steps:
         - uses: actions/checkout@v3
         - uses: ./.github/actions/get-compiled
-        - run: mill tester[${{ inputs.scala_version }}].testOnly spinal.core.* -- -n spinal.tester.formal
+        - run: mill tester[${{ inputs.scala_version }}].testOnly spinal.core.* -- -n spinal.tester.formal -l spinal.tester.psl
     
     core-psl:
           needs: compile
@@ -84,7 +84,7 @@ jobs:
           steps:
           - uses: actions/checkout@v3
           - uses: ./.github/actions/get-compiled
-          - run: mill tester[${{ inputs.scala_version }}].testOnly spinal.core.* -- -n spinal.tester.psl
+          - run: mill tester[${{ inputs.scala_version }}].testOnly spinal.core.* -- -n spinal.tester.psl -l spinal.tester.formal
     
     sim-test:
         needs: compile
@@ -117,7 +117,7 @@ jobs:
         steps:
         - uses: actions/checkout@v3
         - uses: ./.github/actions/get-compiled
-        - run: mill tester[${{ inputs.scala_version }}].testOnly spinal.tester.* -- -n spinal.tester.formal
+        - run: mill tester[${{ inputs.scala_version }}].testOnly spinal.tester.* -- -n spinal.tester.formal -l spinal.tester.psl
     
     tester-psl:
         needs: compile
@@ -128,7 +128,7 @@ jobs:
         steps:
         - uses: actions/checkout@v3
         - uses: ./.github/actions/get-compiled
-        - run: mill tester[${{ inputs.scala_version }}].testOnly spinal.tester.* -- -n spinal.tester.psl
+        - run: mill tester[${{ inputs.scala_version }}].testOnly spinal.tester.* -- -n spinal.tester.psl -l spinal.tester.formal
     
     lib-test:
         needs: compile
@@ -151,7 +151,7 @@ jobs:
         steps:
         - uses: actions/checkout@v3
         - uses: ./.github/actions/get-compiled
-        - run: mill tester[${{ inputs.scala_version }}].testOnly spinal.lib.* -- -n spinal.tester.formal
+        - run: mill tester[${{ inputs.scala_version }}].testOnly spinal.lib.* -- -n spinal.tester.formal -l spinal.tester.psl
     
     
     lib-psl:
@@ -163,5 +163,5 @@ jobs:
           steps:
           - uses: actions/checkout@v3
           - uses: ./.github/actions/get-compiled
-          - run: mill tester[${{ inputs.scala_version }}].testOnly spinal.lib.* -- -n spinal.tester.psl
+          - run: mill tester[${{ inputs.scala_version }}].testOnly spinal.lib.* -- -n spinal.tester.psl -l spinal.tester.formal
     
