@@ -46,7 +46,8 @@ class BlackboxTesterCocotbBoot extends SpinalTesterCocotbBase {
 import spinal.core.sim._
 class SpinalSimBlackboxTester extends SpinalSimFunSuite {
   test("test"){
-    SimConfig.addRtl(s"tester/src/test/python/spinal/BlackBoxTester/BlackBoxToTest.${if(tester.language == VHDL) "vhd" else "v"}").doSim(new BlackboxTester.BlackBoxTester) {dut =>
+    val rtlPath = s"${spinal.tester.projectRoot}/tester/src/test/python/spinal/BlackBoxTester/BlackBoxToTest.${if(tester.language == VHDL) "vhd" else "v"}"
+    SimConfig.addRtl(rtlPath).doSim(new BlackboxTester.BlackBoxTester) {dut =>
       dut.clockDomain.forkStimulus(10)
       var outA_ref = 0
       var outB_ref = 0

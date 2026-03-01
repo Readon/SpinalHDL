@@ -46,7 +46,7 @@ abstract class SpinalTesterGhdlBase extends AnyFunSuite  {
   }
 
   def checkHDL(mustSucceed: Boolean): Unit = {
-    val tester = new File(s"tester/src/test/resources/${getName}_tb.vhd").getAbsoluteFile
+    val tester = new File(s"${spinal.tester.projectRoot}/tester/src/test/resources/${getName}_tb.vhd").getAbsoluteFile
     val comp = s"ghdl -a --ieee=synopsys --work=$getLibraryName --workdir=. $getName.vhd $tester"
     println("GHDL compilation " + comp)
     assert((Process(comp, workspaceFile).! == 0) == mustSucceed, if (mustSucceed) "compilation fail" else "Compilation did not fail :(")

@@ -55,9 +55,15 @@ abstract class SpinalTesterCocotbBase extends AnyFunSuite /* with BeforeAndAfter
 
   def doTest(testPath : String, lang : Language): Unit ={
     assert(genHdlSuccess)
+    // Convert relative path to absolute path based on project root
+    val absoluteTestPath = if (new File(testPath).isAbsolute) {
+      testPath
+    } else {
+      s"${spinal.tester.projectRoot}/$testPath"
+    }
     val (langString, xmlPath) = lang match {
-      case Language.VHDL => ("vhdl", testPath + "/sim_build/results.xml")
-      case Language.VERILOG | Language.SYSTEM_VERILOG => ("verilog", testPath + "/results.xml")
+      case Language.VHDL => ("vhdl", absoluteTestPath + "/sim_build/results.xml")
+      case Language.VERILOG | Language.SYSTEM_VERILOG => ("verilog", absoluteTestPath + "/results.xml")
     }
     doCmd(Seq(
       s"rm -f $xmlPath"
@@ -70,7 +76,7 @@ abstract class SpinalTesterCocotbBase extends AnyFunSuite /* with BeforeAndAfter
       additionalArgs += "RANDOM_SEED=1377424946"
     }
     val stdout = doCmd(Seq(
-      s"cd $testPath",
+      s"cd $absoluteTestPath",
       s"${SpinalEnv.makeCmd} TOPLEVEL_LANG=${langString} ${additionalArgs.mkString(" ")}"
     ))
 //    val pass = getCocotbPass(xmlPath)
