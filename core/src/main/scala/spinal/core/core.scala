@@ -614,7 +614,7 @@ package object core extends BaseTypeFactory with BaseTypeCast {
           _right.asBits.resize(leftWidth bits)
         else
           _right.asBits
-      assert(rightOp.getWidth == leftWidth, s"Width missmatch (${rightOp.getWidth} != $leftWidth)")
+      if (rightOp.getWidth != leftWidth) SpinalError(s"Width missmatch (${rightOp.getWidth} != $leftWidth)")
 
       var offset = 0
       for(e <- elements.toList.reverse){
