@@ -66,10 +66,10 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
     val addrMapping = new Area {
       val rbcAddress = address.getRBCAddress(input.address)
       val addrMapMethod = AddrMapMethod(dfiConfig, addrMap)
-      val TaskAddress = addrMapMethod.addressMap(rbcAddress)
-      address.byte.assignFromBits(address.getButeAddress(input.address).asBits)
+      val taskAddress = addrMapMethod.addressMap(rbcAddress)
+      address.byte.assignFromBits(address.getByteAddress(input.address).asBits)
       address.cs.assignFromBits(address.getCsAddress(input.address).asBits)
-      address.assignUnassignedByName(TaskAddress.address)
+      address.assignUnassignedByName(taskAddress.address)
     }
     val status = Status()
     status.allowPrecharge := True

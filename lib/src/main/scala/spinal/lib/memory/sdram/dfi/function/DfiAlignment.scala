@@ -139,9 +139,9 @@ case class WrAlignment(config: DfiConfig) extends Component {
     delay := timeConfig.tPhyWrData / frequencyRatio
   }
 
-  val wrdatahistary = Vec(Vec(DfiWrData(config), timeConfig.tPhyWrData / frequencyRatio + 2), frequencyRatio)
+  val wrdataHistory = Vec(Vec(DfiWrData(config), timeConfig.tPhyWrData / frequencyRatio + 2), frequencyRatio)
   for (i <- 0 until (frequencyRatio)) {
-    wrdatahistary(i) := History(io.input(i).payload, 0 to timeConfig.tPhyWrData / frequencyRatio + 1)
+    wrdataHistory(i) := History(io.input(i).payload, 0 to timeConfig.tPhyWrData / frequencyRatio + 1)
     io.output.wr(i).wrdata.assignDontCare()
     io.output.wr(i).wrdataMask.assignDontCare()
   }
@@ -149,7 +149,7 @@ case class WrAlignment(config: DfiConfig) extends Component {
   for (phase <- 0 until (frequencyRatio)) {
     io.output.wr(phase).wrdata := (if (phase < timeConfig.tPhyWrData % frequencyRatio) delay + 1 else delay)
       .muxListDc(
-        wrdatahistary
+        wrdataHistory
           .shuffle(t => (t + timeConfig.tPhyWrData % frequencyRatio) % frequencyRatio)(phase)
           .zipWithIndex
           .map(t => (t._2, t._1))
@@ -157,7 +157,7 @@ case class WrAlignment(config: DfiConfig) extends Component {
       .wrData
     io.output.wr(phase).wrdataMask := (if (phase < timeConfig.tPhyWrData % frequencyRatio) delay + 1 else delay)
       .muxListDc(
-        wrdatahistary
+        wrdataHistory
           .shuffle(t => (t + timeConfig.tPhyWrData % frequencyRatio) % frequencyRatio)(phase)
           .zipWithIndex
           .map(t => (t._2, t._1))
