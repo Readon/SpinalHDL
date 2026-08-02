@@ -60,8 +60,8 @@ case class DfiReadInterface(config: DfiConfig) extends Bundle with IMasterSlave 
 }
 
 case class DfiUpdateInterface(config: DfiConfig) extends Bundle with IMasterSlave {
-  val ctrlupdAck = config.useCtrlupdReq generate Bool()
-  val ctrlupdReq = config.useCtrlupdAck generate Bool()
+  val ctrlupdAck = config.useCtrlupdAck generate Bool()
+  val ctrlupdReq = config.useCtrlupdReq generate Bool()
   val phyupdAck = config.usePhyupdAck generate Bool()
   val phyupdReq = config.usePhyupdReq generate Bool()
   val phyupdType = config.usePhyupdType generate Bits(2 bits)
