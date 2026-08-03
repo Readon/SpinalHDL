@@ -191,7 +191,16 @@ class DfiControllerTester extends SpinalAnyFunSuite {
               }
             }
             override def getCmd(): () => Unit = {
-              val c = if (!stopGenerating && ((!rspQueue.exists(_.nonEmpty)) | (cmdQueue.nonEmpty))) super.getCmd() else null
+              // ponytail: stopGenerating gates only NEW-command generation. The StreamDriver calls
+              // getCmd() once per beat, so returning null while cmdQueue is non-empty strands the
+              // remaining beats of an already-accepted multi-beat command: its rsp never completes
+              // -> [NOT-DRAINED] pending=1 rspQ=1 lastCmd=WR (seed-dependent ~1/3 of runs).
+              val c =
+                if (stopGenerating) {
+                  if (cmdQueue.isEmpty) null else super.getCmd()
+                } else if ((!rspQueue.exists(_.nonEmpty)) | (cmdQueue.nonEmpty)) {
+                  super.getCmd()
+                } else null
               if (c != null) {
               }
               c
