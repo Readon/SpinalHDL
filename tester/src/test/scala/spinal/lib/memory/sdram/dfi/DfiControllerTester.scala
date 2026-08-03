@@ -39,6 +39,11 @@ class DfiControllerTester extends SpinalAnyFunSuite {
       addrMap: AddrMap
   ): Unit = {
     test(name) {
+      // Deterministic test: derive a fixed seed from the test name and seed BOTH random sources
+      // (the SpinalSim internal RNG via doSimUntilVoid, and the global scala.util.Random used by the
+      // agent/memory/region allocator) so a failure is reproducible run-to-run.
+      val seed = name.hashCode
+      scala.util.Random.setSeed(seed)
       SimConfig.withVcdWave
         .compile {
           val task: TaskParameter =
@@ -117,7 +122,7 @@ class DfiControllerTester extends SpinalAnyFunSuite {
           val dut = DfiController(bmbp, task, dfiConfig, addrMap)
           dut
         }
-        .doSimUntilVoid(if (name.contains("fr4_cmdPhase0")) 767180891 else scala.util.Random.nextInt()) { dut =>
+        .doSimUntilVoid(seed) { dut =>
           dut.clockDomain.forkStimulus(10)
           dut.io.dfi.read.rd.foreach(_.rddataValid #= false)
           val memorySize = 1 << dut.io.bmb.p.access.addressWidth
@@ -201,8 +206,6 @@ class DfiControllerTester extends SpinalAnyFunSuite {
                 } else if ((!rspQueue.exists(_.nonEmpty)) | (cmdQueue.nonEmpty)) {
                   super.getCmd()
                 } else null
-              if (c != null) {
-              }
               c
             }
             override def maskRandom() = true
