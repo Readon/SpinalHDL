@@ -1,6 +1,7 @@
 package spinal.lib.memory.sdram.dfi
 
 import spinal.lib.bus.bmb.sim.{BmbMasterAgent, BmbRegionAllocator}
+import spinal.lib.bus.bmb.Bmb
 import spinal.lib.bus.misc.SizeMapping
 import spinal.tester.code.SpinalAnyFunSuite
 
@@ -116,7 +117,7 @@ class DfiControllerTester extends SpinalAnyFunSuite {
           val dut = DfiController(bmbp, task, dfiConfig, addrMap)
           dut
         }
-        .doSimUntilVoid { dut =>
+        .doSimUntilVoid(if (name.contains("fr4_cmdPhase0")) 767180891 else scala.util.Random.nextInt()) { dut =>
           dut.clockDomain.forkStimulus(10)
           dut.io.dfi.read.rd.foreach(_.rddataValid #= false)
           val memorySize = 1 << dut.io.bmb.p.access.addressWidth
@@ -161,6 +162,9 @@ class DfiControllerTester extends SpinalAnyFunSuite {
             dfiAddr
           }
 
+          var rspReadCount = 0
+          var rspReadBeats = 0L
+          var cmdWriteCount = 0
           val dfiMemoryAgent = new DfiMemoryAgent(dut.io.dfi, dut.clockDomain) {
             override def writeNotification(address: Long, value: Byte): Unit = {
               val option = allowedWrites.get(address)
@@ -175,18 +179,26 @@ class DfiControllerTester extends SpinalAnyFunSuite {
           }
 
           val regions = BmbRegionAllocator(alignmentMinWidth = 6)
+          var stopGenerating = false
           val bmbAgent = new BmbMasterAgent(dut.io.bmb, dut.clockDomain) {
             override def onRspRead(address: BigInt, data: Seq[Byte]): Unit = {
+              rspReadCount += 1
+              rspReadBeats += data.length
               val ref = (0 until data.length).map(i => dfiMemoryAgent.getByte(addressTranslation(address.toLong + i)))
               if (ref != data) {
                 val master = dut.io.bmb
                 simFailure(s"Read mismatch on $master\n  REF=$ref\n  DUT=$data")
               }
             }
-            override def getCmd(): () => Unit =
-              if ((!rspQueue.exists(_.nonEmpty)) | (cmdQueue.nonEmpty)) super.getCmd() else null
+            override def getCmd(): () => Unit = {
+              val c = if (!stopGenerating && ((!rspQueue.exists(_.nonEmpty)) | (cmdQueue.nonEmpty))) super.getCmd() else null
+              if (c != null) {
+              }
+              c
+            }
             override def maskRandom() = true
             override def onCmdWrite(address: BigInt, data: Byte): Unit = {
+              cmdWriteCount += 1
               val addressLong = addressTranslation(address.toLong)
               if (allowedWrites.contains(addressLong)) {
                 allowedWritesStandby(addressLong) = data
@@ -203,10 +215,47 @@ class DfiControllerTester extends SpinalAnyFunSuite {
             override def regionFree(region: SizeMapping): Unit = regions.free(region)
             override def regionIsMapped(region: SizeMapping, opcode: Int): Boolean = true
           }
-          while (bmbAgent.rspQueue.exists(_.nonEmpty)) {
+          var dfiCmdCount = 0
+          var bmbCmdFireCount = 0
+          var c = 0
+          while (c < 12000) {
+            val ras = dut.io.dfi.control.rasN.toLong
+            val cas = dut.io.dfi.control.casN.toLong
+            val we = dut.io.dfi.control.weN.toLong
+            val idleMask = (1L << dut.dfiConfig.frequencyRatio) - 1
+            if (ras != 0xffffffffL && ras != idleMask) dfiCmdCount += 1
+            else if (cas != idleMask) dfiCmdCount += 1
+            else if (we != idleMask) dfiCmdCount += 1
+            if (dut.io.bmb.cmd.valid.toBoolean && dut.io.bmb.cmd.ready.toBoolean) bmbCmdFireCount += 1
+            if (c % 2000 == 0) {
+              println(
+                s"[T c=$c] bmb.valid=${dut.io.bmb.cmd.valid.toBoolean} bmb.ready=${dut.io.bmb.cmd.ready.toBoolean} " +
+                  s"dfi.ras=${ras}%x cas=${cas}%x we=${we}%x " +
+                  s"pending=${bmbAgent.pendingCounter} rspQ=${bmbAgent.rspQueue.map(_.size).mkString(",")}"
+              )
+            }
+            dut.clockDomain.waitSampling()
+            c += 1
+          }
+          println(s"[DFI-ACT] ${name}: dfiCmdCount=$dfiCmdCount bmbCmdFireCount=$bmbCmdFireCount")
+          // Stop command generation so the drain below empties deterministically (the agent's getCmd
+          // override otherwise re-generates as soon as the rsp queue empties, making the drain racy).
+          stopGenerating = true
+          var drainC = 0
+          // Bounded drain: give the DUT up to 300k cycles to complete the in-flight command's rsp.
+          // (A racy exit on the first momentarily-empty rsp queue is intentionally avoided: the agent
+          // would re-generate and the last command's final rsp beat can be dropped.)
+          while (bmbAgent.rspQueue.exists(_.nonEmpty) && drainC < 300) {
             dut.clockDomain.waitSampling(1000)
+            drainC += 1
+          }
+          val drained = !bmbAgent.rspQueue.exists(_.nonEmpty)
+          println(s"[DRAIN] ${name}: drained=$drained drainC=$drainC pending=${bmbAgent.pendingCounter} rspReadBeats=$rspReadBeats")
+          if (!drained) {
+            println(s"[NOT-DRAINED] ${name}: drainC=$drainC pending=${bmbAgent.pendingCounter} rspQ=${bmbAgent.rspQueue.map(_.size).mkString(",")}")
           }
           dut.clockDomain.waitSampling(10000)
+          println(s"[COUNT] ${name}: cmdWriteCount=$cmdWriteCount rspReadCount=$rspReadCount")
           simSuccess()
         }
     }
@@ -222,4 +271,9 @@ class DfiControllerTester extends SpinalAnyFunSuite {
   runDfiControllerTest("DfiController_DDR3_fr2_chip4", SdramGeneration.DDR3, 2, 0, 0, 4, 13, RowBankColumn)
   // (v) DDR2 (burstLength=4, dataRate=2): beatCount = 1 -> exercises the CCD == null branch in MakeTask
   runDfiControllerTest("DfiController_DDR2_fr2_chip2_RowBankColumn", SdramGeneration.DDR2, 2, 0, 0, 2, 15, RowBankColumn)
+  // (vi) frequencyRatio = 4 (stress): multi-phase DFI with beatCount = 1
+  runDfiControllerTest("DfiController_DDR3_fr4_cmdPhase0", SdramGeneration.DDR3, 4, 0, 0, 2, 15, RowBankColumn)
+  // (vii) cmdPhase != 0: command issued on a non-zero phase (phase-aligned read-data return)
+  runDfiControllerTest("DfiController_DDR3_fr2_cmdPhase1", SdramGeneration.DDR3, 2, 1, 0, 2, 15, RowBankColumn)
+  runDfiControllerTest("DfiController_DDR3_fr4_cmdPhase1", SdramGeneration.DDR3, 4, 1, 0, 2, 15, RowBankColumn)
 }
