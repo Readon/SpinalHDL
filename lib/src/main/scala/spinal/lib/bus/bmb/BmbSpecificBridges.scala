@@ -98,10 +98,22 @@ case class BmbAligner(ip : BmbParameter, alignmentWidth : Int) extends Component
 
       val drop = False
       io.input.rsp.arbitrationFrom(io.output.rsp.throwWhen(drop))
-      io.input.rsp.last := False
+      // Pass through the upstream last flag: BmbAlignedSpliter already computes the command-level last
+      // (task rsp last && last split) on its output. Re-deriving it here from transferCounter is broken
+      // for multi-task commands: transferCounter is reset at every task boundary (output rsp last), so
+      // it can never reach context.transfers for a command split into several tasks, and the final rsp
+      // beat of such commands would never carry last (the command's rsp never terminates).
+      io.input.rsp.last := io.output.rsp.last
       io.input.rsp.opcode := io.output.rsp.opcode
       io.input.rsp.context := context.input
       io.input.rsp.source := context.source
+
+      val forWrite = ip.access.canWrite generate new Area {
+        // Writes keep the unconditional last: the write rsp is a single beat per command, and the
+        // upstream (spliter) would gate its last on the per-split context.last, dropping it for
+        // non-final splits of a multi-split write.
+        io.input.rsp.last setWhen(context.write)
+      }
 
       val forRead = ip.access.canRead generate new Area {
         val beatCounter = Reg(UInt(log2Up(beatCount) bits)) init (0)
@@ -119,12 +131,7 @@ case class BmbAligner(ip : BmbParameter, alignmentWidth : Int) extends Component
 
         drop setWhen(!context.write && (io.input.rsp.first && beatCounter(context.paddings.range) < context.paddings || transferCounter > context.transfers))
 
-        io.input.rsp.last setWhen(transferCounter === context.transfers)
         io.input.rsp.data := io.output.rsp.data
-      }
-
-      val forWrite = ip.access.canWrite generate new Area{
-        io.input.rsp.last setWhen(context.write)
       }
     }
   }
