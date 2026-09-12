@@ -215,6 +215,10 @@ class DfiMemoryAgent(ctrl: DfiControlInterface, wr: DfiWriteInterface, rd: DfiRe
     }
   }
 
+  // Dual-path verification: monotonic cycle stamp for the exported command log.
+  var agentCycle = 0L
+  clockDomain.onSamplings { agentCycle += 1 }
+
   clockDomain.onSamplings {
     val cke = selectBit(ckeProxy.toBigInt.asInstanceOf[BigInt], cmdPhase, csCount)
     val csN = selectBit(csNProxy.toBigInt.asInstanceOf[BigInt], cmdPhase, csCount)
@@ -257,6 +261,25 @@ class DfiMemoryAgent(ctrl: DfiControlInterface, wr: DfiWriteInterface, rd: DfiRe
           }
         }
         if (zqcl) zqclSeen = true
+
+        // Dual-path verification: export every decoded DDR4 command so an independent
+        // decoder (Python, straight from JESD79-4B Table 17) can be diffed against it.
+        def hex(v: Long) = java.lang.Long.toHexString(v)
+        if (mrs) {
+          val mr = (((cmdBg >> 0) & 1L) << 2) | (cmdBank & 3L)
+          println(s"[AGENTCMD] $agentCycle MRS $mr ${hex(cmdAddr)}")
+        }
+        if (act) println(s"[AGENTCMD] $agentCycle ACT ${flatBank(cmdBank)} ${hex(cmdAddr)}")
+        if (wrCmd) println(s"[AGENTCMD] $agentCycle WR ${flatBank(cmdBank)} ${hex(cmdAddr)}")
+        if (rdCmd) println(s"[AGENTCMD] $agentCycle RD ${flatBank(cmdBank)} ${hex(cmdAddr)}")
+        if (preCmd) {
+          // A10=H is PREA (all banks): the bank field is don't-care, export -1 so the
+          // independent decoder can match without comparing garbage bank bits.
+          if (a10 == 1L) println(s"[AGENTCMD] $agentCycle PRE -1 -1")
+          else println(s"[AGENTCMD] $agentCycle PRE ${flatBank(cmdBank)} ${hex(cmdAddr)}")
+        }
+        if (refCmd) println(s"[AGENTCMD] $agentCycle REF -1 -1")
+        if (zqcl) println(s"[AGENTCMD] $agentCycle ZQCL -1 -1")
 
         // Traffic before the init sequence (MRS file + ZQCL) is a controller bug: a DDR4 SDRAM
         // ignores commands until its mode registers and ZQ calibration are set up.
