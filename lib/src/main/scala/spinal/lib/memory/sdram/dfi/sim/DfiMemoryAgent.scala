@@ -5,7 +5,13 @@ import spinal.core.sim._
 import spinal.lib.sim.SparseMemory
 
 import scala.collection.mutable
-class DfiMemoryAgent(ctrl: DfiControlInterface, wr: DfiWriteInterface, rd: DfiReadInterface, clockDomain: ClockDomain) {
+class DfiMemoryAgent(
+    ctrl: DfiControlInterface,
+    wr: DfiWriteInterface,
+    rd: DfiReadInterface,
+    status: DfiStatusInterface,
+    clockDomain: ClockDomain
+) {
   val memory = SparseMemory()
 
   assert(
@@ -46,6 +52,19 @@ class DfiMemoryAgent(ctrl: DfiControlInterface, wr: DfiWriteInterface, rd: DfiRe
   val weNProxy = ctrl.weN.simProxy()
   val actNProxy = if (isDdr4) ctrl.actN.simProxy() else null
   val bgProxy = if (isDdr4) ctrl.bg.simProxy() else null
+  // DDR4 CA parity (JESD79-4B §4.17): the DRAM-side model recomputes even parity over the covered
+  // CA pins (ACT_n, RAS_n/A16, CAS_n/A15, WE_n/A14, A13..A0, BA, BG — NOT CKE/ODT/CS_n) from the
+  // bus at cmdPhase every cycle and compares with the DUT's dfi_parity. On a mismatch the DRAM
+  // IGNORES the command (no enqueue / no data movement) and pulls ALERT_n low for one cycle
+  // (tPAR_ALERT_ON simplified to 1 cycle). parityCorruptCycle simulates a corrupted parity bit
+  // arriving at the DRAM (wire-level error): the first idle (CS-all-high) cycle at/after that
+  // cycle sees its received parity flipped — the command bus itself stays intact, so no traffic
+  // is dropped and the alertN/DT-capture path is exercised without breaking data flow.
+  val useCaParity = busConfig.useCaParity
+  val parityProxy = if (useCaParity) ctrl.parity.simProxy() else null
+  val alertNProxy = if (useCaParity && status != null && status.alertN != null) status.alertN.simProxy() else null
+  var parityCorruptCycle = -1L
+  var alertLowCount = 0
 
   val rowAddrQueue = mutable.Queue[Long]()
   val bankQueue = mutable.Queue[Long]()
@@ -81,7 +100,7 @@ class DfiMemoryAgent(ctrl: DfiControlInterface, wr: DfiWriteInterface, rd: DfiRe
   var rdCsVerifyTimeout = 0
 
   def this(bus: Dfi, clockDomain: ClockDomain) {
-    this(bus.control, bus.write, bus.read, clockDomain);
+    this(bus.control, bus.write, bus.read, bus.status, clockDomain);
   }
 
   def getByteAsInt(address: Long) = getByte(address).toInt & 0xff
@@ -273,15 +292,51 @@ class DfiMemoryAgent(ctrl: DfiControlInterface, wr: DfiWriteInterface, rd: DfiRe
       // Flat bank index as the DUT's address map produced it: {bg, ba}
       def flatBank(ba: Long): Long = ((cmdBg << dfiBankWidth) | (ba & ((1L << dfiBankWidth) - 1))).toLong
 
+      // ---- DDR4 CA parity check (DRAM-side model, see useCaParity comment above) ----
+      // Even parity: the parity bit equals the XOR of the covered pins, so pins+parity have an
+      // even count of ones. Expected parity is recomputed here from the cmdPhase bus slices,
+      // independently of the DUT's RTL XOR tree. Coverage: actN/ras/cas/weN + cid + bg + bank +
+      // address. Idle phases XOR to 0 (cid/addr/bank/bg idle 0, act_n/ras/cas/we idle 1).
+      var cmdDropped = false
+      if (useCaParity) {
+        val cidW = busConfig.chipIdWidth
+        val cidSlice = ((ctrl.cid.toBigInt.asInstanceOf[BigInt] >> (cmdPhase * cidW)) & ((BigInt(1) << cidW) - 1)).toInt
+        val bankSlice = (ctrl.bank.toLong >> (cmdPhase * bankWidth)) & ((1L << bankWidth) - 1)
+        var received = parityProxy.toBigInt.asInstanceOf[BigInt].testBit(cmdPhase)
+        if (parityCorruptCycle >= 0 && agentCycle >= parityCorruptCycle && csN.forall(b => b)) {
+          received = !received
+          parityCorruptCycle = -1
+          println(s"[CAPARITY] $agentCycle injected parity corruption on idle phase $cmdPhase")
+        }
+        val ones =
+          (if (actN) 1 else 0) + (if (ras) 1 else 0) + (if (cas) 1 else 0) + (if (weN) 1 else 0) +
+            Integer.bitCount(cidSlice) + Integer.bitCount(cmdBg.toInt) +
+            java.lang.Long.bitCount(bankSlice) + java.lang.Long.bitCount(cmdAddr)
+        val expected = (ones & 1) == 1 // parity bit completes pins+parity to an even count
+        if (received != expected) {
+          cmdDropped = true
+          alertNProxy #= 0 // ALERT_n low-active; tPAR_ALERT_ON simplified to 1 cycle
+          alertLowCount += 1
+          println(s"[CAPARITY] $agentCycle parity mismatch at phase $cmdPhase: received=$received expected=$expected -> ALERT_n")
+        } else {
+          alertNProxy #= (1 << phaseCount) - 1
+        }
+      }
+
       for ((enPerChip, idPerChip) <- cke.zip(csN).map(t => t._1 && !t._2).zipWithIndex) {
         // All ras/cas/weN variables are the actual (active-low) pin states from Table 17.
-        val mrs = enPerChip && actN && !ras && !cas && !weN
-        val act = enPerChip && !actN
-        val wrCmd = enPerChip && actN && ras && cas && !weN
-        val rdCmd = enPerChip && actN && ras && !cas && weN
-        val preCmd = enPerChip && actN && !ras && cas && !weN
-        val refCmd = enPerChip && actN && !ras && !cas && weN
-        val zqcl = enPerChip && actN && ras && cas && weN && a10 == 1L
+        // A parity error makes the DRAM ignore the whole command slot: every decode below is
+        // gated with !cmdDropped (mode registers are NOT written, no ACT/WR/RD is taken).
+        if (cmdDropped && enPerChip) {
+          println(s"[AGENTDROP] $agentCycle rank $idPerChip command ignored: CA parity error")
+        }
+        val mrs = enPerChip && actN && !ras && !cas && !weN && !cmdDropped
+        val act = enPerChip && !actN && !cmdDropped
+        val wrCmd = enPerChip && actN && ras && cas && !weN && !cmdDropped
+        val rdCmd = enPerChip && actN && ras && !cas && weN && !cmdDropped
+        val preCmd = enPerChip && actN && !ras && cas && !weN && !cmdDropped
+        val refCmd = enPerChip && actN && !ras && !cas && weN && !cmdDropped
+        val zqcl = enPerChip && actN && ras && cas && weN && a10 == 1L && !cmdDropped
 
         if (mrs) {
           // MR select = {BG0, BA1:BA0}; the address field carries the OP code

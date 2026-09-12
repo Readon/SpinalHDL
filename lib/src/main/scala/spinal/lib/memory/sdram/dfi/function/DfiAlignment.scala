@@ -30,7 +30,10 @@ case class CAAlignment(config: DfiConfig) extends Component {
   if (config.useCid) io.output.cid := Bits(widthOf(io.output.cid) bits).clearAll()
 
   // address
-  if (config.useBg) io.output.bg := Bits(widthOf(io.output.bg) bits).assignDontCare()
+  // With CA parity enabled the idle bus value must be deterministic (the parity bit is the XOR
+  // of every covered pin, including NOP phases), so bg loses its dontCare default.
+  if (config.useBg) io.output.bg := (if (config.useCaParity) B(0, widthOf(io.output.bg) bits)
+                                     else Bits(widthOf(io.output.bg) bits).assignDontCare())
   if (config.useBank) io.output.bank := Bits(widthOf(io.output.bank) bits).clearAll()
   io.output.address := Bits(widthOf(io.output.address) bits).clearAll()
 
@@ -52,6 +55,27 @@ case class CAAlignment(config: DfiConfig) extends Component {
       if (config.useBg) io.output.bg(i * config.bankGroupWidth, config.bankGroupWidth bits) := io.address(i).bg
       if (config.useBank) io.output.bank(i * config.bankWidth, config.bankWidth bits) := io.address(i).bank
       io.output.address(i * config.addressWidth, config.addressWidth bits) := io.address(i).address
+    }
+  }
+
+  // DDR4 CA parity (JESD79-4B §4.17): even parity = XOR of every covered CA pin of that phase,
+  // computed from the values actually driven on the bus this cycle (command phases use the
+  // command values, NOP phases the idle defaults — idle XORs to 0 because cid/address/bank/bg
+  // idle at 0 and act_n/ras/cas/we idle at 1). Coverage set: ACT_n, RAS_n/A16, CAS_n/A15,
+  // WE_n/A14, A13..A0, BA, BG. CS_n/CKE/ODT are deliberately NOT covered (spec). Same-cycle as
+  // the command (tcapar_lat = 0).
+  if (config.useCaParity) {
+    for (i <- 0 until config.frequencyRatio) {
+      val covered =
+        (if (config.useAckN) List(io.output.actN(i, 1 bits)) else Nil) ++
+          (if (config.useRasN) List(io.output.rasN(i * config.controlWidth, config.controlWidth bits)) else Nil) ++
+          (if (config.useCasN) List(io.output.casN(i * config.controlWidth, config.controlWidth bits)) else Nil) ++
+          (if (config.useWeN) List(io.output.weN(i * config.controlWidth, config.controlWidth bits)) else Nil) ++
+          (if (config.useCid) List(io.output.cid(i * config.chipIdWidth, config.chipIdWidth bits)) else Nil) ++
+          (if (config.useBg) List(io.output.bg(i * config.bankGroupWidth, config.bankGroupWidth bits)) else Nil) ++
+          (if (config.useBank) List(io.output.bank(i * config.bankWidth, config.bankWidth bits)) else Nil) ++
+          List(io.output.address(i * config.addressWidth, config.addressWidth bits))
+      io.output.parity(i) := covered.map(_.xorR).reduce(_ ^ _)
     }
   }
 }

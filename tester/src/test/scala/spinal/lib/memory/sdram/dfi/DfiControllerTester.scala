@@ -42,7 +42,9 @@ class DfiControllerTester extends SpinalAnyFunSuite {
       cidWidth: Int = 0,
       bankWidth: Int = 3,
       sdramTiming: SdramTiming = null,
-      mr5: Int = 0x0000
+      mr5: Int = 0x0000,
+      caParity: Boolean = false,
+      injectParityError: Boolean = false
   ): Unit = {
     test(name) {
       // Deterministic test: derive a fixed seed from the test name and seed BOTH random sources
@@ -108,6 +110,9 @@ class DfiControllerTester extends SpinalAnyFunSuite {
               new DDR4SignalConfig(DfiFunctionConfig(), false) {
                 override val useWrdataCsN = useCsN
                 override val useRddataCsN = useCsN
+                // DDR4 CA parity needs dfi_parity (MC out) + dfi_alert_n (DRAM in) present
+                override val useParityIn = caParity
+                override val useAlertN = caParity
               }
             case _ =>
               new DDR3SignalConfig(DfiFunctionConfig(), false) {
@@ -132,11 +137,15 @@ class DfiControllerTester extends SpinalAnyFunSuite {
             alignment = BmbParameter.BurstAlignement.WORD
           )
           val dut = DfiController(bmbp, task, dfiConfig, addrMap)
+          if (caParity) dut.caParityError.simPublic() // expose the sticky alert latch to the sim
           dut
         }
         .doSimUntilVoid(seed) { dut =>
           dut.clockDomain.forkStimulus(10)
           dut.io.dfi.read.rd.foreach(_.rddataValid #= false)
+          // ALERT_n is DRAM-driven (DUT input): idle high until the agent pulls it low. Drive the
+          // idle level immediately so the DUT never samples an undriven (0) input as an alert.
+          if (caParity) dut.io.dfi.status.alertN #= (1 << dut.dfiConfig.frequencyRatio) - 1
           val memorySize = 1 << dut.io.bmb.p.access.addressWidth
           val allowedWrites = mutable.HashMap[Long, Byte]()
           val allowedWritesStandby = mutable.HashMap[Long, Byte]()
@@ -194,6 +203,11 @@ class DfiControllerTester extends SpinalAnyFunSuite {
               }
             }
           }
+          // Error injection (case B): corrupt the parity bit as seen at the DRAM on the first
+          // idle cycle at/after cycle 5000. The command bus stays intact, so no command is
+          // dropped and data flow is unaffected; the agent must still raise ALERT_n and the DUT
+          // must latch caParityError (asserted after the run below).
+          if (injectParityError) dfiMemoryAgent.parityCorruptCycle = 5000
 
           val regions = BmbRegionAllocator(alignmentMinWidth = 6)
           var stopGenerating = false
@@ -296,6 +310,28 @@ class DfiControllerTester extends SpinalAnyFunSuite {
           println(s"[REFRESH] ${name}: refreshCount=$refreshCount")
           assert(refreshCount > 0, s"${name}: no refresh command observed in idle window")
           println(s"[COUNT] ${name}: cmdWriteCount=$cmdWriteCount rspReadCount=$rspReadCount")
+          // DDR4 CA parity end-of-run checks: the happy path must have seen zero ALERT_n cycles
+          // (any DUT parity bug would have raised it), the injected variant must have seen the
+          // alert AND latched it in the DUT's sticky caParityError register.
+          if (caParity) {
+            println(
+              s"[CAPARITY] ${name}: alertLowCount=${dfiMemoryAgent.alertLowCount} " +
+                s"dut.caParityError=${dut.caParityError.toBoolean} corruptArmed=${dfiMemoryAgent.parityCorruptCycle}"
+            )
+            if (injectParityError) {
+              assert(
+                dfiMemoryAgent.alertLowCount > 0,
+                s"${name}: injected parity error did not raise ALERT_n"
+              )
+              assert(dut.caParityError.toBoolean, s"${name}: DUT did not latch caParityError on ALERT_n")
+            } else {
+              assert(
+                dfiMemoryAgent.alertLowCount == 0,
+                s"${name}: ALERT_n raised without injected parity error (DUT parity generation bug)"
+              )
+              assert(!dut.caParityError.toBoolean, s"${name}: caParityError latched without any parity error")
+            }
+          }
           simSuccess()
         }
     }
@@ -342,10 +378,20 @@ class DfiControllerTester extends SpinalAnyFunSuite {
   )
   // DDR4 geometry: bankWidth=4 (flat: {bg,ba}), bgWidth=1, cidWidth=1, rowWidth=13
   // (keeps byteAddressWidth + log2Up(cs) = 28+1 < 31 for the Int-based address generator).
-  def ddr4(name: String, fr: Int, phase: Int, map: AddrMap, csN: Boolean = false, mr5: Int = 0x0000): Unit =
+  def ddr4(
+      name: String,
+      fr: Int,
+      phase: Int,
+      map: AddrMap,
+      csN: Boolean = false,
+      mr5: Int = 0x0000,
+      caParity: Boolean = false,
+      injectParityError: Boolean = false
+  ): Unit =
     runDfiControllerTest(
       name, SdramGeneration.DDR4, fr, phase, 0, 2, 13, map,
-      useCsN = csN, bgWidth = 1, cidWidth = 1, bankWidth = 4, sdramTiming = ddr4Timing, mr5 = mr5
+      useCsN = csN, bgWidth = 1, cidWidth = 1, bankWidth = 4, sdramTiming = ddr4Timing, mr5 = mr5,
+      caParity = caParity, injectParityError = injectParityError
     )
   ddr4("DfiController_DDR4_fr2_RowBankColumn", 2, 0, RowBankColumn)
   ddr4("DfiController_DDR4_fr2_BankRowColumn", 2, 0, BankRowColumn)
@@ -356,4 +402,11 @@ class DfiControllerTester extends SpinalAnyFunSuite {
   // DDR4 DBI (MR5 A12=Read DBI, A11=Write DBI): MC inverts bytes with >4 zeros (dbi_n=0) on
   // writes and restores DRAM-inverted read bytes. The agent models both SDRAM behaviors.
   ddr4("DfiController_DDR4_fr2_dbi", 2, 0, RowBankColumn, mr5 = 0x1800)
+  // DDR4 CA parity (JESD79-4B §4.17, DFI 6.0.1 §4.3.1): MC drives even parity over the command
+  // bus, same cycle as the command (tcapar_lat=0). MR5.A2:A0=1 (PL4) = parity enabled, DBI off.
+  // Happy path: the agent recomputes parity per phase and ignores + alerts on any mismatch.
+  ddr4("DfiController_DDR4_fr2_caparity", 2, 0, RowBankColumn, mr5 = 0x0001, caParity = true)
+  // Injection: the parity bit as seen at the DRAM is flipped on an idle cycle (cycle >= 5000);
+  // the agent must raise ALERT_n and the DUT must latch caParityError, with data flow intact.
+  ddr4("DfiController_DDR4_fr2_caparity_inject", 2, 0, RowBankColumn, mr5 = 0x0001, caParity = true, injectParityError = true)
 }

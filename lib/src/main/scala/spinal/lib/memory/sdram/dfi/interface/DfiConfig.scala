@@ -270,4 +270,12 @@ case class DfiConfig(
     sdram.generation == SdramGeneration.DDR4 && signalConfig.useRddataDbiN && ((ddr4ModeRegs.mr5 >> 12) & 1) == 1
   val useWrDbi = sdram.generation == SdramGeneration.DDR4 && ((ddr4ModeRegs.mr5 >> 11) & 1) == 1
 
+  // DDR4 CA parity (JESD79-4B §4.17 / DFI 6.0.1 §4.3.1): the MC drives dfi_parity (even parity
+  // over ACT_n, RAS_n/A16, CAS_n/A15, WE_n/A14, A13..A0, BA, BG — NOT CKE/ODT/CS_n) in the same
+  // cycle as the command (tcapar_lat = 0, allowed by the spec). Any non-zero MR5.A2:A0 parity
+  // latency (PL4/5/6) means CA parity is enabled at the DRAM; the PL value itself only affects
+  // DRAM-internal timing and is not modeled on the MC side, so the signal-level useParity
+  // (dfi_parity_in + dfi_alert_n present) gates the feature here.
+  val useCaParity = sdram.generation == SdramGeneration.DDR4 && signalConfig.useParity
+
 }
