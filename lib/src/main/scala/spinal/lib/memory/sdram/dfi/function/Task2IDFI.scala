@@ -80,7 +80,7 @@ case class CmdTxd(taskConfig: TaskConfig, dfiConfig: DfiConfig) extends Componen
       if (dfiConfig.useAckN) cmdphase(dfiConfig.timeConfig.cmdPhase).actN := True
       cmdphase(dfiConfig.timeConfig.cmdPhase).rasN := True
       cmdphase(dfiConfig.timeConfig.cmdPhase).casN := True
-      cmdphase(dfiConfig.timeConfig.cmdPhase).weN := False // WR: RAS=H CAS=H WE=L
+      cmdphase(dfiConfig.timeConfig.cmdPhase).weN := False // WR (Table 17): RAS=H CAS=H WE=L
       addrphase(dfiConfig.timeConfig.cmdPhase).valid.set()
       addrphase(dfiConfig.timeConfig.cmdPhase).bg := bgBits
       addrphase(dfiConfig.timeConfig.cmdPhase).bank := baBits.resized
@@ -146,9 +146,9 @@ case class CmdTxd(taskConfig: TaskConfig, dfiConfig: DfiConfig) extends Componen
       addrphase(dfiConfig.timeConfig.cmdPhase).address := ROW.resized
     }
     when(io.task.zq) {
-      // ZQCL (JESD79-4B Table 17): ACT_n=H RAS_n=H CAS_n=H WE_n=H with A10=H.
-      // Pin-high on all three command lines looks like NOP; A10=H is what makes it ZQCL
-      // (ZQCS would be A10=L).
+      // ZQCL (Table 17): ACT_n=H RAS_n=H CAS_n=H WE_n=H, A10=H (long).
+      // Same nibble as NOP; A10=H is what makes it ZQCL (ZQCS is A10=L).
+      // Agent decodes identically: zqcl = actN && ras && cas && weN && a10.
       cmdphase(dfiConfig.timeConfig.cmdPhase).valid := True
       cmdphase(dfiConfig.timeConfig.cmdPhase).csN := csSel.asBits
       if (dfiConfig.useAckN) cmdphase(dfiConfig.timeConfig.cmdPhase).actN := True
