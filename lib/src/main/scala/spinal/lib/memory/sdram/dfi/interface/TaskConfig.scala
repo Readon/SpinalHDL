@@ -15,9 +15,19 @@ case class TaskTimingConfig(dfiConfig: DfiConfig) extends Bundle {
 
   def WTR = time(dfiConfig.sdram.tWTR)
 
+  /** DDR4 bank-group variants; equal to the L/shared value for pre-DDR4 generations. */
+  def WTR_S = time(dfiConfig.sdram.tWTR_S)
+
   def RTP = time(dfiConfig.sdram.tRTP)
 
   def RRD = time(dfiConfig.sdram.tRRD)
+
+  def RRD_S = time(dfiConfig.sdram.tRRD_S)
+
+  // tCCD_L/S arrive in nCK (generation table); time() converts nCK -> MC cycles.
+  def CCD_L = time(dfiConfig.sdram.generation.tCCD_L)
+
+  def CCD_S = time(dfiConfig.sdram.generation.tCCD_S)
 
   def RTW = time(dfiConfig.sdram.tRTW)
 

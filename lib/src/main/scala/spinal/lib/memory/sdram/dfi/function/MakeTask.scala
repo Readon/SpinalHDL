@@ -22,8 +22,62 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
       log2Up(dfiConfig.beatCount)
     )
   val RFC = timing(io.output.refresh, timeConfig.RFC, taskConfig.taskParameter.timingWidth + 3)
-  val RRD = timing(io.output.active, timeConfig.RRD)
-  val WTR = timing(io.output.write, timeConfig.WTR)
+  // Bank-group-aware ACT-to-ACT spacing.
+  // Legacy (DDR2/DDR3): a single global RRD timer, exactly as before.
+  // DDR4: both timers reload on EVERY ACT. The candidate's relation to the last ACT's bank
+  // group selects which gates it: same group -> tRRD_L, different group -> tRRD_S.
+  // (tRRD_L/S are both measured from the previous ACT, so both timers must be live after it.)
+  val RRD_busy: Bool = if (dfiConfig.sdram.generation == SdramGeneration.DDR4) {
+    new Area {
+      val lastBg = Reg(Bits(dfiConfig.bankGroupWidth bits)) init (B(0, dfiConfig.bankGroupWidth bits))
+      val lastBgValid = RegInit(False)
+      when(io.output.active) {
+        lastBg := io.output.address.bank(dfiConfig.dfiBankWidth, dfiConfig.bankGroupWidth bits).asBits
+        lastBgValid := True
+      }
+      val sameGroup = lastBg === io.output.address.bank(dfiConfig.dfiBankWidth, dfiConfig.bankGroupWidth bits).asBits
+      val timerL = timing(io.output.active, timeConfig.RRD)
+      val timerS = timing(io.output.active, timeConfig.RRD_S)
+      val out = lastBgValid && Mux(sameGroup, timerL.busy, timerS.busy)
+    }.out
+  } else {
+    timing(io.output.active, timeConfig.RRD).busy
+  }
+  // Bank-group-aware WRITE-to-READ turnaround.
+  // Legacy: one global WTR timer (unchanged). DDR4: both timers reload on every write;
+  // a read in the same bank group as the last write waits tWTR (L), a different group tWTR_S.
+  val WTR_busy: Bool = if (dfiConfig.sdram.generation == SdramGeneration.DDR4) {
+    new Area {
+      val lastBg = Reg(Bits(dfiConfig.bankGroupWidth bits)) init (B(0, dfiConfig.bankGroupWidth bits))
+      val lastBgValid = RegInit(False)
+      when(io.output.write) {
+        lastBg := io.output.address.bank(dfiConfig.dfiBankWidth, dfiConfig.bankGroupWidth bits).asBits
+        lastBgValid := True
+      }
+      val sameGroup = lastBg === io.output.address.bank(dfiConfig.dfiBankWidth, dfiConfig.bankGroupWidth bits).asBits
+      val timerL = timing(io.output.write, timeConfig.WTR)
+      val timerS = timing(io.output.write, timeConfig.WTR_S)
+      val out = lastBgValid && Mux(sameGroup, timerL.busy, timerS.busy)
+    }.out
+  } else {
+    timing(io.output.write, timeConfig.WTR).busy
+  }
+  // Bank-group-aware CAS-to-CAS (tCCD) between column commands.
+  // Legacy: no extra gate (the station's 1-cycle block already provides tCCD_S-equivalent spacing).
+  // DDR4: a column command into the SAME bank group as the previous column command must wait
+  // tCCD_L (4nCK = 2 MC cycles at fr2); cross-group keeps the existing 1-cycle spacing (tCCD_S).
+  val CCD_BG = if (dfiConfig.sdram.generation == SdramGeneration.DDR4) new Area {
+    val lastBg = Reg(Bits(dfiConfig.bankGroupWidth bits)) init (B(0, dfiConfig.bankGroupWidth bits))
+    val lastValid = RegInit(False)
+    when(io.output.read || io.output.write) {
+      lastBg := io.output.address.bank(dfiConfig.dfiBankWidth, dfiConfig.bankGroupWidth bits).asBits
+      lastValid := True
+    }
+    val sameGroup = lastBg === io.output.address.bank(dfiConfig.dfiBankWidth, dfiConfig.bankGroupWidth bits).asBits
+    val timerL = timing(io.output.read || io.output.write, timeConfig.CCD_L)
+    val busy = lastValid && sameGroup && timerL.busy
+  } else null
+  def ccdBgBusy: Bool = if (CCD_BG != null) CCD_BG.busy else False
   val RTW = timing(io.output.read, timeConfig.RTW)
   val RP = timing(io.output.prechargeAll, timeConfig.RP + 1)
   val FAW = sdram.generation.FAW generate new Area { // Can be optimized
@@ -73,9 +127,9 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
     }
     val status = Status()
     status.allowPrecharge := True
-    status.allowActive := !RRD.busy && (if (sdram.generation.FAW) !FAW.busyNext else True)
-    status.allowWrite := !RTW.busy && (if (CCD != null) !CCD.busy else True)
-    status.allowRead := !WTR.busy && (if (CCD != null) !CCD.busy else True)
+    status.allowActive := !RRD_busy && (if (sdram.generation.FAW) !FAW.busyNext else True)
+    status.allowWrite := !RTW.busy && (if (CCD != null) !CCD.busy else True) && !ccdBgBusy
+    status.allowRead := !WTR_busy && (if (CCD != null) !CCD.busy else True) && !ccdBgBusy
     status.bankHit := banksRow.readAsync(address.bank) === address.row
     status.bankActive := banks.map(_.active).read(address.bank)
     status.employ(address)
@@ -95,9 +149,9 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
 
     import status._
     allowPrecharge := True
-    allowActive := !RRD.busy && (if (sdram.generation.FAW) !FAW.busyNext else True)
-    allowWrite := !RTW.busy && (if (CCD != null) !CCD.busy else True)
-    allowRead := !WTR.busy && (if (CCD != null) !CCD.busy else True)
+    allowActive := !RRD_busy && (if (sdram.generation.FAW) !FAW.busyNext else True)
+    allowWrite := !RTW.busy && (if (CCD != null) !CCD.busy else True) && !ccdBgBusy
+    allowRead := !WTR_busy && (if (CCD != null) !CCD.busy else True) && !ccdBgBusy
     bankHit.init(False)
     bankActive.init(False)
     status.employ(address)
