@@ -215,7 +215,12 @@ case class DfiConfig(
     dataSlice: Int,
     signalConfig: DfiSignalConfig,
     timeConfig: DfiTimeConfig,
-    sdram: SdramConfig
+    sdram: SdramConfig,
+    // DDR4 mode register file programmed at init; MR5 A12=Read DBI, A11=Write DBI,
+    // A10=Data Mask (JESD79-4B §4.11). This controller never drives DM (wrDataMask is a
+    // pass-through of the BMB mask, all-ones when unmapped), so no DM/DBI mutual-exclusion
+    // is enforced here: the integrator must not enable both at the SDRAM level.
+    ddr4ModeRegs: Ddr4ModeRegs = Ddr4ModeRegs()
 ) {
   val frequencyRatio = timeConfig.frequencyRatio
   val dataRate = sdram.generation.dataRate
@@ -258,5 +263,11 @@ case class DfiConfig(
   val levelingPhyIFWidth = dataSlice
   val rankWidth = chipSelectNumber
   val errorNumber = dataSlice + 1
+
+  // DDR4 DBI enable, decoded from MR5 (JESD79-4B §4.11): A12=Read DBI, A11=Write DBI.
+  // Read DBI additionally requires the rddata_dbi_n signal to exist in the signal set.
+  val useRdDbi =
+    sdram.generation == SdramGeneration.DDR4 && signalConfig.useRddataDbiN && ((ddr4ModeRegs.mr5 >> 12) & 1) == 1
+  val useWrDbi = sdram.generation == SdramGeneration.DDR4 && ((ddr4ModeRegs.mr5 >> 11) & 1) == 1
 
 }

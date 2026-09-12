@@ -29,6 +29,9 @@ class DfiMemoryAgent(ctrl: DfiControlInterface, wr: DfiWriteInterface, rd: DfiRe
   val rowWidth = busConfig.sdram.rowWidth
   val columnWidth = busConfig.sdram.columnWidth
   val isDdr4 = busConfig.sdram.generation == SdramGeneration.DDR4
+  // DDR4 DBI (JESD79-4B §4.11), decoded from MR5 A11/A12 by DfiConfig
+  val useWrDbi = busConfig.useWrDbi
+  val useRdDbi = busConfig.useRdDbi
   val bgWidth = if (isDdr4) busConfig.sdram.bgWidth else 0
   val dfiBankWidth = busConfig.dfiBankWidth
   // DDR4 mode-register file: MR0..MR4 per rank (op code as written by MRS), plus flags.
@@ -120,8 +123,15 @@ class DfiMemoryAgent(ctrl: DfiControlInterface, wr: DfiWriteInterface, rd: DfiRe
         writeValid = wrEnQueue.dequeue()
       }
       if (writeValid) {
+        // Read the whole per-phase DBI bitmap at once: bit slices of a Bits are not
+        // directly addressable as individual sim signals.
+        val dbiBits = if (useWrDbi) wr.wr(phase).wrdataDbiN.toInt else -1
         for (j <- 0.until(busConfig.phyIoWidth / 8).reverse) {
-          wrByteQueue.enqueue((wrData(phase) >> j * 8).toByte)
+          val byteVal = (wrData(phase) >> j * 8).toByte
+          // DDR4 write DBI (JESD79-4B §4.11): wrdata_dbi_n bit is active low, a 0 means the
+          // byte on the wire is inverted and the DRAM stores its complement.
+          val stored = if ((dbiBits & (1 << j)) == 0) (~byteVal).toByte else byteVal
+          wrByteQueue.enqueue(stored)
         }
         if (oneTakeDataCounter == oneTaskDataNumber) {
           for (i <- 0 until (busConfig.bytePerBurst)) {
@@ -195,7 +205,28 @@ class DfiMemoryAgent(ctrl: DfiControlInterface, wr: DfiWriteInterface, rd: DfiRe
           if (i == rdValidPhase) {
             process.enqueue { (bigInt: BigInt) =>
               rd.rd(i).rddataValid #= true
-              rd.rd(i).rddata #= bigInt
+              if (useRdDbi) {
+                // DDR4 read DBI (JESD79-4B §4.11): a lane whose byte holds more zeros than
+                // ones (ones < 4) is driven inverted with rddata_dbi_n=0 (active low); other
+                // lanes pass as-is with 1. The DUT controller undoes the inversion.
+                var encoded = BigInt(0)
+                var dbiN = 0
+                for (j <- 0 until busConfig.dbiWidth) {
+                  val byte = ((bigInt >> (j * 8)) & 0xff).toInt
+                  val invert = Integer.bitCount(byte) < 4
+                  if (invert) {
+                    encoded |= BigInt((~byte) & 0xff) << (j * 8)
+                  } else {
+                    encoded |= BigInt(byte) << (j * 8)
+                    dbiN |= 1 << j
+                  }
+                }
+                rd.rd(i).rddata #= encoded
+                if (rd.rd(i).rddataDbiN != null) rd.rd(i).rddataDbiN #= dbiN
+              } else {
+                rd.rd(i).rddata #= bigInt
+                if (rd.rd(i).rddataDbiN != null) rd.rd(i).rddataDbiN #= (1 << busConfig.dbiWidth) - 1
+              }
             }
           }
         }

@@ -89,7 +89,7 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
   val sdram = dfiConfig.sdram
 
   val ddr4Init = (sdram.generation == SdramGeneration.DDR4) generate Ddr4Init(
-    modeRegs = Ddr4ModeRegs(),
+    modeRegs = dfiConfig.ddr4ModeRegs,
     tMrdCycles = 4,
     zqInitCycles = 512,
     xprWaitCycles = 32

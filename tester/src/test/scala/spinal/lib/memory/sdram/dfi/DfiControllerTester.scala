@@ -41,7 +41,8 @@ class DfiControllerTester extends SpinalAnyFunSuite {
       bgWidth: Int = 0,
       cidWidth: Int = 0,
       bankWidth: Int = 3,
-      sdramTiming: SdramTiming = null
+      sdramTiming: SdramTiming = null,
+      mr5: Int = 0x0000
   ): Unit = {
     test(name) {
       // Deterministic test: derive a fixed seed from the test name and seed BOTH random sources
@@ -119,7 +120,8 @@ class DfiControllerTester extends SpinalAnyFunSuite {
             dataSlice = 1,
             signalConfig = signalConfig,
             timeConfig = timeConfig,
-            sdram = sdram
+            sdram = sdram,
+            ddr4ModeRegs = if (generation == SdramGeneration.DDR4) Ddr4ModeRegs(mr5 = mr5) else Ddr4ModeRegs()
           )
           val bmbp: BmbParameter = BmbParameter(
             addressWidth = sdram.byteAddressWidth + log2Up(dfiConfig.chipSelectNumber),
@@ -340,10 +342,10 @@ class DfiControllerTester extends SpinalAnyFunSuite {
   )
   // DDR4 geometry: bankWidth=4 (flat: {bg,ba}), bgWidth=1, cidWidth=1, rowWidth=13
   // (keeps byteAddressWidth + log2Up(cs) = 28+1 < 31 for the Int-based address generator).
-  def ddr4(name: String, fr: Int, phase: Int, map: AddrMap, csN: Boolean = false): Unit =
+  def ddr4(name: String, fr: Int, phase: Int, map: AddrMap, csN: Boolean = false, mr5: Int = 0x0000): Unit =
     runDfiControllerTest(
       name, SdramGeneration.DDR4, fr, phase, 0, 2, 13, map,
-      useCsN = csN, bgWidth = 1, cidWidth = 1, bankWidth = 4, sdramTiming = ddr4Timing
+      useCsN = csN, bgWidth = 1, cidWidth = 1, bankWidth = 4, sdramTiming = ddr4Timing, mr5 = mr5
     )
   ddr4("DfiController_DDR4_fr2_RowBankColumn", 2, 0, RowBankColumn)
   ddr4("DfiController_DDR4_fr2_BankRowColumn", 2, 0, BankRowColumn)
@@ -351,4 +353,7 @@ class DfiControllerTester extends SpinalAnyFunSuite {
   ddr4("DfiController_DDR4_fr4_cmdPhase0", 4, 0, RowBankColumn)
   ddr4("DfiController_DDR4_fr4_cmdPhase1", 4, 1, RowBankColumn)
   ddr4("DfiController_DDR4_fr2_csN", 2, 0, RowBankColumn, csN = true)
+  // DDR4 DBI (MR5 A12=Read DBI, A11=Write DBI): MC inverts bytes with >4 zeros (dbi_n=0) on
+  // writes and restores DRAM-inverted read bytes. The agent models both SDRAM behaviors.
+  ddr4("DfiController_DDR4_fr2_dbi", 2, 0, RowBankColumn, mr5 = 0x1800)
 }

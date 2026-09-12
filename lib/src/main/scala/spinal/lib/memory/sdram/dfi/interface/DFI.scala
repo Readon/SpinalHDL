@@ -29,6 +29,8 @@ case class DfiWr(config: DfiConfig) extends Bundle {
   val wrdataMask = Bits(config.dataWidth / 8 bits)
   // config.dramDataSlice must >= 8, or else config.dataWidth / 8 / config.dataEnableWidth < 1
   val wrdataCsN = config.useWrdataCsN generate Bits(config.chipSelectNumber bits)
+  // DDR4 DBI (JESD79-4B §4.11), active low: 0 = the byte on the wire is inverted
+  val wrdataDbiN = config.useWrDbi generate Bits(config.dbiWidth bits)
 }
 
 case class DfiWriteInterface(config: DfiConfig) extends Bundle with IMasterSlave {
