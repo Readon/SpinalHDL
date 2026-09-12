@@ -4,6 +4,79 @@ import spinal.core._
 import spinal.lib._
 import spinal.lib.fsm.{EntryPoint, State, StateMachine}
 
+case class Ddr4ModeRegs(
+    mr0: Int = 0x130, // BL8 fixed(A1:A0=00), sequential(A3=0), CL=15 (A12,A6,A5,A4,A2=0,0,1,1,0), DLL reset (A8=1)
+    mr1: Int = 0x000, // output enabled, no write leveling, push-pull, AL=0, DLL enable (A0=1 set by init? see note)
+    mr2: Int = 0x000, // CWL=5, no AL
+    mr3: Int = 0x000, // push-pull CA, normal drive strength
+    mr4: Int = 0x000, // normal self-refresh temp range, ASR off
+    mr5: Int = 0x000, // no CA parity, PPB off
+    mr6: Int = 0x000 // RTT_NOM off, srf not enabled
+)
+
+/** DDR4 power-on init sequence (simplified, JESD79-4B 4.9.1 / Figure 6):
+  * xprWait -> MRS MR3, MR6, MR5, MR4, MR2, MR1, MR0 (tMRD apart) -> ZQCL -> zqInitCycles -> done.
+  * Emits Ddr4InitOp pulses consumed by MakeTask onto the task port. */
+case class Ddr4Init(
+    modeRegs: Ddr4ModeRegs,
+    tMrdCycles: Int = 2,
+    zqInitCycles: Int = 256,
+    xprWaitCycles: Int = 8
+) extends Component {
+  val io = new Bundle {
+    val initOp = master(Flow(Ddr4InitOp()))
+    val busy = out Bool ()
+    val done = out Bool ()
+  }
+  val orderList = List(3, 6, 5, 4, 2, 1, 0) // spec order; MR0 last with DLL reset bit set
+  // Both Vecs are 16-entry and every index is 4-bit wide: SpinalHDL checks the index
+  // width against log2Up(Vec size) at elaboration, so widths must line up exactly
+  // (step: 4 bits -> order; order entries: 4 bits -> opCodes).
+  val order = Vec.tabulate(16)(i => U(if (i < orderList.length) orderList(i) else 0, 4 bits))
+  val opCodeList = List(modeRegs.mr0, modeRegs.mr1, modeRegs.mr2, modeRegs.mr3, modeRegs.mr4, modeRegs.mr5, modeRegs.mr6)
+  val opCodes = Vec.tabulate(16)(i => U(if (i < opCodeList.length) opCodeList(i) else 0, 16 bits))
+  val step = Reg(UInt(4 bits)) init (0)
+  val timer = Reg(UInt(16 bits)) init (xprWaitCycles)
+  val doneReg = RegInit(False)
+
+  io.busy := !doneReg
+  io.done := doneReg
+  io.initOp.valid := False
+  io.initOp.mrs := False
+  io.initOp.zq := False
+  io.initOp.mrIndex := 0
+  io.initOp.opCode := 0
+
+  when(!doneReg) {
+    when(timer =/= 0) {
+      timer := timer - 1
+    } otherwise {
+      when(step < orderList.length) {
+        io.initOp.valid := True
+        io.initOp.mrs := True
+        io.initOp.mrIndex := order(step).resized // 4->3 bits: values are 0..7 by construction
+        io.initOp.opCode := opCodes(order(step))
+        step := step + 1
+        timer := tMrdCycles
+      } elsewhen (step === orderList.length) {
+        io.initOp.valid := True
+        io.initOp.zq := True
+        step := step + 1
+        timer := zqInitCycles
+      } otherwise {
+        doneReg := True
+      }
+    }
+  }
+}
+
+case class Ddr4InitOp() extends Bundle {
+  val mrs = Bool()
+  val zq = Bool()
+  val mrIndex = UInt(3 bits)
+  val opCode = UInt(16 bits)
+}
+
 case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrMap) extends Component {
   val io = new Bundle {
     val cmd = slave(Stream(TaskWrRdCmd(taskConfig, dfiConfig)))
@@ -14,6 +87,14 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
   val timeConfig = TaskTimingConfig(dfiConfig)
   val readyForRefresh = True
   val sdram = dfiConfig.sdram
+
+  val ddr4Init = (sdram.generation == SdramGeneration.DDR4) generate Ddr4Init(
+    modeRegs = Ddr4ModeRegs(),
+    tMrdCycles = 4,
+    zqInitCycles = 512,
+    xprWaitCycles = 32
+  )
+  def initDone: Bool = if (ddr4Init != null) ddr4Init.io.done else True
   val banksRow = Mem(UInt(dfiConfig.sdram.rowWidth bits), sdram.bankCount)
   val CCD =
     (dfiConfig.beatCount > 1) generate timing(
@@ -136,6 +217,10 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
     readyForRefresh clearWhen (input.valid)
   }
   val columnBurstShift = log2Up(dfiConfig.transferPerBurst)
+  // Defaults so every generation drives the DDR4-only op flags; the init override below
+  // (DDR4 only) takes precedence during the power-up sequence.
+  io.output.mrs := False
+  io.output.zq := False
 
   readyForRefresh clearWhen (io.cmd.valid)
   val columnBurstMask = (sdram.columnSize - 1) - ((io.cmd.stationLengthMax - 1) << columnBurstShift)
@@ -215,7 +300,7 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
 
   val selectedAddress = io.output.address
   val loader = new Area {
-    taskConstructor.input.ready := !station.valid
+    taskConstructor.input.ready := !station.valid && initDone
     val offset = taskConstructor.address.column(columnBurstShift, io.cmd.stationLengthWidth bits)
     val offsetLast = offset +^ taskConstructor.input.length
     // BmbAlignedSpliter guarantees sub-commands never cross a bytePerTaskMax-aligned boundary, so
@@ -229,7 +314,7 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
         "SDRAM task bursts cross the station boundary: offset + length must fit in stationLengthWidth bits"
       )
     }
-    val canSpawn = !station.valid
+    val canSpawn = !station.valid && initDone
     // Insert taskConstructor into one free station
     when(taskConstructor.input.fire && canSpawn) {
       station.valid := True
@@ -242,7 +327,7 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
       station.offsetLast := offsetLast
     }
   }
-  val askRefresh = refreshStream.valid && readyForRefresh
+  val askRefresh = refreshStream.valid && readyForRefresh && initDone
   when(station.doSomething) {
     banksRow.write(selectedAddress.bank, selectedAddress.row)
   }
@@ -259,6 +344,25 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
     prechargeAllCmd.onExit(io.output.prechargeAll := True)
     refreshCmd.onExit(io.output.refresh := True)
     refreshReady.onExit(refreshStream.ready := True)
+  }
+
+  // DDR4 MRS/ZQ override (conditional, so no assignment overlap with the station path).
+  // While init runs, the normal command path is held off: the station cannot spawn, the
+  // refresh FSM is gated, and active/precharge are forced low here so no ACT/PRE leaks
+  // onto the DFI bus before MRS+ZQCL complete (the agent asserts on that).
+  if (ddr4Init != null) {
+    when(!ddr4Init.io.done) {
+      io.output.active := False
+      io.output.precharge := False
+      io.output.mrs := ddr4Init.io.initOp.mrs
+      io.output.zq := ddr4Init.io.initOp.zq
+      // MR select rides the low 3 bits of the flat bank index: {BG0=MRSEL2, BA1:0=MRSEL1:0}
+      io.output.address.bank := ddr4Init.io.initOp.mrIndex.resized
+      // OP code rides the row field (MRS: A15:0 = OP). Truncation is safe for the
+      // supported geometries: all defined OP bits of the default mode regs fit in 13 bits.
+      io.output.address.row := ddr4Init.io.initOp.opCode.resized
+      io.output.last := True
+    }
   }
 
   def timing(loadValid: Bool, loadValue: UInt, timingWidth: Int = taskConfig.taskParameter.timingWidth) = new Area {

@@ -38,6 +38,7 @@ case class CmdTxd(taskConfig: TaskConfig, dfiConfig: DfiConfig) extends Componen
   io.address.foreach(_.valid.clear())
   io.address.foreach(_.address.clearAll())
   io.address.foreach(_.bank.clearAll())
+  if (dfiConfig.useBg) io.address.foreach(_.bg.clearAll())
 
   if (dfiConfig.sdram.generation == SdramGeneration.DDR4) {
     // ---- DDR4: JESD79-4B Table 17 on the DFI control bus ----
@@ -53,8 +54,9 @@ case class CmdTxd(taskConfig: TaskConfig, dfiConfig: DfiConfig) extends Componen
     val rowHi = io.task.address.row >> (dfiConfig.sdram.rowWidth - 3)
 
     // cid stays 0: rank selection uses csN (one chip-select per rank); cid is an HBM-style
-    // alternative the PHY ignores in this topology.
-    when(active || write || read || precharge || prechargeAll || refresh) {
+    // alternative the PHY ignores in this topology. (payload.setAll() above would otherwise
+    // leave cid=1 on every command.)
+    when(active || write || read || precharge || prechargeAll || refresh || io.task.mrs || io.task.zq) {
       cmdphase(dfiConfig.timeConfig.cmdPhase).cid := B(0, dfiConfig.chipIdWidth bits)
     }
 
@@ -128,6 +130,33 @@ case class CmdTxd(taskConfig: TaskConfig, dfiConfig: DfiConfig) extends Componen
       cmdphase(dfiConfig.timeConfig.cmdPhase).casN := False
       cmdphase(dfiConfig.timeConfig.cmdPhase).weN := True // REF: RAS=L CAS=L WE=H
       addrphase(dfiConfig.timeConfig.cmdPhase).valid.set()
+    }
+    when(io.task.mrs) {
+      // MRS: ACT_n=H, RAS_n=L, CAS_n=L, WE_n=L. MR select = {BG0, BA1:BA0} (flat bank[2:0]),
+      // OP code on A15:A0 (carried in the row field by the init sequencer).
+      cmdphase(dfiConfig.timeConfig.cmdPhase).valid := True
+      cmdphase(dfiConfig.timeConfig.cmdPhase).csN := csSel.asBits
+      if (dfiConfig.useAckN) cmdphase(dfiConfig.timeConfig.cmdPhase).actN := True
+      cmdphase(dfiConfig.timeConfig.cmdPhase).rasN := False
+      cmdphase(dfiConfig.timeConfig.cmdPhase).casN := False
+      cmdphase(dfiConfig.timeConfig.cmdPhase).weN := False
+      addrphase(dfiConfig.timeConfig.cmdPhase).valid.set()
+      addrphase(dfiConfig.timeConfig.cmdPhase).bg := bgBits
+      addrphase(dfiConfig.timeConfig.cmdPhase).bank := baBits.resized
+      addrphase(dfiConfig.timeConfig.cmdPhase).address := ROW.resized
+    }
+    when(io.task.zq) {
+      // ZQCL (JESD79-4B Table 17): ACT_n=H RAS_n=H CAS_n=H WE_n=H with A10=H.
+      // Pin-high on all three command lines looks like NOP; A10=H is what makes it ZQCL
+      // (ZQCS would be A10=L).
+      cmdphase(dfiConfig.timeConfig.cmdPhase).valid := True
+      cmdphase(dfiConfig.timeConfig.cmdPhase).csN := csSel.asBits
+      if (dfiConfig.useAckN) cmdphase(dfiConfig.timeConfig.cmdPhase).actN := True
+      cmdphase(dfiConfig.timeConfig.cmdPhase).rasN := True
+      cmdphase(dfiConfig.timeConfig.cmdPhase).casN := True
+      cmdphase(dfiConfig.timeConfig.cmdPhase).weN := True
+      addrphase(dfiConfig.timeConfig.cmdPhase).valid.set()
+      addrphase(dfiConfig.timeConfig.cmdPhase).address(ALL_BANKS_BIT).set()
     }
   } else {
     // ---- Legacy path: byte-for-byte the pre-DDR4 behavior ----
