@@ -118,9 +118,6 @@ case class RdAlignment(config: DfiConfig) extends Component {
     when(rdDataTemp(i).fire) {
       // DDR4 read DBI (JESD79-4B §4.11): DRAM drove the byte inverted with rddata_dbi_n=0
       // (active low) for lanes with more zeros than ones; restore those bytes here.
-      // COUNTER-PROOF (temporarily disabled restore): rdDataTemp(i).rdData := muxed.rddata
-      // DDR4 read DBI (JESD79-4B §4.11): DRAM drove the byte inverted with rddata_dbi_n=0
-      // (active low) for lanes with more zeros than ones; restore those bytes here.
       if (config.useRdDbi) {
         val restoredBytes = for (j <- 0 until config.dbiWidth) yield {
           val b = muxed.rddata(j * 8, 8 bits)
