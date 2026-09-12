@@ -43,6 +43,9 @@ class DfiControllerTester extends SpinalAnyFunSuite {
       bankWidth: Int = 3,
       sdramTiming: SdramTiming = null,
       mr5: Int = 0x0000,
+      mr4: Int = 0x0000,
+      refreshMinCount: Int = 1,
+      idleCycles: Int = 10000,
       caParity: Boolean = false,
       injectParityError: Boolean = false
   ): Unit = {
@@ -126,7 +129,8 @@ class DfiControllerTester extends SpinalAnyFunSuite {
             signalConfig = signalConfig,
             timeConfig = timeConfig,
             sdram = sdram,
-            ddr4ModeRegs = if (generation == SdramGeneration.DDR4) Ddr4ModeRegs(mr5 = mr5) else Ddr4ModeRegs()
+            ddr4ModeRegs =
+              if (generation == SdramGeneration.DDR4) Ddr4ModeRegs(mr4 = mr4, mr5 = mr5) else Ddr4ModeRegs()
           )
           val bmbp: BmbParameter = BmbParameter(
             addressWidth = sdram.byteAddressWidth + log2Up(dfiConfig.chipSelectNumber),
@@ -296,19 +300,31 @@ class DfiControllerTester extends SpinalAnyFunSuite {
           // 在 cmdPhase 相位采样 DFI 命令总线,断言观察到 refresh 编码。
           // REFRESH (CmdTxd "b001", LSB-first assignFromBits): rasN=0, casN=0, weN=1。
           var refreshCount = 0
+          var lastRefreshCycle = -1
+          var minRefreshInterval = Int.MaxValue
           val rCmdPhase = dut.dfiConfig.timeConfig.cmdPhase
           val rCsNum = dut.dfiConfig.chipSelectNumber
           val rIdleCs = (1L << rCsNum) - 1
-          for (_ <- 0 until 10000) {
+          for (rc <- 0 until idleCycles) {
             dut.clockDomain.waitSampling()
             val rRas = (dut.io.dfi.control.rasN.toLong >> rCmdPhase) & 1L
             val rCas = (dut.io.dfi.control.casN.toLong >> rCmdPhase) & 1L
             val rWe = (dut.io.dfi.control.weN.toLong >> rCmdPhase) & 1L
             val rCs = (dut.io.dfi.control.csN.toLong >> (rCmdPhase * rCsNum)) & rIdleCs
-            if (rRas == 0 && rCas == 0 && rWe == 1 && rCs != rIdleCs) refreshCount += 1
+            if (rRas == 0 && rCas == 0 && rWe == 1 && rCs != rIdleCs) {
+              if (lastRefreshCycle >= 0) minRefreshInterval = math.min(minRefreshInterval, rc - lastRefreshCycle)
+              lastRefreshCycle = rc
+              refreshCount += 1
+            }
           }
-          println(s"[REFRESH] ${name}: refreshCount=$refreshCount")
-          assert(refreshCount > 0, s"${name}: no refresh command observed in idle window")
+          println(
+            s"[REFRESH] ${name}: refreshCount=$refreshCount minInterval=$minRefreshInterval " +
+              s"(tREF=${dut.dfiConfig.sdram.tREF} MC cycles, REF_RATE=${dut.dfiConfig.sdram.sdramtime.REF_RATE})"
+          )
+          assert(
+            refreshCount >= refreshMinCount,
+            s"${name}: expected >= $refreshMinCount refreshes in idle window, got $refreshCount"
+          )
           println(s"[COUNT] ${name}: cmdWriteCount=$cmdWriteCount rspReadCount=$rspReadCount")
           // DDR4 CA parity end-of-run checks: the happy path must have seen zero ALERT_n cycles
           // (any DUT parity bug would have raised it), the injected variant must have seen the
@@ -385,12 +401,18 @@ class DfiControllerTester extends SpinalAnyFunSuite {
       map: AddrMap,
       csN: Boolean = false,
       mr5: Int = 0x0000,
+      mr4: Int = 0x0000,
+      timing: SdramTiming = null,
+      refreshMinCount: Int = 1,
+      idleCycles: Int = 10000,
       caParity: Boolean = false,
       injectParityError: Boolean = false
   ): Unit =
     runDfiControllerTest(
       name, SdramGeneration.DDR4, fr, phase, 0, 2, 13, map,
-      useCsN = csN, bgWidth = 1, cidWidth = 1, bankWidth = 4, sdramTiming = ddr4Timing, mr5 = mr5,
+      useCsN = csN, bgWidth = 1, cidWidth = 1, bankWidth = 4,
+      sdramTiming = if (timing != null) timing else ddr4Timing,
+      mr5 = mr5, mr4 = mr4, refreshMinCount = refreshMinCount, idleCycles = idleCycles,
       caParity = caParity, injectParityError = injectParityError
     )
   ddr4("DfiController_DDR4_fr2_RowBankColumn", 2, 0, RowBankColumn)
@@ -409,4 +431,14 @@ class DfiControllerTester extends SpinalAnyFunSuite {
   // Injection: the parity bit as seen at the DRAM is flipped on an idle cycle (cycle >= 5000);
   // the agent must raise ALERT_n and the DUT must latch caParityError, with data flow intact.
   ddr4("DfiController_DDR4_fr2_caparity_inject", 2, 0, RowBankColumn, mr5 = 0x0001, caParity = true, injectParityError = true)
+  // DDR4 temperature-controlled refresh 2x (JESD79-4B §4.8/§4.9.2, Table 24):
+  // MR4 A3=1 (TCR enable) + A2=1 (extended temperature range) programs the DRAM for 2x; the
+  // scheduler halves tREFI via SdramTiming.REF_RATE=2 (7800ns -> 3900ns) and carries
+  // tRFC2(8Gb)=260ns. The 10k-cycle idle window shows ~2x the 1x baseline refresh count.
+  val ddr4Timing2x = ddr4Timing.copy(REF_RATE = 2, RFC = 260)
+  // idleCycles=20000: the default 10k idle window saw only a single 2x refresh (the first
+  // lands at ~2x tREF = 1560 MC cycles), so minInterval never measured a real gap. 20k
+  // guarantees several intervals -> minInterval must land near 780, exactly the 2x tREFI.
+  ddr4("DfiController_DDR4_fr2_ref2x", 2, 0, RowBankColumn, mr4 = 0x0C, timing = ddr4Timing2x,
+       refreshMinCount = 20, idleCycles = 20000)
 }

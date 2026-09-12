@@ -96,9 +96,13 @@ case class SdramConfig(
   def columnSize = 1 << columnWidth
   def ddrStartDelay = 600000 / (1000 / ddrMHZ) // 600uS
 
-  def tREF =
-    if (sdramtime.REF_NS != 0) timeCycle(sdramtime.REF_NS, cycleTime_ns)
+  def tREF = {
+    val base = if (sdramtime.REF_NS != 0) timeCycle(sdramtime.REF_NS, cycleTime_ns)
     else (sdramtime.REF * ddrMHZ) / rowSize
+    // Rate multiplier shortens tREFI (2x => /2, 4x => /4). Integer division is safe:
+    // REF_RATE is only ever 1/2/4 by construction (see Ddr4ModeRegs refreshRate).
+    base / sdramtime.REF_RATE
+  }
   def rowSize = 1 << rowWidth
   def tRCD = timeCycle(sdramtime.RCD, cycleTime_ns)
   def tRP = timeCycle(sdramtime.RP, cycleTime_ns)
@@ -165,5 +169,10 @@ case class SdramTiming(
     RRD_S: Int = 0, // tRRD_S: ACT to ACT, cross bank group
     // Absolute refresh interval tREFI in ns (DDR4: 7800). 0 => legacy per-row
     // derivation (REF us / rows), preserving pre-DDR4 behavior bit-for-bit.
-    REF_NS: Int = 0
+    REF_NS: Int = 0,
+    // DDR4 temperature-controlled refresh rate multiplier (JESD79-4B Table 24):
+    // 1 => REF1x (tREFI base), 2 => REF2x (tREFI/2), 4 => REF4x (tREFI/4).
+    // RFC must carry the mode's tRFC(min) for the density (8Gb: 1x=350, 2x=260, 4x=160).
+    // Default 1 keeps every pre-existing timing literal (incl. the six DDR4 1x cases) unchanged.
+    REF_RATE: Int = 1
 ) //ns // Four ACTIVATE windows
