@@ -14,27 +14,37 @@ case class Ddr4ModeRegs(
     mr6: Int = 0x000 // RTT_NOM off, srf not enabled
 )
 
-/** DDR4 power-on init sequence (simplified, JESD79-4B 4.9.1 / Figure 6):
-  * xprWait -> MRS MR3, MR6, MR5, MR4, MR2, MR1, MR0 (tMRD apart) -> ZQCL -> zqInitCycles -> done.
-  * Emits Ddr4InitOp pulses consumed by MakeTask onto the task port. */
-case class Ddr4Init(
-    modeRegs: Ddr4ModeRegs,
+case class SdramInitOp() extends Bundle {
+  val mrs = Bool()
+  val zq = Bool()
+  val mrIndex = UInt(3 bits)
+  val opCode = UInt(16 bits)
+}
+
+/** Generation-agnostic SDRAM power-on init engine: plays an ordered (MR index -> OP code)
+  * table as MRS ops spaced tMRD apart, then one ZQCL, then done. The per-generation
+  * protocol lives in the TABLE CONTENT (a preset), not in this engine: it knows nothing
+  * about pin encodings (the consumer maps SdramInitOp onto its command bus).
+  * Any SDRAM with an "MRS file then ZQCAL" init shape can reuse it; generations whose
+  * init shape differs (e.g. DDR2/DDR3, whose MRS/EMRS/ZQCL command encodings are not
+  * yet verified against a local spec copy) simply have no preset here — do NOT invent one. */
+case class SdramInitSequencer(
+    mrOrder: List[Int],
+    opCodes: List[Int], // indexed by MR number, looked up as opCodes(order(step))
     tMrdCycles: Int = 2,
     zqInitCycles: Int = 256,
     xprWaitCycles: Int = 8
 ) extends Component {
   val io = new Bundle {
-    val initOp = master(Flow(Ddr4InitOp()))
+    val initOp = master(Flow(SdramInitOp()))
     val busy = out Bool ()
     val done = out Bool ()
   }
-  val orderList = List(3, 6, 5, 4, 2, 1, 0) // spec order; MR0 last with DLL reset bit set
   // Both Vecs are 16-entry and every index is 4-bit wide: SpinalHDL checks the index
   // width against log2Up(Vec size) at elaboration, so widths must line up exactly
   // (step: 4 bits -> order; order entries: 4 bits -> opCodes).
-  val order = Vec.tabulate(16)(i => U(if (i < orderList.length) orderList(i) else 0, 4 bits))
-  val opCodeList = List(modeRegs.mr0, modeRegs.mr1, modeRegs.mr2, modeRegs.mr3, modeRegs.mr4, modeRegs.mr5, modeRegs.mr6)
-  val opCodes = Vec.tabulate(16)(i => U(if (i < opCodeList.length) opCodeList(i) else 0, 16 bits))
+  val order = Vec.tabulate(16)(i => U(if (i < mrOrder.length) mrOrder(i) else 0, 4 bits))
+  val ops = Vec.tabulate(16)(i => U(if (i < opCodes.length) opCodes(i) else 0, 16 bits))
   val step = Reg(UInt(4 bits)) init (0)
   val timer = Reg(UInt(16 bits)) init (xprWaitCycles)
   val doneReg = RegInit(False)
@@ -51,14 +61,14 @@ case class Ddr4Init(
     when(timer =/= 0) {
       timer := timer - 1
     } otherwise {
-      when(step < orderList.length) {
+      when(step < mrOrder.length) {
         io.initOp.valid := True
         io.initOp.mrs := True
         io.initOp.mrIndex := order(step).resized // 4->3 bits: values are 0..7 by construction
-        io.initOp.opCode := opCodes(order(step))
+        io.initOp.opCode := ops(order(step))
         step := step + 1
         timer := tMrdCycles
-      } elsewhen (step === orderList.length) {
+      } elsewhen (step === mrOrder.length) {
         io.initOp.valid := True
         io.initOp.zq := True
         step := step + 1
@@ -70,11 +80,26 @@ case class Ddr4Init(
   }
 }
 
-case class Ddr4InitOp() extends Bundle {
-  val mrs = Bool()
-  val zq = Bool()
-  val mrIndex = UInt(3 bits)
-  val opCode = UInt(16 bits)
+/** DDR4 preset of SdramInitSequencer (JESD79-4B §4.9.1 / Figure 6):
+  * xprWait -> MRS MR3, MR6, MR5, MR4, MR2, MR1, MR0 (tMRD apart) -> ZQCL -> done.
+  * Kept as a named preset so the generation-specific knowledge has one obvious home. */
+object Ddr4InitSequencer {
+  def apply(modeRegs: Ddr4ModeRegs, tMrdCycles: Int, zqInitCycles: Int, xprWaitCycles: Int): SdramInitSequencer =
+    SdramInitSequencer(
+      mrOrder = List(3, 6, 5, 4, 2, 1, 0), // spec order; MR0 last with DLL reset bit set
+      opCodes = List(
+        modeRegs.mr0,
+        modeRegs.mr1,
+        modeRegs.mr2,
+        modeRegs.mr3,
+        modeRegs.mr4,
+        modeRegs.mr5,
+        modeRegs.mr6
+      ),
+      tMrdCycles = tMrdCycles,
+      zqInitCycles = zqInitCycles,
+      xprWaitCycles = xprWaitCycles
+    )
 }
 
 case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrMap) extends Component {
@@ -88,7 +113,11 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
   val readyForRefresh = True
   val sdram = dfiConfig.sdram
 
-  val ddr4Init = (sdram.generation == SdramGeneration.DDR4) generate Ddr4Init(
+  // Init hook: generations WITH a verified init preset get the generic sequencer.
+  // DDR2/DDR3 have no preset (their MRS/EMRS/ZQCL command encodings are unverified
+  // locally) so they stay init-less exactly as on dev — adding one requires a spec-backed
+  // preset, not a copy of the DDR4 table.
+  val ddr4Init = (sdram.generation == SdramGeneration.DDR4) generate Ddr4InitSequencer(
     modeRegs = dfiConfig.ddr4ModeRegs,
     tMrdCycles = 4,
     zqInitCycles = 512,
@@ -103,12 +132,13 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
       log2Up(dfiConfig.beatCount)
     )
   val RFC = timing(io.output.refresh, timeConfig.RFC, taskConfig.taskParameter.timingWidth + 3)
-  // Bank-group-aware ACT-to-ACT spacing.
-  // Legacy (DDR2/DDR3): a single global RRD timer, exactly as before.
-  // DDR4: both timers reload on EVERY ACT. The candidate's relation to the last ACT's bank
+  // Bank-group-aware ACT-to-ACT spacing. Capability gate (bgWidth>0), not a generation
+  // check: L/S split only means something when bank groups exist. bgWidth==0 (all DDR1/2/3
+  // configs today) keeps a single global RRD timer, bit-identical to dev.
+  // With bank groups: both timers reload on EVERY ACT. The candidate's relation to the last ACT's bank
   // group selects which gates it: same group -> tRRD_L, different group -> tRRD_S.
   // (tRRD_L/S are both measured from the previous ACT, so both timers must be live after it.)
-  val RRD_busy: Bool = if (dfiConfig.sdram.generation == SdramGeneration.DDR4) {
+  val RRD_busy: Bool = if (dfiConfig.sdram.bgWidth > 0) {
     new Area {
       val lastBg = Reg(Bits(dfiConfig.bankGroupWidth bits)) init (B(0, dfiConfig.bankGroupWidth bits))
       val lastBgValid = RegInit(False)
@@ -124,10 +154,11 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
   } else {
     timing(io.output.active, timeConfig.RRD).busy
   }
-  // Bank-group-aware WRITE-to-READ turnaround.
-  // Legacy: one global WTR timer (unchanged). DDR4: both timers reload on every write;
+  // Bank-group-aware WRITE-to-READ turnaround (capability gate bgWidth>0, same rationale
+  // as RRD_busy). Legacy (bgWidth==0): one global WTR timer (unchanged). With bank groups:
+  // both timers reload on every write;
   // a read in the same bank group as the last write waits tWTR (L), a different group tWTR_S.
-  val WTR_busy: Bool = if (dfiConfig.sdram.generation == SdramGeneration.DDR4) {
+  val WTR_busy: Bool = if (dfiConfig.sdram.bgWidth > 0) {
     new Area {
       val lastBg = Reg(Bits(dfiConfig.bankGroupWidth bits)) init (B(0, dfiConfig.bankGroupWidth bits))
       val lastBgValid = RegInit(False)
@@ -143,11 +174,11 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
   } else {
     timing(io.output.write, timeConfig.WTR).busy
   }
-  // Bank-group-aware CAS-to-CAS (tCCD) between column commands.
-  // Legacy: no extra gate (the station's 1-cycle block already provides tCCD_S-equivalent spacing).
-  // DDR4: a column command into the SAME bank group as the previous column command must wait
+  // Bank-group-aware CAS-to-CAS (tCCD) between column commands (capability gate bgWidth>0).
+  // Legacy (bgWidth==0): no extra gate (the station's 1-cycle block already provides
+  // tCCD_S-equivalent spacing). With bank groups: a column command into the SAME bank group as the previous column command must wait
   // tCCD_L (4nCK = 2 MC cycles at fr2); cross-group keeps the existing 1-cycle spacing (tCCD_S).
-  val CCD_BG = if (dfiConfig.sdram.generation == SdramGeneration.DDR4) new Area {
+  val CCD_BG = if (dfiConfig.sdram.bgWidth > 0) new Area {
     val lastBg = Reg(Bits(dfiConfig.bankGroupWidth bits)) init (B(0, dfiConfig.bankGroupWidth bits))
     val lastValid = RegInit(False)
     when(io.output.read || io.output.write) {
