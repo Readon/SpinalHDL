@@ -71,6 +71,12 @@ case class DfiController(bmbp: BmbParameter, task: TaskParameter, dfiConfig: Dfi
     // alignment.io.output <> io.dfi away from the arbiter-driven wires entirely. Gated by
     // useCtrlMsg (DFI Table 12: all four wires Optional — absent entirely when off).
     val dfiCtrlMsg = dfiConfig.signalConfig.useCtrlMsg generate master(DfiCtrlMsgInterface(dfiConfig))
+    // P2 boot-training orchestrator ports (present only when useCtrlMsg && bootTraining):
+    // bootTrainEnable = testbench enable (the orchestrator leaves IDLE only after it fires,
+    // guaranteeing a controllable start), bootTrainDone = one-shot completion pulse. Failure
+    // is observed on the existing io.ctrlMsgError (sticky) with the MC permanently halted.
+    val bootTrainEnable = (dfiConfig.signalConfig.useCtrlMsg && dfiConfig.bootTraining) generate slave(Flow(Bool()))
+    val bootTrainDone = (dfiConfig.signalConfig.useCtrlMsg && dfiConfig.bootTraining) generate out(Bool())
   }
 
   val taskConfig = BmbAdapter.taskConfig(bmbp, dfiConfig, task)
@@ -95,18 +101,43 @@ case class DfiController(bmbp: BmbParameter, task: TaskParameter, dfiConfig: Dfi
   // (which under a Dfi-bundle member produced ASSIGNMENT OVERLAP or silent NO DRIVER).
   val ctrlMsgArb = if (dfiConfig.signalConfig.useCtrlMsg) {
     val arb = CtrlMsgArbiter(dfiConfig)
-    arb.io.trainReq << io.trainReq
+    // Boot-training configs inject through the same trainReq path (member-wise assignment;
+    // the requester mux is built in the bootTrainer block below), every other config keeps
+    // the direct testbench connection unchanged.
+    if (!dfiConfig.bootTraining) arb.io.trainReq << io.trainReq
     io.dfiCtrlMsg.ctrlmsg := arb.io.ctrlmsg
     io.dfiCtrlMsg.ctrlmsgData := arb.io.ctrlmsgData
     io.dfiCtrlMsg.ctrlmsgReq := arb.io.ctrlmsgReq
     arb.io.ctrlmsgAck := io.dfiCtrlMsg.ctrlmsgAck
-    bmbBridge.io.trainBusy := arb.io.trainBusy
+    // With boot training the OR with the orchestrator's trainGate is assigned in the
+    // bootTrainer block below (a second full assignment here would be an overlap error).
+    if (!dfiConfig.bootTraining) bmbBridge.io.trainBusy := arb.io.trainBusy
     arb
   } else null
   if (ctrlMsgArb != null) {
     io.trainDone := ctrlMsgArb.io.trainDone
     io.ctrlMsgError := ctrlMsgArb.io.ctrlMsgError
   }
+
+  // P2 boot training orchestrator: after the init engine's initDone, chains ZQCAL -> WRLVL
+  // (fixed order) through the arbiter's trainReq path and pulses io.bootTrainDone once.
+  // The orchestrator's trainGate ORs into the MakeTask pause so traffic stays held across the
+  // whole orchestration window and, on any arbiter timeout (sticky ctrlMsgError), FOREVER —
+  // permanent MC halt, no retry. Present only when useCtrlMsg && bootTraining; every other
+  // config leaves the arbiter wiring (and everything else) byte-identical to before.
+  val bootTrainer = if (dfiConfig.signalConfig.useCtrlMsg && dfiConfig.bootTraining) {
+    val trainer = BootTrainer()
+    trainer.io.initDone := bmbBridge.io.initDone
+    trainer.io.enable << io.bootTrainEnable
+    trainer.io.arbDone := ctrlMsgArb.io.trainDone
+    trainer.io.arbError := ctrlMsgArb.io.ctrlMsgError
+    ctrlMsgArb.io.trainReq.valid := io.trainReq.valid || trainer.io.req.valid
+    ctrlMsgArb.io.trainReq.msgCode := trainer.io.req.valid ? trainer.io.req.msgCode | io.trainReq.msgCode
+    ctrlMsgArb.io.trainReq.rank := trainer.io.req.valid ? trainer.io.req.rank | io.trainReq.rank
+    bmbBridge.io.trainBusy := ctrlMsgArb.io.trainBusy || trainer.io.trainGate
+    io.bootTrainDone := trainer.io.done
+    trainer
+  } else null
 
   // DDR4 CA parity (JESD79-4B §4.17): on a command-bus parity error the DRAM ignores the command
   // and pulls ALERT_n low within tPAR_ALERT_ON. The MC records the event in a sticky register

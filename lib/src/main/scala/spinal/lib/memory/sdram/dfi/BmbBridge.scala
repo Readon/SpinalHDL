@@ -13,6 +13,10 @@ case class BmbBridge(bmbp: BmbParameter, taskConfig: TaskConfig, dfiConfig: DfiC
     // Pass-through of the ctrlmsg training pause to MakeTask (present only when the ctrlmsg
     // channel is enabled, see DfiSignalConfig.useCtrlMsg).
     val trainBusy = dfiConfig.signalConfig.useCtrlMsg generate in(Bool())
+    // MakeTask's initDone, exported only for the boot-training orchestrator (DfiController's
+    // BootTrainer consumes it). Absent in every other config. (Braced block: an unbraced
+    // `generate out Bool ()` parses as `(generate out) Bool ()` and NPEs when the gate is off.)
+    val initDone = (dfiConfig.signalConfig.useCtrlMsg && dfiConfig.bootTraining) generate out(Bool())
   }
 
   val bmbAdapter = BmbAdapter(bmbp, taskConfig, dfiConfig)
@@ -22,6 +26,7 @@ case class BmbBridge(bmbp: BmbParameter, taskConfig: TaskConfig, dfiConfig: DfiC
 
   val maketask = MakeTask(taskConfig, dfiConfig, addrMap)
   if (dfiConfig.signalConfig.useCtrlMsg) maketask.io.trainBusy := io.trainBusy
+  if (dfiConfig.signalConfig.useCtrlMsg && dfiConfig.bootTraining) io.initDone := maketask.io.initDoneOut
   maketask.io.cmd <-< bmbAdapter.io.output.cmd
   maketask.io.writeDataToken <-< bmbAdapter.io.output.writeDataToken
   maketask.io.output <> io.taskPort.tasks

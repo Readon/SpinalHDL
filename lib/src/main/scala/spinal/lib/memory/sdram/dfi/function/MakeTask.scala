@@ -108,6 +108,10 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
     // refresh are paused globally (same gating pattern as initDone). Absent when the ctrlmsg
     // channel is disabled — every gate below then folds to its pre-ctrlmsg expression.
     val trainBusy = dfiConfig.signalConfig.useCtrlMsg generate in(Bool())
+    // initDone exported through the io boundary only for the boot-training orchestrator
+    // (BmbBridge forwards it to DfiController's BootTrainer). Reading the init engine's io
+    // from the GRANDPARENT would be a hierarchy violation; every other config has no port.
+    val initDoneOut = (dfiConfig.signalConfig.useCtrlMsg && dfiConfig.bootTraining) generate out(Bool())
   }
   val timeConfig = TaskTimingConfig(dfiConfig)
   def trainBlocked: Bool = if (dfiConfig.signalConfig.useCtrlMsg) io.trainBusy else False
@@ -125,6 +129,7 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
   )
   val initEngine = if (initSeq.nonEmpty) SdramInitSequencer(initSeq, xprWaitCycles = 32) else null
   def initDone: Bool = if (initEngine != null) initEngine.io.done else True
+  if (dfiConfig.signalConfig.useCtrlMsg && dfiConfig.bootTraining) io.initDoneOut := initDone
   val banksRow = Mem(UInt(dfiConfig.sdram.rowWidth bits), sdram.bankCount)
   val CCD =
     (dfiConfig.beatCount > 1) generate timing(

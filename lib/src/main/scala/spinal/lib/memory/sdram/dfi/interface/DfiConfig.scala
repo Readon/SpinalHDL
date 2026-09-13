@@ -236,7 +236,12 @@ case class DfiConfig(
     // init-less exactly as before (no engine, no new bus drivers). Some(List(...)): the engine
     // plays those steps before any user traffic, for any generation whose CmdTxd can encode
     // MRS/ZQ (DDR3/DDR2 legacy path included).
-    initSteps: Option[List[SdramInitStep]] = None
+    initSteps: Option[List[SdramInitStep]] = None,
+    // P2 boot training orchestrator: after the init engine's initDone, auto-chain ZQCAL ->
+    // WRLVL through the ctrlmsg channel (CtrlMsgArbiter) and pulse bootTrainDone. Requires
+    // signalConfig.useCtrlMsg (the channel must exist). Default false = no BootTrainer, no
+    // wires, no gates — pre-bootTraining configs elaborate byte-identically.
+    bootTraining: Boolean = false
 ) {
   val frequencyRatio = timeConfig.frequencyRatio
   val dataRate = sdram.generation.dataRate
