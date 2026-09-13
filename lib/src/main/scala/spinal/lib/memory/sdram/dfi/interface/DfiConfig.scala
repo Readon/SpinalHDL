@@ -264,6 +264,13 @@ case class DfiConfig(
   val rankWidth = chipSelectNumber
   val errorNumber = dataSlice + 1
 
+  // NOTE ON GENERATION GATES: DBI_n and CA parity (PAR) are DDR4-era physical pins; DDR1/DDR2/DDR3
+  // SDRAMs have no such pins, so enabling these features on older generations would invent protocol
+  // behavior the silicon cannot honor. The generation checks below are protocol truth, NOT
+  // conservatism — do not relax them to signal-presence-only (legacy signalConfigs map
+  // useStatusSignals -> parityIn/alertN, which would silently turn the features on for DDR3).
+  // The generically reusable knob is the refresh scheduler (SdramTiming REF_NS/REF_RATE),
+  // which carries no generation gate.
   // DDR4 DBI enable, decoded from MR5 (JESD79-4B §4.11): A12=Read DBI, A11=Write DBI.
   // Read DBI additionally requires the rddata_dbi_n signal to exist in the signal set.
   val useRdDbi =

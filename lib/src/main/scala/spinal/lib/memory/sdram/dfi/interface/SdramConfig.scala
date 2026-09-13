@@ -99,8 +99,8 @@ case class SdramConfig(
   def tREF = {
     val base = if (sdramtime.REF_NS != 0) timeCycle(sdramtime.REF_NS, cycleTime_ns)
     else (sdramtime.REF * ddrMHZ) / rowSize
-    // Rate multiplier shortens tREFI (2x => /2, 4x => /4). Integer division is safe:
-    // REF_RATE is only ever 1/2/4 by construction (see Ddr4ModeRegs refreshRate).
+    // Rate multiplier shortens tREFI (2x => /2, 4x => /4), generation-agnostic.
+    // Integer division is exact for the intended rates (1/2/4).
     base / sdramtime.REF_RATE
   }
   def rowSize = 1 << rowWidth
@@ -167,12 +167,15 @@ case class SdramTiming(
     // SdramTiming literals keep compiling and behave exactly as before.
     WTR_S: Int = 0, // tWTR_S: WRITE to READ, cross bank group
     RRD_S: Int = 0, // tRRD_S: ACT to ACT, cross bank group
-    // Absolute refresh interval tREFI in ns (DDR4: 7800). 0 => legacy per-row
+    // Absolute refresh interval tREFI in ns (e.g. 7800). 0 => legacy per-row
     // derivation (REF us / rows), preserving pre-DDR4 behavior bit-for-bit.
+    // Generation-agnostic: any SDRAM whose datasheet gives an absolute tREFI can use it.
     REF_NS: Int = 0,
-    // DDR4 temperature-controlled refresh rate multiplier (JESD79-4B Table 24):
-    // 1 => REF1x (tREFI base), 2 => REF2x (tREFI/2), 4 => REF4x (tREFI/4).
-    // RFC must carry the mode's tRFC(min) for the density (8Gb: 1x=350, 2x=260, 4x=160).
-    // Default 1 keeps every pre-existing timing literal (incl. the six DDR4 1x cases) unchanged.
+    // Refresh rate multiplier, applied to whatever tREFI the base derivation produced.
+    // Generation-agnostic scheduler knob: 1 = base rate, 2 = half tREFI, 4 = quarter.
+    // (DDR4 gives it protocol meaning via MR4 temperature-controlled refresh, JESD79-4B
+    // Table 24, where RFC must carry the mode's tRFC(min): 8Gb 1x=350, 2x=260, 4x=160.
+    // Older generations can use the same knob for conservative margining.)
+    // Default 1 keeps every pre-existing timing literal unchanged.
     REF_RATE: Int = 1
 ) //ns // Four ACTIVATE windows

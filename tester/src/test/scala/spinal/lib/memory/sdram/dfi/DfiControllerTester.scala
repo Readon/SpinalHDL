@@ -441,4 +441,21 @@ class DfiControllerTester extends SpinalAnyFunSuite {
   // guarantees several intervals -> minInterval must land near 780, exactly the 2x tREFI.
   ddr4("DfiController_DDR4_fr2_ref2x", 2, 0, RowBankColumn, mr4 = 0x0C, timing = ddr4Timing2x,
        refreshMinCount = 20, idleCycles = 20000)
+
+  // The REF_NS/REF_RATE refresh knobs are generation-AGNOSTIC scheduler arithmetic (no DDR4
+  // protocol semantics): any generation's tREFI can be given an absolute base and halved.
+  // DDR3 baseline here: REF=64000us/32Ki rows @200MHz -> tREF=3125 cycles. With
+  // REF_NS=7800 -> 1560 cycles, REF_RATE=2 -> 780 cycles: 4x denser than the
+  // per-row-derived default, proven by the halved minInterval below.
+  val ddr3TimingRefRate = SdramTiming(
+    generation = 3, RFC = 260, RAS = 38, RP = 15, RCD = 15, WTR = 8, WTP = 0,
+    RTP = 8, RRD = 6, REF = 64000, FAW = 35, REF_NS = 7800, REF_RATE = 2)
+  runDfiControllerTest("DfiController_DDR3_fr2_ref_rate2", SdramGeneration.DDR3, 2, 0, 0, 2, 15,
+    RowBankColumn, sdramTiming = ddr3TimingRefRate, refreshMinCount = 20, idleCycles = 20000)
+  // Same knob on DDR2 (burstLength=4): scheduler behavior must be generation-independent.
+  val ddr2TimingRefRate = SdramTiming(
+    generation = 2, RFC = 120, RAS = 20, RP = 15, RCD = 15, WTR = 8, WTP = 0,
+    RTP = 8, RRD = 7, REF = 64000, FAW = 20, REF_NS = 7800, REF_RATE = 2)
+  runDfiControllerTest("DfiController_DDR2_fr2_ref_rate2", SdramGeneration.DDR2, 2, 0, 0, 2, 15,
+    RowBankColumn, sdramTiming = ddr2TimingRefRate, refreshMinCount = 20, idleCycles = 20000)
 }
