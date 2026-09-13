@@ -220,7 +220,13 @@ case class DfiConfig(
     // A10=Data Mask (JESD79-4B §4.11). This controller never drives DM (wrDataMask is a
     // pass-through of the BMB mask, all-ones when unmapped), so no DM/DBI mutual-exclusion
     // is enforced here: the integrator must not enable both at the SDRAM level.
-    ddr4ModeRegs: Ddr4ModeRegs = Ddr4ModeRegs()
+    ddr4ModeRegs: Ddr4ModeRegs = Ddr4ModeRegs(),
+    // Optional init micro-program (step table) for the generic SdramInitSequencer in MakeTask.
+    // None: DDR4 keeps its built-in Ddr4InitSequencer preset, every other generation runs
+    // init-less exactly as before (no engine, no new bus drivers). Some(List(...)): the engine
+    // plays those steps before any user traffic, for any generation whose CmdTxd can encode
+    // MRS/ZQ (DDR3/DDR2 legacy path included).
+    initSteps: Option[List[SdramInitStep]] = None
 ) {
   val frequencyRatio = timeConfig.frequencyRatio
   val dataRate = sdram.generation.dataRate

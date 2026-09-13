@@ -422,12 +422,39 @@ class DfiMemoryAgent(
         // the testbench observes them on the bus directly.
       }
     } else {
-      // ---- Legacy decode: unchanged ----
+      // ---- Legacy decode ----
+      // Init awareness is gated on busConfig.initSteps: init-less configs (all dev-era legacy
+      // tests) see zero new decodes, asserts or prints — behavior identical to before.
+      val legacyInitAware = busConfig.initSteps.isDefined
+      // ZQCL rides A10 (0x400); only meaningful when a ZQ step exists (DDR2 presets have none).
+      val a10 = (cmdAddr >> 10) & 1L
       for ((enPerChip, idPerChip) <- cke.zip(csN).map(t => t._1 && !t._2).zipWithIndex) {
         // cmd and address
         val active = enPerChip & !ras & cas & weN
         val write = enPerChip & ras & !cas & !weN
         val read = enPerChip & ras & !cas & weN
+        if (legacyInitAware) {
+          // cmd pin encoding = Micron ddr3.v model (cmd = {ras_n, cas_n, we_n}, all active low):
+          // MRS/EMRS = 000 (bank = MR/EMRS number, address = OP code), ZQCL = 110 + A10=H.
+          val mrs = enPerChip && !ras && !cas && !weN
+          val zqcl = enPerChip && ras && cas && !weN && a10 == 1L
+          if (mrs) {
+            val rankMr = modeRegisters.getOrElseUpdate(idPerChip, mutable.Map())
+            rankMr(cmdBank.toInt) = cmdAddr
+          }
+          if (zqcl) zqclSeen = true
+          if (mrs) println(s"[AGENTCMD] $agentCycle MRS ${cmdBank.toInt} ${java.lang.Long.toHexString(cmdAddr)}")
+          if (zqcl) println(s"[AGENTCMD] $agentCycle ZQCL -1 -1")
+          // Traffic before the mode-register file is written (MR0 included) is a controller bug:
+          // an uninitialized SDRAM ignores commands. Checked once, at the first ACT/WR/RD.
+          if ((active || write || read) && !initChecked) {
+            assert(
+              modeRegisters.contains(idPerChip) && modeRegisters(idPerChip).contains(0),
+              s"legacy rank $idPerChip saw ACT/WR/RD before MRS(MR0) init completed"
+            )
+            initChecked = true
+          }
+        }
         if (active) {
           rowAddrQueue.enqueue(cmdAddr)
           bankQueue.enqueue(cmdBank)

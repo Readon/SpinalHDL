@@ -201,6 +201,29 @@ case class CmdTxd(taskConfig: TaskConfig, dfiConfig: DfiConfig) extends Componen
       cmdphase(dfiConfig.timeConfig.cmdPhase).payload.assignFromBits(REFRESH)
       addrphase(dfiConfig.timeConfig.cmdPhase).valid.set()
     }
+    // Init ops (driven only while MakeTask's init engine plays its step table; always False
+    // for init-less configs, so init-less behavior is bit-identical to dev).
+    // MRS/EMRS: cmd {ras_n,cas_n,we_n} = 000 (Micron ddr3.v cmd table); MR/EMRS select on
+    // the bank field (BA2:0 = mrIndex, EMRS = BA1/2/3), OP code on the row/address field.
+    when(io.task.mrs) {
+      cmdphase(dfiConfig.timeConfig.cmdPhase).valid := True
+      cmdphase(dfiConfig.timeConfig.cmdPhase).payload.assignFromBits(
+        (~(B(1) << io.task.address.cs).resize(dfiConfig.chipSelectNumber) ## B"b000").setName("MRS")
+      )
+      addrphase(dfiConfig.timeConfig.cmdPhase).valid.set()
+      addrphase(dfiConfig.timeConfig.cmdPhase).bank := BANK.resized
+      addrphase(dfiConfig.timeConfig.cmdPhase).address := ROW.resized
+    }
+    // ZQCL: cmd = 110 (ras_n=H, cas_n=H, we_n=L) + A10=H (long / all-bank calibration).
+    // DDR2 has no ZQ; its presets simply contain no ZQ step.
+    when(io.task.zq) {
+      cmdphase(dfiConfig.timeConfig.cmdPhase).valid := True
+      cmdphase(dfiConfig.timeConfig.cmdPhase).payload.assignFromBits(
+        (~(B(1) << io.task.address.cs).resize(dfiConfig.chipSelectNumber) ## B"b110").setName("ZQCL")
+      )
+      addrphase(dfiConfig.timeConfig.cmdPhase).valid.set()
+      addrphase(dfiConfig.timeConfig.cmdPhase).address(ALL_BANKS_BIT).set()
+    }
   }
 }
 

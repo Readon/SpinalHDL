@@ -47,7 +47,8 @@ class DfiControllerTester extends SpinalAnyFunSuite {
       refreshMinCount: Int = 1,
       idleCycles: Int = 10000,
       caParity: Boolean = false,
-      injectParityError: Boolean = false
+      injectParityError: Boolean = false,
+      initSteps: List[SdramInitStep] = Nil
   ): Unit = {
     test(name) {
       // Deterministic test: derive a fixed seed from the test name and seed BOTH random sources
@@ -130,7 +131,8 @@ class DfiControllerTester extends SpinalAnyFunSuite {
             timeConfig = timeConfig,
             sdram = sdram,
             ddr4ModeRegs =
-              if (generation == SdramGeneration.DDR4) Ddr4ModeRegs(mr4 = mr4, mr5 = mr5) else Ddr4ModeRegs()
+              if (generation == SdramGeneration.DDR4) Ddr4ModeRegs(mr4 = mr4, mr5 = mr5) else Ddr4ModeRegs(),
+            initSteps = if (initSteps.isEmpty) None else Some(initSteps)
           )
           val bmbp: BmbParameter = BmbParameter(
             addressWidth = sdram.byteAddressWidth + log2Up(dfiConfig.chipSelectNumber),
@@ -326,6 +328,19 @@ class DfiControllerTester extends SpinalAnyFunSuite {
             s"${name}: expected >= $refreshMinCount refreshes in idle window, got $refreshCount"
           )
           println(s"[COUNT] ${name}: cmdWriteCount=$cmdWriteCount rspReadCount=$rspReadCount")
+          // Init micro-program end-of-run checks (only for configs carrying an init table;
+          // init-less legacy configs keep the agent's gate closed, so no new prints/asserts).
+          if (initSteps.nonEmpty) {
+            println(s"[INIT] ${name}: mrsSeen=${dfiMemoryAgent.modeRegisters} zqSeen=${dfiMemoryAgent.zqclSeen}")
+            assert(
+              dfiMemoryAgent.modeRegisters.nonEmpty && dfiMemoryAgent.modeRegisters.values.exists(_.contains(0)),
+              s"${name}: init micro-program never wrote MR0"
+            )
+            if (generation == SdramGeneration.DDR3)
+              assert(dfiMemoryAgent.zqclSeen, s"${name}: DDR3 init must end with ZQCL (zqSeen=false)")
+            if (generation == SdramGeneration.DDR2)
+              assert(!dfiMemoryAgent.zqclSeen, s"${name}: DDR2 init must not issue ZQCL (no ZQ in DDR2)")
+          }
           // DDR4 CA parity end-of-run checks: the happy path must have seen zero ALERT_n cycles
           // (any DUT parity bug would have raised it), the injected variant must have seen the
           // alert AND latched it in the DUT's sticky caParityError register.
@@ -458,4 +473,35 @@ class DfiControllerTester extends SpinalAnyFunSuite {
     RTP = 8, RRD = 7, REF = 64000, FAW = 20, REF_NS = 7800, REF_RATE = 2)
   runDfiControllerTest("DfiController_DDR2_fr2_ref_rate2", SdramGeneration.DDR2, 2, 0, 0, 2, 15,
     RowBankColumn, sdramTiming = ddr2TimingRefRate, refreshMinCount = 20, idleCycles = 20000)
+
+  // ===== DDR3/DDR2 init micro-programs (step-table engine presets) =====
+  // Protocol facts (dual-sourced: Micron ddr3.v cmd table in-repo + litedram/init.py sequences):
+  // legacy cmd encodings MRS/EMRS=000, ZQCL=110+A10; EMRS via BA=1/2/3, MRS via BA=0, OP on A.
+  // DDR3 init (litedram): MRS MR2 -> MR3 -> MR1 -> MR0(DLL reset) -> ZQCL.
+  // MR0=0x310: BL8, CL5, WR5, DLL reset (A8=0x100) per the litedram formula.
+  runDfiControllerTest("DfiController_DDR3_fr2_init", SdramGeneration.DDR3, 2, 0, 0, 2, 15, RowBankColumn,
+    initSteps = List(
+      SdramInitStep(SdramInitStep.MRS, 2, 0x200, 8),
+      SdramInitStep(SdramInitStep.MRS, 3, 0x000, 8),
+      SdramInitStep(SdramInitStep.MRS, 1, 0x000, 8),
+      SdramInitStep(SdramInitStep.MRS, 0, 0x310, 8),
+      SdramInitStep(SdramInitStep.ZQ, 0, 0, 512)
+    ))
+  // DDR2 init (litedram): PRE_ALL -> EMRS3 -> EMRS2 -> EMRS1 -> MRS(DLL reset) -> PRE_ALL ->
+  // REF -> REF -> MRS -> EMRS1 OCD default -> EMRS1 OCD exit. DDR2 has NO ZQ.
+  // MR0=0x552: BL4, CL5, WR2, DLL reset. DLL-reset step waits 256 (200 tDLL lock cycles).
+  runDfiControllerTest("DfiController_DDR2_fr2_init", SdramGeneration.DDR2, 2, 0, 0, 2, 15, RowBankColumn,
+    initSteps = List(
+      SdramInitStep(SdramInitStep.PRE_ALL, 0, 0, 8),
+      SdramInitStep(SdramInitStep.MRS, 3, 0x000, 8),
+      SdramInitStep(SdramInitStep.MRS, 2, 0x000, 8),
+      SdramInitStep(SdramInitStep.MRS, 1, 0x000, 8),
+      SdramInitStep(SdramInitStep.MRS, 0, 0x552, 256),
+      SdramInitStep(SdramInitStep.PRE_ALL, 0, 0, 8),
+      SdramInitStep(SdramInitStep.REF, 0, 0, 8),
+      SdramInitStep(SdramInitStep.REF, 0, 0, 8),
+      SdramInitStep(SdramInitStep.MRS, 0, 0x452, 8),
+      SdramInitStep(SdramInitStep.MRS, 1, 0x452 | 0x380, 8), // EMRS1 OCD default
+      SdramInitStep(SdramInitStep.MRS, 1, 0x452, 8) // EMRS1 OCD exit
+    ))
 }
