@@ -165,6 +165,13 @@ class DfiControllerTester extends SpinalAnyFunSuite {
             dut.io.trainReq.valid #= false
             dut.io.trainReq.msgCode #= 0
             dut.io.trainReq.rank #= 0
+            // ctrlmsgAck is a DUT input the PHY agent only drives from its onSamplings callback,
+            // which applies writes one delta-cycle AFTER the rising-edge eval — so at the very
+            // first edges the DUT would sample Verilator's randReset(2) random t0 value (a t0
+            // ack=1 makes the arbiter latch acked inside the resp window and lets a late real
+            // ACK complete the handshake — the ctrlmsg_timeout full-suite flake). Drive the
+            // idle level here, before the first edge, same rule as trainReq/alertN above.
+            dut.io.dfiCtrlMsg.ctrlmsgAck #= false
           }
           val memorySize = 1 << dut.io.bmb.p.access.addressWidth
           val allowedWrites = mutable.HashMap[Long, Byte]()

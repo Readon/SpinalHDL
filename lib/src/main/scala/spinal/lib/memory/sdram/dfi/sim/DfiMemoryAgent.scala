@@ -314,8 +314,17 @@ class DfiMemoryAgent(
       val cmReq = ctrlMsgReqProxy.toBoolean
       // dfi_ctrlmsg_ack is agent-driven: without an explicit idle level it reads as a random
       // value in the simulator until the first #= (a spurious early ack defeats the DUT's
-      // resp window). Pin it low until the stub asserts it.
-      if (!ctrlMsgAcked) ctrlMsgAckProxy #= false
+      // resp window). Pin it low until the stub asserts it; the testbench additionally drives
+      // it False from t0 (before the first rising edge) so the DUT never samples garbage.
+      // Note the write below lands one delta-cycle after this callback, i.e. the DUT's edge
+      // eval sees the PREVIOUS cycle's value — a constant False makes that lag harmless.
+      if (!ctrlMsgAcked) {
+        ctrlMsgAckProxy #= false
+        // Self-proof: while the stub believes the line idle (including every cycle of a
+        // delay>0 wait), the line must read back False — a stray writer or lost drive would
+        // otherwise resurface as the silent resp-window acked-latch flake.
+        assert(!ctrlMsgAckProxy.toBoolean, s"[CTRLMSG] $agentCycle ack line not idle while stub waits")
+      }
       if (ctrlMsgBanClearPending) { ctrlMsgBanActive = false; ctrlMsgBanClearPending = false }
       if (cmReq && !ctrlMsgReqPrev) {
         ctrlMsgReqMsg = ctrlMsgMsgProxy.toLong
