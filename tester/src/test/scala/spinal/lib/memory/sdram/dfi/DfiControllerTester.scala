@@ -48,9 +48,13 @@ class DfiControllerTester extends SpinalAnyFunSuite {
       idleCycles: Int = 10000,
       caParity: Boolean = false,
       injectParityError: Boolean = false,
-      initSteps: List[SdramInitStep] = Nil
+      initSteps: List[SdramInitStep] = Nil,
+      useCtrlMsg: Boolean = false,
+      ctrlMsgAckDelayCycles: Int = 0
   ): Unit = {
     test(name) {
+      val ctrlMsgEnabled = useCtrlMsg
+      assert(!useCtrlMsg || generation == SdramGeneration.DDR4, "ctrlmsg training cases are DDR4-only")
       // Deterministic test: derive a fixed seed from the test name and seed BOTH random sources
       // (the SpinalSim internal RNG via doSimUntilVoid, and the global scala.util.Random used by the
       // agent/memory/region allocator) so a failure is reproducible run-to-run.
@@ -117,6 +121,8 @@ class DfiControllerTester extends SpinalAnyFunSuite {
                 // DDR4 CA parity needs dfi_parity (MC out) + dfi_alert_n (DRAM in) present
                 override val useParityIn = caParity
                 override val useAlertN = caParity
+                // DFI 6.0.1 Table 12 ctrlmsg channel: four wires + arbiter + trainBusy gates
+                override val useCtrlMsg = ctrlMsgEnabled
               }
             case _ =>
               new DDR3SignalConfig(DfiFunctionConfig(), false) {
@@ -152,6 +158,14 @@ class DfiControllerTester extends SpinalAnyFunSuite {
           // ALERT_n is DRAM-driven (DUT input): idle high until the agent pulls it low. Drive the
           // idle level immediately so the DUT never samples an undriven (0) input as an alert.
           if (caParity) dut.io.dfi.status.alertN #= (1 << dut.dfiConfig.frequencyRatio) - 1
+          // ctrlmsg trainReq is testbench-driven (DUT input): an undriven Flow valid reads as
+          // a random value in the simulator and would spuriously fire the arbiter every few
+          // cycles. Idle it low for the whole run; fireTrainReq pulses it exactly once.
+          if (ctrlMsgEnabled) {
+            dut.io.trainReq.valid #= false
+            dut.io.trainReq.msgCode #= 0
+            dut.io.trainReq.rank #= 0
+          }
           val memorySize = 1 << dut.io.bmb.p.access.addressWidth
           val allowedWrites = mutable.HashMap[Long, Byte]()
           val allowedWritesStandby = mutable.HashMap[Long, Byte]()
@@ -197,7 +211,7 @@ class DfiControllerTester extends SpinalAnyFunSuite {
           var rspReadCount = 0
           var rspReadBeats = 0L
           var cmdWriteCount = 0
-          val dfiMemoryAgent = new DfiMemoryAgent(dut.io.dfi, dut.clockDomain) {
+          val dfiMemoryAgent = new DfiMemoryAgent(dut.io.dfi, dut.clockDomain, if (ctrlMsgEnabled) dut.io.dfiCtrlMsg else null) {
             override def writeNotification(address: Long, value: Byte): Unit = {
               val option = allowedWrites.get(address)
               assert(option.isDefined)
@@ -214,6 +228,9 @@ class DfiControllerTester extends SpinalAnyFunSuite {
           // dropped and data flow is unaffected; the agent must still raise ALERT_n and the DUT
           // must latch caParityError (asserted after the run below).
           if (injectParityError) dfiMemoryAgent.parityCorruptCycle = 5000
+          // DFI 6.0.1 ctrlmsg: PHY ack latency knob (0 = within tctrlmsg_resp; a value beyond
+          // the DUT's resp window exercises the DUT timeout path).
+          dfiMemoryAgent.ctrlMsgAckDelayCycles = ctrlMsgAckDelayCycles
 
           val regions = BmbRegionAllocator(alignmentMinWidth = 6)
           var stopGenerating = false
@@ -262,6 +279,43 @@ class DfiControllerTester extends SpinalAnyFunSuite {
           var dfiCmdCount = 0
           var bmbCmdFireCount = 0
           var c = 0
+          // ---- DFI 6.0.1 ctrlmsg training stimulus (useCtrlMsg configs only) ----
+          var trainDoneSeen = false
+          var trainReqFired = false
+          var trafficRspReadAtResume = 0L
+          def fireTrainReq(msgCode: Int, rank: Int): Unit = {
+            // Quiesce the BMB master so the station is empty when the request lands: the
+            // agent's training-window ban is strict (any ACT/WR/RD between req rise and ack
+            // de-assert = controller bug, see DfiMemoryAgent). Then fire the request and
+            // re-open the master on the same cycle: with the DUT gates intact the backlog
+            // stalls at canSpawn (bus stays silent); without them it spawns within a few
+            // cycles and the agent fails the sim.
+            assert(!trainReqFired, "fireTrainReq called twice")
+            trainReqFired = true
+            stopGenerating = true
+            var drainWait = 0
+            while ((bmbAgent.pendingCounter != 0 || bmbAgent.rspQueue.exists(_.nonEmpty)) && drainWait < 100000) {
+              dut.clockDomain.waitSampling()
+              drainWait += 1
+            }
+            assert(
+              bmbAgent.pendingCounter == 0 && !bmbAgent.rspQueue.exists(_.nonEmpty),
+              "BMB traffic never drained before trainReq"
+            )
+            dut.clockDomain.waitSampling(16) // let the CmdTxd pipeline regs run dry
+            // Re-open BMB generation 6 cycles BEFORE firing trainReq: the incoming command
+            // then reaches the spawn point AFTER trainBusy rises (gate can hold it) but its
+            // ACT would still land INSIDE the training window if the gates were missing —
+            // the agent's traffic ban then fails the sim deterministically (counter-proof B).
+            stopGenerating = false
+            dut.clockDomain.waitSampling(6)
+            dut.io.trainReq.valid #= true
+            dut.io.trainReq.msgCode #= msgCode
+            dut.io.trainReq.rank #= rank
+            dut.clockDomain.waitSampling()
+            dut.io.trainReq.valid #= false
+            trafficRspReadAtResume = rspReadBeats
+          }
           while (c < 12000) {
             val ras = dut.io.dfi.control.rasN.toLong
             val cas = dut.io.dfi.control.casN.toLong
@@ -271,6 +325,23 @@ class DfiControllerTester extends SpinalAnyFunSuite {
             else if (cas != idleMask) dfiCmdCount += 1
             else if (we != idleMask) dfiCmdCount += 1
             if (dut.io.bmb.cmd.valid.toBoolean && dut.io.bmb.cmd.ready.toBoolean) bmbCmdFireCount += 1
+            if (useCtrlMsg && c == 4000 && !trainReqFired) {
+              // Mid-run training: quiesce, fire one message, resume traffic immediately.
+              if (ctrlMsgAckDelayCycles > 0) fireTrainReq(CtrlMsgCode.ZQCAL, 0)
+              else fireTrainReq(CtrlMsgCode.WRLVL, 0)
+              var seen = 0
+              while (seen < 200 && !trainDoneSeen && !dut.io.ctrlMsgError.toBoolean) {
+                if (dut.io.trainDone.toBoolean) trainDoneSeen = true
+                dut.clockDomain.waitSampling()
+                seen += 1
+              }
+              if (ctrlMsgAckDelayCycles > 0) {
+                assert(!trainDoneSeen, "trainDone pulsed although the PHY never acknowledged")
+              } else {
+                assert(trainDoneSeen, s"trainDone never pulsed after WRLVL request (waited $seen cycles)")
+                assert(!dut.io.ctrlMsgError.toBoolean, "ctrlMsgError latched on the happy path")
+              }
+            }
             if (c % 2000 == 0) {
               println(
                 s"[T c=$c] bmb.valid=${dut.io.bmb.cmd.valid.toBoolean} bmb.ready=${dut.io.bmb.cmd.ready.toBoolean} " +
@@ -363,6 +434,35 @@ class DfiControllerTester extends SpinalAnyFunSuite {
               assert(!dut.caParityError.toBoolean, s"${name}: caParityError latched without any parity error")
             }
           }
+          // DFI 6.0.1 ctrlmsg end-of-run checks (only for ctrlmsg configs; inert otherwise).
+          if (useCtrlMsg) {
+            println(
+              s"[CTRLMSG] $name: reqCount=${dfiMemoryAgent.ctrlMsgReqCount} doneCount=${dfiMemoryAgent.ctrlMsgDoneCount} " +
+                s"ackSeen=${dfiMemoryAgent.ctrlMsgAckSeen} msg=0x${dfiMemoryAgent.ctrlMsgReqMsg.toHexString} " +
+                s"data=0x${dfiMemoryAgent.ctrlMsgReqData.toHexString} dut.ctrlMsgError=${dut.io.ctrlMsgError.toBoolean}"
+            )
+            if (ctrlMsgAckDelayCycles > 0) {
+              // Timeout case: the PHY acked beyond tctrlmsg_resp, so the DUT must have latched
+              // the sticky error, revoked dfi_ctrlmsg_req and never pulsed trainDone.
+              assert(dut.io.ctrlMsgError.toBoolean, s"$name: ctrlMsgError not latched after resp timeout (sticky register broken)")
+              assert(!dfiMemoryAgent.ctrlMsgAckSeen, s"$name: PHY acked although its delay exceeds the resp window")
+              assert(dfiMemoryAgent.ctrlMsgDoneCount == 0, s"$name: DONE seen on the timeout path")
+              assert(!trainDoneSeen, s"$name: trainDone pulsed on the timeout path")
+            } else {
+              // Happy case: full handshake (REQ -> ACK -> DONE), zero error, and normal read
+              // traffic resumed and completed after training.
+              assert(!dut.io.ctrlMsgError.toBoolean, s"$name: ctrlMsgError latched without an error path")
+              assert(
+                dfiMemoryAgent.ctrlMsgReqCount == 1 && dfiMemoryAgent.ctrlMsgDoneCount == 1 && dfiMemoryAgent.ctrlMsgAckSeen,
+                s"$name: ctrlmsg handshake incomplete"
+              )
+              assert(dfiMemoryAgent.ctrlMsgReqMsg == CtrlMsgCode.WRLVL, s"$name: REQ msg code was 0x${dfiMemoryAgent.ctrlMsgReqMsg.toHexString}, expected WRLVL")
+              // chipSelectNumber=2 here -> multi-rank Table 56 encoding: bit0=0, bit1=1 (no 3DS),
+              // bits[7:4]=rank(0) -> 0x0002.
+              assert(dfiMemoryAgent.ctrlMsgReqData == 0x0002, s"$name: ctrlmsg data was 0x${dfiMemoryAgent.ctrlMsgReqData.toHexString}, expected 0x0002 (Table 56 multi-rank)")
+              assert(rspReadBeats > trafficRspReadAtResume, s"$name: no read traffic after training (traffic did not resume)")
+            }
+          }
           simSuccess()
         }
     }
@@ -421,14 +521,17 @@ class DfiControllerTester extends SpinalAnyFunSuite {
       refreshMinCount: Int = 1,
       idleCycles: Int = 10000,
       caParity: Boolean = false,
-      injectParityError: Boolean = false
+      injectParityError: Boolean = false,
+      useCtrlMsg: Boolean = false,
+      ctrlMsgAckDelayCycles: Int = 0
   ): Unit =
     runDfiControllerTest(
       name, SdramGeneration.DDR4, fr, phase, 0, 2, 13, map,
       useCsN = csN, bgWidth = 1, cidWidth = 1, bankWidth = 4,
       sdramTiming = if (timing != null) timing else ddr4Timing,
       mr5 = mr5, mr4 = mr4, refreshMinCount = refreshMinCount, idleCycles = idleCycles,
-      caParity = caParity, injectParityError = injectParityError
+      caParity = caParity, injectParityError = injectParityError,
+      useCtrlMsg = useCtrlMsg, ctrlMsgAckDelayCycles = ctrlMsgAckDelayCycles
     )
   ddr4("DfiController_DDR4_fr2_RowBankColumn", 2, 0, RowBankColumn)
   ddr4("DfiController_DDR4_fr2_BankRowColumn", 2, 0, BankRowColumn)
@@ -446,6 +549,15 @@ class DfiControllerTester extends SpinalAnyFunSuite {
   // Injection: the parity bit as seen at the DRAM is flipped on an idle cycle (cycle >= 5000);
   // the agent must raise ALERT_n and the DUT must latch caParityError, with data flow intact.
   ddr4("DfiController_DDR4_fr2_caparity_inject", 2, 0, RowBankColumn, mr5 = 0x0001, caParity = true, injectParityError = true)
+  // DFI 6.0.1 ctrlmsg training channel (Table 12/47/48), code 0x04 = Write Leveling (Table 55):
+  // driven mid-run while BMB traffic is quiesced; the agent acks within tctrlmsg_resp (delay 0),
+  // the training-window traffic ban must hold (spawn/refresh paused), trainDone pulses,
+  // ctrlMsgError stays low and normal read/write traffic resumes and completes afterwards.
+  ddr4("DfiController_DDR4_fr2_ctrlmsg_wrlvl", 2, 0, RowBankColumn, useCtrlMsg = true)
+  // Same channel, code 0x07 = ZQ Calibration; the PHY acks 8 cycles late (> tctrlmsg_resp = 1):
+  // the DUT must latch the sticky ctrlMsgError, revoke dfi_ctrlmsg_req and never pulse
+  // trainDone (record-and-expose, no retry — same policy as caParityError).
+  ddr4("DfiController_DDR4_fr2_ctrlmsg_timeout", 2, 0, RowBankColumn, useCtrlMsg = true, ctrlMsgAckDelayCycles = 8)
   // DDR4 temperature-controlled refresh 2x (JESD79-4B §4.8/§4.9.2, Table 24):
   // MR4 A3=1 (TCR enable) + A2=1 (extended temperature range) programs the DRAM for 2x; the
   // scheduler halves tREFI via SdramTiming.REF_RATE=2 (7800ns -> 3900ns) and carries

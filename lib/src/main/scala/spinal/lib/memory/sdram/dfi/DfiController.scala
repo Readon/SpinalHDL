@@ -54,6 +54,23 @@ case class DfiController(bmbp: BmbParameter, task: TaskParameter, dfiConfig: Dfi
   val io = new Bundle {
     val bmb = slave(Bmb(bmbp))
     val dfi = master(Dfi(dfiConfig))
+    // DFI 6.0.1 ctrlmsg training channel (Table 12): the upper layer / testbench drives one
+    // message (CtrlMsgCode, e.g. WRLVL/ZQCAL) and observes completion / the sticky error.
+    // The ports always exist (stable API); with useCtrlMsg off they are inert (trainDone
+    // stuck low, ctrlMsgError stuck low, trainReq dangling-legal).
+    // The train ports exist on the Scala API for every config (stable API), but the
+    // hardware ports are gated: a top-level port present in legacy configs shifts the
+    // simulator's t0 randomization stream (randBoot registers), which re-rolls the
+    // BmbRegionAllocator address stream and flips which rank the init MRS lands on —
+    // breaking the old-23-tests verbatim-log guarantee. All testbench references are
+    // already conditional on useCtrlMsg, so a null port is never dereferenced.
+    val trainReq = dfiConfig.signalConfig.useCtrlMsg generate slave(Flow(CtrlMsgReq()))
+    val trainDone = dfiConfig.signalConfig.useCtrlMsg generate out(Bool())
+    val ctrlMsgError = dfiConfig.signalConfig.useCtrlMsg generate out(Bool())
+    // Separate top-level ctrlmsg port (NOT a Dfi member): keeps the Dfi<>Dfi zip in
+    // alignment.io.output <> io.dfi away from the arbiter-driven wires entirely. Gated by
+    // useCtrlMsg (DFI Table 12: all four wires Optional — absent entirely when off).
+    val dfiCtrlMsg = dfiConfig.signalConfig.useCtrlMsg generate master(DfiCtrlMsgInterface(dfiConfig))
   }
 
   val taskConfig = BmbAdapter.taskConfig(bmbp, dfiConfig, task)
@@ -67,6 +84,29 @@ case class DfiController(bmbp: BmbParameter, task: TaskParameter, dfiConfig: Dfi
   val alignment = Alignment(dfiConfig)
   alignment.io.input <> control.io.output
   alignment.io.output <> io.dfi
+
+  // DFI 6.0.1 ctrlmsg training channel (Table 12, all four wires Optional on both sides):
+  // the arbiter drives dfi_ctrlmsg/dfi_ctrlmsg_data/dfi_ctrlmsg_req and watches
+  // dfi_ctrlmsg_ack; while a handshake is in flight its trainBusy output pauses MakeTask
+  // task-spawn/refresh globally. Instantiated only when useCtrlMsg is set — disabled
+  // configs elaborate with none of it (no wires, no arbiter, no gates). The arbiter drives
+  // io.dfiCtrlMsg (the separate top-level port, see io bundle): assignable from this
+  // component, and immune to the Dfi<>Dfi zip in `alignment.io.output <> io.dfi` above
+  // (which under a Dfi-bundle member produced ASSIGNMENT OVERLAP or silent NO DRIVER).
+  val ctrlMsgArb = if (dfiConfig.signalConfig.useCtrlMsg) {
+    val arb = CtrlMsgArbiter(dfiConfig)
+    arb.io.trainReq << io.trainReq
+    io.dfiCtrlMsg.ctrlmsg := arb.io.ctrlmsg
+    io.dfiCtrlMsg.ctrlmsgData := arb.io.ctrlmsgData
+    io.dfiCtrlMsg.ctrlmsgReq := arb.io.ctrlmsgReq
+    arb.io.ctrlmsgAck := io.dfiCtrlMsg.ctrlmsgAck
+    bmbBridge.io.trainBusy := arb.io.trainBusy
+    arb
+  } else null
+  if (ctrlMsgArb != null) {
+    io.trainDone := ctrlMsgArb.io.trainDone
+    io.ctrlMsgError := ctrlMsgArb.io.ctrlMsgError
+  }
 
   // DDR4 CA parity (JESD79-4B §4.17): on a command-bus parity error the DRAM ignores the command
   // and pulls ALERT_n low within tPAR_ALERT_ON. The MC records the event in a sticky register

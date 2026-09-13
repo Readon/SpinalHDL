@@ -27,9 +27,14 @@ case class DfiTimeConfig(
     tPhyRdCslat: Int,
     // specify the desired alignment of the command to the
     // dfi_rddata_cs_n signal
-    tPhyRdCsGap: Int
+    tPhyRdCsGap: Int,
     // specify the additional delay it
     // requires between two consecutive commands that are targeting different chip selects.
+    // DFI 6.0.1 Table 48 ctrlmsg timing: tctrlmsg_resp = max cycles from dfi_ctrlmsg_req
+    // assertion to dfi_ctrlmsg_ack assertion (spec min 1), tctrlmsg_max = max cycles
+    // dfi_ctrlmsg_ack may stay asserted (MC-defined; this MC picks 16).
+    tCtrlMsgResp: Int = 1,
+    tCtrlMsgMax: Int = 16
 ) {}
 
 case class DfiFunctionConfig(
@@ -124,6 +129,11 @@ class DfiSignalConfig(groupConfig: DfiFunctionConfig = DfiFunctionConfig(), useC
 
   val useError: Boolean = false
   val useErrorInfo: Boolean = false
+
+  // DFI 6.0.1 Table 12 ctrlmsg channel (dfi_ctrlmsg/dfi_ctrlmsg_data/dfi_ctrlmsg_req/
+  // dfi_ctrlmsg_ack): off by default — the four wires, the CtrlMsgArbiter and the trainBusy
+  // spawn/refresh gates exist only when this is set.
+  val useCtrlMsg: Boolean = false
 
   val useStatusSignals = groupConfig.useStatusSignals
 

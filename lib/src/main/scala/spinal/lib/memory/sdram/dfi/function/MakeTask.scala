@@ -104,8 +104,13 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
     val halt = out Bool ()
     val writeDataToken = slave(Stream(Event))
     val output = master(OpTasks(taskConfig, dfiConfig))
+    // DFI 6.0.1 ctrlmsg training: while a ctrlmsg handshake is in flight, task spawning and
+    // refresh are paused globally (same gating pattern as initDone). Absent when the ctrlmsg
+    // channel is disabled — every gate below then folds to its pre-ctrlmsg expression.
+    val trainBusy = dfiConfig.signalConfig.useCtrlMsg generate in(Bool())
   }
   val timeConfig = TaskTimingConfig(dfiConfig)
+  def trainBlocked: Bool = if (dfiConfig.signalConfig.useCtrlMsg) io.trainBusy else False
   val readyForRefresh = True
   val sdram = dfiConfig.sdram
 
@@ -327,7 +332,7 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
 
   val selectedAddress = io.output.address
   val loader = new Area {
-    taskConstructor.input.ready := !station.valid && initDone
+    taskConstructor.input.ready := !station.valid && initDone && !trainBlocked
     val offset = taskConstructor.address.column(columnBurstShift, io.cmd.stationLengthWidth bits)
     val offsetLast = offset +^ taskConstructor.input.length
     // BmbAlignedSpliter guarantees sub-commands never cross a bytePerTaskMax-aligned boundary, so
@@ -341,7 +346,7 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
         "SDRAM task bursts cross the station boundary: offset + length must fit in stationLengthWidth bits"
       )
     }
-    val canSpawn = !station.valid && initDone
+    val canSpawn = !station.valid && initDone && !trainBlocked
     // Insert taskConstructor into one free station
     when(taskConstructor.input.fire && canSpawn) {
       station.valid := True
@@ -354,7 +359,7 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
       station.offsetLast := offsetLast
     }
   }
-  val askRefresh = refreshStream.valid && readyForRefresh && initDone
+  val askRefresh = refreshStream.valid && readyForRefresh && initDone && !trainBlocked
   when(station.doSomething) {
     banksRow.write(selectedAddress.bank, selectedAddress.row)
   }
@@ -391,6 +396,13 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
       io.output.active := False
       io.output.precharge := False
       io.output.last := True
+      // NOTE: deliberately NO io.output.address.cs := 0 here. Driving cs inside this when
+      // block turns it from a continuous assign into an always-block signal in the Verilog,
+      // which shifts the simulator's t0 randomization stream (all randBoot registers get
+      // different values), re-rolls the BmbRegionAllocator address stream and flips which
+      // rank the init MRS lands on between builds — the old 23 tests then diverge from the
+      // f9aeed0a1 baseline (and the agent's per-rank MR0 check can fail). The init steps
+      // target whatever chip the (unreset) task cs latch holds, exactly as on f9aeed0a1.
       when(op.valid) {
         switch(op.kind) {
           is(SdramInitStep.MRS) {

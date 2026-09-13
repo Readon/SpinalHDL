@@ -10,7 +10,9 @@ class DfiMemoryAgent(
     wr: DfiWriteInterface,
     rd: DfiReadInterface,
     status: DfiStatusInterface,
-    clockDomain: ClockDomain
+    clockDomain: ClockDomain,
+    // DFI 6.0.1 ctrlmsg four wires; null (all legacy callers) keeps the stub fully inert
+    ctrlMsg: DfiCtrlMsgInterface = null
 ) {
   val memory = SparseMemory()
 
@@ -99,8 +101,42 @@ class DfiMemoryAgent(
   val rdCsExpectQueue = mutable.Queue[Int]()
   var rdCsVerifyTimeout = 0
 
+  // ---- DFI 6.0.1 ctrlmsg PHY stub state (all inert unless the four wires were passed) ----
+  val ctrlMsgStubEnabled = busConfig.signalConfig.useCtrlMsg && ctrlMsg != null
+  val ctrlMsgReqProxy = if (ctrlMsgStubEnabled) ctrlMsg.ctrlmsgReq.simProxy() else null
+  val ctrlMsgAckProxy = if (ctrlMsgStubEnabled) ctrlMsg.ctrlmsgAck.simProxy() else null
+  val ctrlMsgMsgProxy = if (ctrlMsgStubEnabled) ctrlMsg.ctrlmsg.simProxy() else null
+  val ctrlMsgDataProxy = if (ctrlMsgStubEnabled) ctrlMsg.ctrlmsgData.simProxy() else null
+  // 0 = ack immediately (within tctrlmsg_resp); set beyond the DUT's resp window to
+  // exercise the DUT-side timeout (sticky ctrlMsgError, request revoked, no retry).
+  var ctrlMsgAckDelayCycles = 0
+  // Ack hold time; must stay below tctrlmsg_max (DFI 6.0.1 Table 48).
+  var ctrlMsgAckHoldCycles = 2
+  var ctrlMsgReqPrev = false
+  var ctrlMsgWaitingAck = false
+  var ctrlMsgAcked = false
+  var ctrlMsgAckTimer = 0
+  var ctrlMsgAckHold = 0
+  // Training-window traffic ban: from dfi_ctrlmsg_req rise to dfi_ctrlmsg_ack de-assert,
+  // any decoded ACT/WR/RD is a controller bug (training did not pause traffic).
+  var ctrlMsgBanActive = false
+  // The ack de-assert cycle itself is still inside the training window, so the ban is
+  // cleared one sampling AFTER the DONE/REQ-DROPPED event, not in the same callback.
+  var ctrlMsgBanClearPending = false
+  var ctrlMsgReqMsg = 0L
+  var ctrlMsgReqData = 0L
+  var ctrlMsgReqCount = 0
+  var ctrlMsgDoneCount = 0
+  var ctrlMsgAckSeen = false
+
   def this(bus: Dfi, clockDomain: ClockDomain) {
-    this(bus.control, bus.write, bus.read, bus.status, clockDomain);
+    // ctrlmsg is a separate top-level port (DfiController.io.dfiCtrlMsg), not a Dfi member:
+    // the 2-arg constructor has no channel to hook and runs the stub disabled.
+    this(bus.control, bus.write, bus.read, bus.status, clockDomain, null);
+  }
+
+  def this(bus: Dfi, clockDomain: ClockDomain, ctrlMsg: DfiCtrlMsgInterface) {
+    this(bus.control, bus.write, bus.read, bus.status, clockDomain, ctrlMsg);
   }
 
   def getByteAsInt(address: Long) = getByte(address).toInt & 0xff
@@ -270,6 +306,56 @@ class DfiMemoryAgent(
   clockDomain.onSamplings { agentCycle += 1 }
 
   clockDomain.onSamplings {
+    // ---- DFI 6.0.1 ctrlmsg PHY stub (gated: without the four wires this is dead code) ----
+    // Reacts to dfi_ctrlmsg_req: logs REQ, asserts dfi_ctrlmsg_ack after
+    // ctrlMsgAckDelayCycles cycles, holds it ctrlMsgAckHoldCycles cycles, de-asserts.
+    // If the DUT revokes the request first (resp-timeout path) the pending ack is cancelled.
+    if (ctrlMsgStubEnabled) {
+      val cmReq = ctrlMsgReqProxy.toBoolean
+      // dfi_ctrlmsg_ack is agent-driven: without an explicit idle level it reads as a random
+      // value in the simulator until the first #= (a spurious early ack defeats the DUT's
+      // resp window). Pin it low until the stub asserts it.
+      if (!ctrlMsgAcked) ctrlMsgAckProxy #= false
+      if (ctrlMsgBanClearPending) { ctrlMsgBanActive = false; ctrlMsgBanClearPending = false }
+      if (cmReq && !ctrlMsgReqPrev) {
+        ctrlMsgReqMsg = ctrlMsgMsgProxy.toLong
+        ctrlMsgReqData = ctrlMsgDataProxy.toLong
+        ctrlMsgReqCount += 1
+        ctrlMsgWaitingAck = true
+        ctrlMsgAcked = false
+        ctrlMsgAckTimer = ctrlMsgAckDelayCycles
+        ctrlMsgBanActive = true
+        println(f"[CTRLMSG] $agentCycle%d REQ msg=0x$ctrlMsgReqMsg%02x data=0x$ctrlMsgReqData%04x")
+      }
+      if (ctrlMsgWaitingAck) {
+        if (!cmReq) {
+          ctrlMsgWaitingAck = false
+          ctrlMsgBanClearPending = true
+          println(s"[CTRLMSG] $agentCycle REQ-DROPPED (DUT revoked request)")
+        } else if (!ctrlMsgAcked) {
+          if (ctrlMsgAckTimer == 0) {
+            ctrlMsgAckProxy #= true
+            ctrlMsgAcked = true
+            ctrlMsgAckHold = ctrlMsgAckHoldCycles
+            ctrlMsgAckSeen = true
+            println(s"[CTRLMSG] $agentCycle ACK")
+          } else {
+            ctrlMsgAckTimer -= 1
+          }
+        } else {
+          ctrlMsgAckHold -= 1
+          if (ctrlMsgAckHold == 0) {
+            ctrlMsgAckProxy #= false
+            ctrlMsgWaitingAck = false
+            ctrlMsgBanClearPending = true
+            ctrlMsgDoneCount += 1
+            println(s"[CTRLMSG] $agentCycle DONE")
+          }
+        }
+      }
+      ctrlMsgReqPrev = cmReq
+    }
+
     val cke = selectBit(ckeProxy.toBigInt.asInstanceOf[BigInt], cmdPhase, csCount)
     val csN = selectBit(csNProxy.toBigInt.asInstanceOf[BigInt], cmdPhase, csCount)
     val ras = rasNProxy.toBigInt.asInstanceOf[BigInt].testBit(cmdPhase)
@@ -377,6 +463,14 @@ class DfiMemoryAgent(
           initChecked = true
         }
 
+        // DFI 6.0.1 ctrlmsg training window (see the stub above): no ACT/WR/RD may slip
+        // onto the command bus between dfi_ctrlmsg_req rise and dfi_ctrlmsg_ack de-assert.
+        if (ctrlMsgBanActive && (act || wrCmd || rdCmd)) {
+          simFailure(
+            s"[CTRLMSG] $agentCycle ACT/WR/RD during ctrlmsg training window (training did not pause traffic)"
+          )
+        }
+
         if (act) {
           rowAddrQueue.enqueue(cmdAddr)
           bankQueue.enqueue(flatBank(cmdBank))
@@ -453,6 +547,12 @@ class DfiMemoryAgent(
               s"legacy rank $idPerChip saw ACT/WR/RD before MRS(MR0) init completed"
             )
             initChecked = true
+          }
+          // DFI 6.0.1 ctrlmsg training window (DDR4 branch above for rationale).
+          if (ctrlMsgBanActive && (active || write || read)) {
+            simFailure(
+              s"[CTRLMSG] $agentCycle ACT/WR/RD during ctrlmsg training window (training did not pause traffic)"
+            )
           }
         }
         if (active) {
