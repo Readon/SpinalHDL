@@ -44,7 +44,10 @@ class DfiMemoryAgent(
   val dfiBankWidth = busConfig.dfiBankWidth
   // DDR4 mode-register file: MR0..MR4 per rank (op code as written by MRS), plus flags.
   val modeRegisters = mutable.Map[Int, mutable.Map[Int, Long]]() // rank -> (mrIndex -> op)
-  var zqclSeen = false
+  // ZQCL observation per rank (broadcast-cs init must set it on EVERY rank); zqclSeen is the
+  // aggregate kept for existing consumers.
+  val zqclSeenPerRank = Array.fill(csCount)(false)
+  def zqclSeen: Boolean = zqclSeenPerRank.exists(_ == true)
   var initChecked = false
 
   val ckeProxy = ctrl.cke.simProxy()
@@ -441,26 +444,26 @@ class DfiMemoryAgent(
             rankMr(mrIndex.toInt) = cmdAddr
           }
         }
-        if (zqcl) zqclSeen = true
+        if (zqcl) zqclSeenPerRank(idPerChip) = true
 
-        // Dual-path verification: export every decoded DDR4 command so an independent
-        // decoder (Python, straight from JESD79-4B Table 17) can be diffed against it.
+        // Dual-path verification: export every decoded DDR4 command (with its rank) so an
+        // independent decoder (Python, straight from JESD79-4B Table 17) can be diffed against it.
         def hex(v: Long) = java.lang.Long.toHexString(v)
         if (mrs) {
           val mr = (((cmdBg >> 0) & 1L) << 2) | (cmdBank & 3L)
-          println(s"[AGENTCMD] $agentCycle MRS $mr ${hex(cmdAddr)}")
+          println(s"[AGENTCMD] $agentCycle r$idPerChip MRS $mr ${hex(cmdAddr)}")
         }
-        if (act) println(s"[AGENTCMD] $agentCycle ACT ${flatBank(cmdBank)} ${hex(cmdAddr)}")
-        if (wrCmd) println(s"[AGENTCMD] $agentCycle WR ${flatBank(cmdBank)} ${hex(cmdAddr)}")
-        if (rdCmd) println(s"[AGENTCMD] $agentCycle RD ${flatBank(cmdBank)} ${hex(cmdAddr)}")
+        if (act) println(s"[AGENTCMD] $agentCycle r$idPerChip ACT ${flatBank(cmdBank)} ${hex(cmdAddr)}")
+        if (wrCmd) println(s"[AGENTCMD] $agentCycle r$idPerChip WR ${flatBank(cmdBank)} ${hex(cmdAddr)}")
+        if (rdCmd) println(s"[AGENTCMD] $agentCycle r$idPerChip RD ${flatBank(cmdBank)} ${hex(cmdAddr)}")
         if (preCmd) {
           // A10=H is PREA (all banks): the bank field is don't-care, export -1 so the
           // independent decoder can match without comparing garbage bank bits.
-          if (a10 == 1L) println(s"[AGENTCMD] $agentCycle PRE -1 -1")
-          else println(s"[AGENTCMD] $agentCycle PRE ${flatBank(cmdBank)} ${hex(cmdAddr)}")
+          if (a10 == 1L) println(s"[AGENTCMD] $agentCycle r$idPerChip PRE -1 -1")
+          else println(s"[AGENTCMD] $agentCycle r$idPerChip PRE ${flatBank(cmdBank)} ${hex(cmdAddr)}")
         }
-        if (refCmd) println(s"[AGENTCMD] $agentCycle REF -1 -1")
-        if (zqcl) println(s"[AGENTCMD] $agentCycle ZQCL -1 -1")
+        if (refCmd) println(s"[AGENTCMD] $agentCycle r$idPerChip REF -1 -1")
+        if (zqcl) println(s"[AGENTCMD] $agentCycle r$idPerChip ZQCL -1 -1")
 
         // Traffic before the init sequence (MRS file + ZQCL) is a controller bug: a DDR4 SDRAM
         // ignores commands until its mode registers and ZQ calibration are set up.
@@ -545,9 +548,9 @@ class DfiMemoryAgent(
             val rankMr = modeRegisters.getOrElseUpdate(idPerChip, mutable.Map())
             rankMr(cmdBank.toInt) = cmdAddr
           }
-          if (zqcl) zqclSeen = true
-          if (mrs) println(s"[AGENTCMD] $agentCycle MRS ${cmdBank.toInt} ${java.lang.Long.toHexString(cmdAddr)}")
-          if (zqcl) println(s"[AGENTCMD] $agentCycle ZQCL -1 -1")
+          if (zqcl) zqclSeenPerRank(idPerChip) = true
+          if (mrs) println(s"[AGENTCMD] $agentCycle r$idPerChip MRS ${cmdBank.toInt} ${java.lang.Long.toHexString(cmdAddr)}")
+          if (zqcl) println(s"[AGENTCMD] $agentCycle r$idPerChip ZQCL -1 -1")
           // Traffic before the mode-register file is written (MR0 included) is a controller bug:
           // an uninitialized SDRAM ignores commands. Checked once, at the first ACT/WR/RD.
           if ((active || write || read) && !initChecked) {

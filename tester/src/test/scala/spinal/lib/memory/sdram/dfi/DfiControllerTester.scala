@@ -409,13 +409,27 @@ class DfiControllerTester extends SpinalAnyFunSuite {
           // Init micro-program end-of-run checks (only for configs carrying an init table;
           // init-less legacy configs keep the agent's gate closed, so no new prints/asserts).
           if (initSteps.nonEmpty) {
-            println(s"[INIT] ${name}: mrsSeen=${dfiMemoryAgent.modeRegisters} zqSeen=${dfiMemoryAgent.zqclSeen}")
-            assert(
-              dfiMemoryAgent.modeRegisters.nonEmpty && dfiMemoryAgent.modeRegisters.values.exists(_.contains(0)),
-              s"${name}: init micro-program never wrote MR0"
-            )
-            if (generation == SdramGeneration.DDR3)
-              assert(dfiMemoryAgent.zqclSeen, s"${name}: DDR3 init must end with ZQCL (zqSeen=false)")
+            // Baseline evolution (approved): [INIT] exports one line PER RANK and every rank
+            // must have received the COMPLETE MRS file (last write per MR index wins) plus
+            // ZQCL when the preset has a ZQ step — not just whichever rank the old unreset cs
+            // latch happened to pick. This is the invariant the broadcast-cs init fix buys.
+            val mrsFile = initSteps
+              .filter(_.kind == SdramInitStep.MRS)
+              .foldLeft(Map.empty[Int, Int])((acc, s) => acc + (s.mrIndex -> s.opCode))
+            val hasZq = initSteps.exists(_.kind == SdramInitStep.ZQ)
+            for (r <- 0 until dut.dfiConfig.chipSelectNumber) {
+              val mr = dfiMemoryAgent.modeRegisters.getOrElse(r, mutable.Map[Int, Long]())
+              println(
+                s"[INIT] ${name}: rank$r mrs=${mr.map { case (k, v) => s"$k->0x${v.toHexString}" }.mkString(",")} zq=${dfiMemoryAgent.zqclSeenPerRank(r)}"
+              )
+              for ((mIdx, mOp) <- mrsFile) {
+                assert(
+                  mr.get(mIdx).contains(mOp.toLong),
+                  s"${name}: rank$r missing MRS mr$mIdx=0x${mOp.toHexString} (got ${mr.map { case (k, v) => s"$k->0x${v.toHexString}" }.mkString(",")})"
+                )
+              }
+              if (hasZq) assert(dfiMemoryAgent.zqclSeenPerRank(r), s"${name}: rank$r never received ZQCL")
+            }
             if (generation == SdramGeneration.DDR2)
               assert(!dfiMemoryAgent.zqclSeen, s"${name}: DDR2 init must not issue ZQCL (no ZQ in DDR2)")
           }

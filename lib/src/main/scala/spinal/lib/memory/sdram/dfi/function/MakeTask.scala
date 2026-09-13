@@ -250,9 +250,11 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
   }
   val columnBurstShift = log2Up(dfiConfig.transferPerBurst)
   // Defaults so every generation drives the DDR4-only op flags; the init override below
-  // (init-aware configs only) takes precedence during the power-up sequence.
+  // (init-aware configs only) takes precedence during the power-up sequence. initCsN idles
+  // all-ones (no rank selected by the broadcast path) outside the init window.
   io.output.mrs := False
   io.output.zq := False
+  io.output.initCsN.setAll()
 
   readyForRefresh clearWhen (io.cmd.valid)
   val columnBurstMask = (sdram.columnSize - 1) - ((io.cmd.stationLengthMax - 1) << columnBurstShift)
@@ -396,13 +398,14 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
       io.output.active := False
       io.output.precharge := False
       io.output.last := True
-      // NOTE: deliberately NO io.output.address.cs := 0 here. Driving cs inside this when
-      // block turns it from a continuous assign into an always-block signal in the Verilog,
-      // which shifts the simulator's t0 randomization stream (all randBoot registers get
-      // different values), re-rolls the BmbRegionAllocator address stream and flips which
-      // rank the init MRS lands on between builds — the old 23 tests then diverge from the
-      // f9aeed0a1 baseline (and the agent's per-rank MR0 check can fail). The init steps
-      // target whatever chip the (unreset) task cs latch holds, exactly as on f9aeed0a1.
+      // Init broadcast mask (elaboration-time constant, no runtime latch): every rank selected
+      // for the whole init window. DRAM chip-select is a low-active broadcast bus and init
+      // commands are rank-agnostic, so MRS/ZQCL/PRE_ALL/REF fan out to ALL ranks in the same
+      // cycle — the step table still plays exactly once (init duration unchanged), and which
+      // rank gets the program no longer depends on the unreset station cs latch (which used to
+      // flip per build: the cs-latch lottery). CmdTxd REPLACES its runtime cs decode with this
+      // mask for the window's duration; io.output.address.cs keeps its continuous assign.
+      io.output.initCsN.clearAll()
       when(op.valid) {
         switch(op.kind) {
           is(SdramInitStep.MRS) {
