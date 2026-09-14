@@ -34,7 +34,12 @@ case class DfiTimeConfig(
     // assertion to dfi_ctrlmsg_ack assertion (spec min 1), tctrlmsg_max = max cycles
     // dfi_ctrlmsg_ack may stay asserted (MC-defined; this MC picks 16).
     tCtrlMsgResp: Int = 1,
-    tCtrlMsgMax: Int = 16
+    tCtrlMsgMax: Int = 16,
+    // P3 legacy write-leveling: MC-defined watchdog window (cycles) for the dfi_wrlvl_resp
+    // (wrLvlDone) rising edge after dfi_wrlvl_en assertion. No DFI timing parameter exists
+    // for this (the PHY delay-search length is PHY-internal); the MC only bounds a hung PHY
+    // — same record-and-expose flavor as tctrlmsg_resp, no retry.
+    tWrlvlResp: Int = 16
 ) {}
 
 case class DfiFunctionConfig(
@@ -134,6 +139,11 @@ class DfiSignalConfig(groupConfig: DfiFunctionConfig = DfiFunctionConfig(), useC
   // dfi_ctrlmsg_ack): off by default — the four wires, the CtrlMsgArbiter and the trainBusy
   // spawn/refresh gates exist only when this is set.
   val useCtrlMsg: Boolean = false
+
+  // P3 legacy (DDR2/DDR3) write-leveling Stream handshake (dfi_wrlvl_en / dfi_wrlvl_resp MC
+  // window): off by default — the LegacyWrLvlHandshake component, the separate io.dfiWrLvl
+  // port and the trainBusy gates exist only when this is set.
+  val useLegacyWrLvl: Boolean = false
 
   val useStatusSignals = groupConfig.useStatusSignals
 

@@ -77,9 +77,26 @@ case class DfiController(bmbp: BmbParameter, task: TaskParameter, dfiConfig: Dfi
     // is observed on the existing io.ctrlMsgError (sticky) with the MC permanently halted.
     val bootTrainEnable = (dfiConfig.signalConfig.useCtrlMsg && dfiConfig.bootTraining) generate slave(Flow(Bool()))
     val bootTrainDone = (dfiConfig.signalConfig.useCtrlMsg && dfiConfig.bootTraining) generate out(Bool())
+    // P3 legacy (DDR2/DDR3) write-leveling Stream handshake ports (present only when
+    // useLegacyWrLvl; the useCtrlMsg-style gating keeps legacy-config elaborations and t0
+    // randomization streams untouched): testbench trigger, one-shot done pulse, sticky
+    // timeout error, and the separate two-wire dfi_wrlvl port (see DfiLegacyWrLvlInterface
+    // for why it is NOT a Dfi bundle member).
+    val legacyWrLvlTrigger = dfiConfig.signalConfig.useLegacyWrLvl generate slave(Flow(Bool()))
+    val legacyWrLvlDone = dfiConfig.signalConfig.useLegacyWrLvl generate out(Bool())
+    val legacyWrLvlError = dfiConfig.signalConfig.useLegacyWrLvl generate out(Bool())
+    val dfiWrLvl = dfiConfig.signalConfig.useLegacyWrLvl generate master(DfiLegacyWrLvlInterface(dfiConfig))
   }
 
   val taskConfig = BmbAdapter.taskConfig(bmbp, dfiConfig, task)
+
+  // The ctrlmsg channel (DDR4) and the legacy write-leveling handshake (DDR2/DDR3) are
+  // alternative training transports; wiring both would need a trainBusy arbiter that does
+  // not exist.
+  assert(
+    !(dfiConfig.signalConfig.useCtrlMsg && dfiConfig.signalConfig.useLegacyWrLvl),
+    "useLegacyWrLvl is the DDR2/DDR3 training transport; it must not be combined with useCtrlMsg"
+  )
 
   val bmbBridge = BmbBridge(bmbp, taskConfig, dfiConfig, addrMap)
   bmbBridge.io.bmb <> io.bmb
@@ -137,6 +154,24 @@ case class DfiController(bmbp: BmbParameter, task: TaskParameter, dfiConfig: Dfi
     bmbBridge.io.trainBusy := ctrlMsgArb.io.trainBusy || trainer.io.trainGate
     io.bootTrainDone := trainer.io.done
     trainer
+  } else null
+
+  // P3 legacy write-leveling Stream handshake (MC side): the component raises dfi_wrlvl_en
+  // (wrLvlStart level), pauses MakeTask spawn/refresh through the same trainBusy line the
+  // ctrlmsg arbiter uses, waits for the dfi_wrlvl_resp rising edge and pulses done once.
+  // On the tWrlvlResp watchdog expiry it latches the sticky legacyWrLvlError and halts the
+  // MC permanently (wrLvlBusy never drops — no retry, same caliber as the ctrlmsg timeout).
+  // Present only when useLegacyWrLvl; every other config leaves the ctrlmsg/bootTraining
+  // wiring (and everything else) byte-identical to before.
+  val legacyWrLvl = if (dfiConfig.signalConfig.useLegacyWrLvl) {
+    val wrLvlHs = LegacyWrLvlHandshake(dfiConfig)
+    wrLvlHs.io.trigger << io.legacyWrLvlTrigger
+    wrLvlHs.io.wrlvlResp := io.dfiWrLvl.wrlvlResp
+    io.dfiWrLvl.wrLvlEn := wrLvlHs.io.wrLvlEn
+    bmbBridge.io.trainBusy := wrLvlHs.io.wrLvlBusy
+    io.legacyWrLvlDone := wrLvlHs.io.done
+    io.legacyWrLvlError := wrLvlHs.io.wrLvlError
+    wrLvlHs
   } else null
 
   // DDR4 CA parity (JESD79-4B §4.17): on a command-bus parity error the DRAM ignores the command

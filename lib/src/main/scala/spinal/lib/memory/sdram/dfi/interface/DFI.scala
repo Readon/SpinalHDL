@@ -182,6 +182,22 @@ case class DfiCtrlMsgInterface(config: DfiConfig) extends Bundle with IMasterSla
   }
 }
 
+/** P3 legacy (DDR2/DDR3) write-leveling MC-side handshake wires. Separate top-level port (NOT
+  * a Dfi member) for the same reason as DfiCtrlMsgInterface: MC-driven wires inside the Dfi
+  * bundle get auto-connected by the Dfi<>Dfi zip in DfiController (alignment.io.output <>
+  * io.dfi) — ASSIGNMENT OVERLAP once the MC drives them too, silent NO DRIVER otherwise.
+  * wrLvlEn = dfi_wrlvl_en (the wrLvlStart level); wrlvlResp = dfi_wrlvl_resp (the wrLvlDone
+  * source). The full DFI write-training signal family stays declared in
+  * DfiWriteTrainingInterface; these are only the two wires the MC handshake touches. */
+case class DfiLegacyWrLvlInterface(config: DfiConfig) extends Bundle with IMasterSlave {
+  val wrLvlEn = Bool()
+  val wrlvlResp = Bits(config.writeLevelingResponseWidth bits)
+  override def asMaster(): Unit = {
+    out(wrLvlEn)
+    in(wrlvlResp)
+  }
+}
+
 case class Dfi(config: DfiConfig) extends Bundle with IMasterSlave {
   val control = DfiControlInterface(config)
   val write = DfiWriteInterface(config)

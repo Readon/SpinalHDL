@@ -104,17 +104,20 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
     val halt = out Bool ()
     val writeDataToken = slave(Stream(Event))
     val output = master(OpTasks(taskConfig, dfiConfig))
-    // DFI 6.0.1 ctrlmsg training: while a ctrlmsg handshake is in flight, task spawning and
-    // refresh are paused globally (same gating pattern as initDone). Absent when the ctrlmsg
-    // channel is disabled — every gate below then folds to its pre-ctrlmsg expression.
-    val trainBusy = dfiConfig.signalConfig.useCtrlMsg generate in(Bool())
+    // DFI ctrlmsg training / legacy write-leveling: while a training handshake is in flight,
+    // task spawning and refresh are paused globally (same gating pattern as initDone).
+    // Absent when both channels are disabled — every gate below then folds to its
+    // pre-training expression.
+    val trainBusy =
+      (dfiConfig.signalConfig.useCtrlMsg || dfiConfig.signalConfig.useLegacyWrLvl) generate in(Bool())
     // initDone exported through the io boundary only for the boot-training orchestrator
     // (BmbBridge forwards it to DfiController's BootTrainer). Reading the init engine's io
     // from the GRANDPARENT would be a hierarchy violation; every other config has no port.
     val initDoneOut = (dfiConfig.signalConfig.useCtrlMsg && dfiConfig.bootTraining) generate out(Bool())
   }
   val timeConfig = TaskTimingConfig(dfiConfig)
-  def trainBlocked: Bool = if (dfiConfig.signalConfig.useCtrlMsg) io.trainBusy else False
+  def trainBlocked: Bool =
+    if (dfiConfig.signalConfig.useCtrlMsg || dfiConfig.signalConfig.useLegacyWrLvl) io.trainBusy else False
   val readyForRefresh = True
   val sdram = dfiConfig.sdram
 
