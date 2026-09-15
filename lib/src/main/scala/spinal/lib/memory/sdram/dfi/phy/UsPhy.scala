@@ -51,35 +51,42 @@ case class USPhy_TFF() extends BlackBox {
 /** ODELAYE3: variable output delay (time-based). Drives the DQS write-strobe
   * delay — the quantity write leveling adjusts. */
 case class ODELAYE3() extends BlackBox {
-  addGeneric("DELAY_TYPE", "TIME")
+  addGeneric("DELAY_TYPE", "VARIABLE")
   addGeneric("DELAY_VALUE", 0)
-  val CLK    = in Bool()
-  val ODATAIN = in Bool()
-  val DATAOUT = out Bool()
-  val CE     = in Bool()
-  val RST    = in Bool()
-  val EN_VTC = in Bool()
-  val INC    = in Bool()
-  val LOAD   = in Bool()
+  val CLK         = in Bool()
+  val ODATAIN     = in Bool()
+  val DATAOUT     = out Bool()
+  val CE          = in Bool()
+  val RST         = in Bool()
+  val EN_VTC      = in Bool()
+  val INC         = in Bool()
+  val LOAD        = in Bool()
   val CNTVALUEIN  = in UInt(9 bits)
   val CNTVALUEOUT = out UInt(9 bits)
+  val CASC_IN     = in Bool()
+  val CASC_RETURN = in Bool()
+  val CASC_OUT    = out Bool()
 }
 
 /** IDELAYE3: variable input delay (time-based). Feedback path for write
   * leveling (samples the delayed DQS) and read DQS deskew. */
 case class IDELAYE3() extends BlackBox {
-  addGeneric("DELAY_TYPE", "TIME")
+  addGeneric("DELAY_TYPE", "VARIABLE")
   addGeneric("DELAY_VALUE", 0)
-  val REFCLK  = in Bool()
-  val RST     = in Bool()
-  val C     = in Bool()
-  val CE    = in Bool()
-  val EN_VTC = in Bool()
-  val INC   = in Bool()
-  val LOAD  = in Bool()
+  val CLK         = in Bool()
+  val DATAIN      = in Bool()
+  val IDATAIN     = in Bool()
+  val DATAOUT     = out Bool()
+  val CE          = in Bool()
+  val RST         = in Bool()
+  val EN_VTC      = in Bool()
+  val INC         = in Bool()
+  val LOAD        = in Bool()
   val CNTVALUEIN  = in UInt(9 bits)
   val CNTVALUEOUT = out UInt(9 bits)
-  val COE   = out Bool()
+  val CASC_IN     = in Bool()
+  val CASC_RETURN = in Bool()
+  val CASC_OUT    = out Bool()
 }
 
 /** Xilinx UltraScale DDR PHY (redesign) — Steps 1-7 (elaboration-validated).
@@ -158,6 +165,7 @@ case class UsPhy(cfg: DfiConfig) extends Component {
     val dq       = inout(Vec(Analog(Bool()), physDqWidth))
     val dqs_t    = out(Vec(Bool(), byteLanes))
     val dqs_c    = out(Vec(Bool(), byteLanes))
+    val dqs_in_t = in(Vec(Bool(), byteLanes))   // DQS RETURNED from DRAM (write-leveling echo)
     val dm_dbi_n = out(Vec(Bool(), byteLanes))
   }
 
@@ -328,6 +336,8 @@ case class UsPhy(cfg: DfiConfig) extends Component {
     dqsOdelays(l).LOAD     := False
     dqsOdelays(l).INC      := False
     dqsOdelays(l).ODATAIN  := dqsToggle
+    dqsOdelays(l).CASC_IN     := False
+    dqsOdelays(l).CASC_RETURN := False
     dqsOdelays(l).CNTVALUEIN := wlDelay
     pads.dqs_t(l) := dqsOdelays(l).DATAOUT
     pads.dqs_c(l) := !dqsOdelays(l).DATAOUT
@@ -336,7 +346,7 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   // ---- Feedback: IDELAYE3 samples the returned DQS (per byte-lane) -----------
   val fbIddelays = Seq.fill(byteLanes)(new IDELAYE3())
   for (l <- 0 until byteLanes) {
-    fbIddelays(l).REFCLK   := refclk
+    fbIddelays(l).CLK      := dramClk
     fbIddelays(l).RST      := rstSynced
     fbIddelays(l).CE       := True
     fbIddelays(l).EN_VTC   := False
@@ -346,8 +356,11 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   }
   val fbSample = Vec.fill(byteLanes)(Bool())
   for (l <- 0 until byteLanes) {
-    fbIddelays(l).C := dqsOdelays(l).DATAOUT  // sample the DQS as it returns from the DRAM
-    fbSample(l)     := fbIddelays(l).COE
+    fbIddelays(l).DATAIN := pads.dqs_in_t(l)      // sample the DQS as it RETURNS FROM THE DRAM (real closed loop)
+    fbIddelays(l).IDATAIN := False
+    fbIddelays(l).CASC_IN := False
+    fbIddelays(l).CASC_RETURN := False
+    fbSample(l)     := fbIddelays(l).DATAOUT
   }
 
   // ---- Alignment detector ----------------------------------------------------
