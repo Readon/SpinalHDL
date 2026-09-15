@@ -7,3 +7,4 @@
 !glbl.v
 !ddr4_min_model.v
 !.gitignore
+!tc1_loopback.v
