@@ -3,6 +3,7 @@
 *
 !run_tc1.sh
 !tb_tc1.v
+!tc1_loopback.v
 !custom_modules.v
 !glbl.v
 !ddr4_min_model.v
