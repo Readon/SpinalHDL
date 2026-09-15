@@ -38,6 +38,16 @@ case class USPhy_IOBUF() extends BlackBox {
   val IO = inout(Analog(Bool()))
 }
 
+/** T flip-flop (toggles Q on every CLK rising edge). Used to derive the DQS
+  * write-strobe square wave in the DRAM-clock domain: a T-FF clocked by
+  * dramClk toggles once per dramClk edge, producing a square wave at
+  * f_dramClk/2 = f_refclk — exactly the DDR4 DQS frequency. */
+case class USPhy_TFF() extends BlackBox {
+  val CLK = in Bool()
+  val T   = in Bool()
+  val Q   = out Bool()
+}
+
 /** ODELAYE3: variable output delay (time-based). Drives the DQS write-strobe
   * delay — the quantity write leveling adjusts. */
 case class ODELAYE3() extends BlackBox {
@@ -106,12 +116,16 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   require(cfg.frequencyRatio >= 2,
     s"UsPhy v1 requires frequencyRatio >= 2 (got ${cfg.frequencyRatio}); " +
     s"fr=1 would require OSERDES2 which is not supported.")
+  // NOTE: UsPhy v1 does not implement DBI inversion logic. If DBI is enabled in config,
+  // the DM/DBI pins are driven low (no inversion). Marked UNVERIFIED_ON_BOARD.
+
 
   // ===========================================================================
   // Step 1: top-level ports (ADR-0006, ADR-0012)
   // ===========================================================================
-  val refclk = in Bool()
-  val rst_n  = in Bool()
+  val refclk  = in Bool()  // Reference clock (also serves as sysClk/DFI clock)
+  val dramClk = in Bool()  // DRAM clock (= refclk * frequencyRatio; production: from internal MMCM)
+  val rst_n   = in Bool()
   val dfi    = slave(Dfi(cfg))
 
   // Parameter axes (ADR-0003). All derived from cfg — no extra external knobs.
@@ -157,8 +171,9 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   //   dramClk   = refclk * frequencyRatio   (DRAM clock)
   //   CLKDIV    = sysClk                    (SerDes frame-load = DFI clock)
   //   CLK       = dramClk                   (SerDes serialization = DRAM clock)
-  val sysClk    = refclk   // DFI clock domain (MC-PHY interface)
-  val dramClk   = refclk   // DRAM clock (real: refclk * frequencyRatio via MMCM)
+  val sysClk = refclk  // DFI clock domain (MC-PHY interface) = refclk
+  // dramClk is now an EXTERNAL INPUT (production: driven by internal MMCM from refclk;
+  // simulation: provided by TB at the correct frequency = refclk * frequencyRatio).
 
   // Asynchronous reset, 2-stage synchronous release (ADR-0006 consequence).
   val rst = Reg(Bool()) init(True)
@@ -229,7 +244,8 @@ case class UsPhy(cfg: DfiConfig) extends Component {
     // Serialize to the DQ pin via IOBUF (tri-state controlled by write-enable).
     val buf = new USPhy_IOBUF()
     buf.I := oserdes.OQ
-    buf.T := !dfi.write.wr(0).wrdataEn  // tri-state when no write (phase 0 en covers all)
+    // Tri-state when NO phase has write data (any-phase condition for cross-phase frames).
+    buf.T := !dfi.write.wr.map(_.wrdataEn).reduce(_||_)
     pads.dq(pin) := buf.IO
   }
 
@@ -295,9 +311,12 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   val wlActive = Reg(Bool()) init(False)                 // WL sequence in progress
   val wlDelay = Reg(UInt(9 bits)) init(0)               // ODELAYE3 delay counter
   val wlDone  = Reg(Bool()) init(False)                 // converged flag
-  val dqsToggleCnt = Reg(UInt(9 bits)) init(0)          // free-running
-  val dqsToggle = dqsToggleCnt(0)                       // 1-bit toggle
-  dqsToggleCnt := dqsToggleCnt + 1
+  // DQS write-strobe: T-FF clocked by dramClk → square wave at f_dramClk/2 = f_refclk.
+  // This is the NORMAL-mode DQS (valid during write windows; the DRAM ignores it outside).
+  val dqsTff = new USPhy_TFF()
+  dqsTff.CLK := dramClk
+  dqsTff.T   := True
+  val dqsToggle = dqsTff.Q
 
   // Seq.fill (not Vec.fill) so the concrete ODELAYE3 type is retained for member access.
   val dqsOdelays = Seq.fill(byteLanes)(new ODELAYE3())
