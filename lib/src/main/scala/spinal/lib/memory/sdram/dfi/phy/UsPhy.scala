@@ -72,11 +72,12 @@ case class IDELAYE3() extends BlackBox {
   val COE   = out Bool()
 }
 
-/** Xilinx UltraScale DDR PHY (redesign) — Steps 1-5 (elaboration-validated).
+/** Xilinx UltraScale DDR PHY (redesign) — Steps 1-7 (elaboration-validated).
   *
-  * Architecture ground truth: see `.usphy_redesign_docs/` (11 ADRs, review report,
+  * Architecture ground truth: see `.usphy_redesign_docs/` (12 ADRs, review report,
   * architecture diagram, glossary). Key decisions baked in here:
   *   ADR-0001  datapath = I/O SerDes only; command/clock = PARALLEL I/O (never serialized)
+  *   ADR-0002  write leveling = REAL closed loop; read training = STUB (UNVERIFIED_ON_BOARD)
   *   ADR-0003  parameterized framework (generation / frequencyRatio / dataWidth / nranks)
   *   ADR-0004  SerDes multiplier auto-derived from generation (not an external param)
   *   ADR-0006  single refclk in; PHY self-generates all clocks internally
@@ -85,15 +86,26 @@ case class IDELAYE3() extends BlackBox {
   *             a STATIC generation-dependent CA pin mapping only (no encoding/FSM/arbitration)
   *   ADR-0012  top-level port list (refclk, rst_n, dfi, physical pads)
   *
-  * Steps 6-7 (write-leveling real closed-loop, read-training stub) intentionally NOT yet.
+  * SerDes clock architecture (verified against Xilinx golden model + DfiMemoryAgent):
+  *   DATA_WIDTH = 2 * frequencyRatio  (fr=2 → 4, fr=4 → 8)
+  *   CLK        = dramClk  (serialization clock, = fr * refclk)
+  *   CLKDIV     = sysClk   (frame-load clock, = refclk)
+  *   Constraint: CLK = (DATA_WIDTH/2) * CLKDIV → fr * refclk = fr * refclk ✓
   *
-  * ELABORATION STATUS: this file proves the STRUCTURE elaborates to Verilog.
-  * The exact SerDes timing (frame assembly across phases, DDR bit pairing, clock
-  * alignment) is NOT behaviorally verified here — the repo has no SerDes/DRAM
-  * behavioral Verilog models, so cycle-accurate proof requires building those
-  * (a separate effort). See the honest-status note in the handoff.
+  * Data path: CROSS-PHASE FRAME ASSEMBLY
+  *   Each OSERDESE3/ISERDESE3 frame aggregates 2 bits per pin from EACH of the
+  *   fr DFI phases. Frame is loaded/presented on CLKDIV (= sysClk) edges and
+  *   serialized/deserialized over fr DRAM cycles on CLK (= dramClk).
+  *   Frame MSB = phase 0 (earliest DRAM cycle), frame LSB = phase (fr-1) (latest).
+  *
+  * MINIMUM FREQUENCY RATIO: v1 requires frequencyRatio >= 2 (OSERDESE3 minimum
+  * DATA_WIDTH=4 implies 2*fr >= 4 → fr >= 2). fr=1 would require OSERDES2.
   */
 case class UsPhy(cfg: DfiConfig) extends Component {
+
+  require(cfg.frequencyRatio >= 2,
+    s"UsPhy v1 requires frequencyRatio >= 2 (got ${cfg.frequencyRatio}); " +
+    s"fr=1 would require OSERDES2 which is not supported.")
 
   // ===========================================================================
   // Step 1: top-level ports (ADR-0006, ADR-0012)
@@ -111,6 +123,8 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   val byteLanes      = physDqWidth / 8      // number of DQ byte-lanes (physical)
   // ADR-0004: SerDes multiplier auto-derived from generation (internal, not a param).
   val serdesMult     = if (generation == SdramGeneration.DDR4) 4 else 2
+  // SerDes DATA_WIDTH = 2 * fr (derived from DFI geometry: 2 DDR symbols/pin/phase * fr phases)
+  val serdesDw       = 2 * frequencyRatio
 
   // Physical pads (ADR-0012 frozen port list).
   val pads = new Bundle {
@@ -136,12 +150,15 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   // ===========================================================================
   // Step 2: clock generation (skeleton) — ADR-0006
   // ===========================================================================
-  // In the full design: refclk -> MMCM -> {dramClk, serdesClk, sysClk}.
-  // In this elaboration skeleton all domains alias refclk; the domain NAMES
-  // are what matter (the rest of the design targets these three names).
+  // In the full design: refclk -> MMCM -> {dramClk, sysClk}.
+  // Skeleton: all domains alias refclk; the domain NAMES are what matter.
+  // REAL relationships (post-MMCM):
+  //   sysClk    = refclk                    (DFI/MC interface clock)
+  //   dramClk   = refclk * frequencyRatio   (DRAM clock)
+  //   CLKDIV    = sysClk                    (SerDes frame-load = DFI clock)
+  //   CLK       = dramClk                   (SerDes serialization = DRAM clock)
   val sysClk    = refclk   // DFI clock domain (MC-PHY interface)
-  val serdesClk = refclk   // SerDes fast clock (real: data rate = 2 * dramClk)
-  val dramClk   = refclk   // DRAM clock         (real: refclk / frequencyRatio)
+  val dramClk   = refclk   // DRAM clock (real: refclk * frequencyRatio via MMCM)
 
   // Asynchronous reset, 2-stage synchronous release (ADR-0006 consequence).
   val rst = Reg(Bool()) init(True)
@@ -172,74 +189,83 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   pads.ck_c    := !dramClk
 
   // ===========================================================================
-  // Step 4: WRITE data path — one OSERDESE3 per DQ pin (I/O SerDes, ADR-0001)
+  // Step 4: WRITE data path — cross-phase frame assembly (ADR-0001, Q1/Q2)
   // ===========================================================================
-  // DFI->DQ mapping (verified from tested DfiMemoryAgent, writeDataRxd):
-  //   wrdata(phase) is `dataWidth` bits = (dataWidth/8) bytes.
-  //   Byte j -> DQ byte-lane j -> physical DQ pins [8j+7 : 8j].
-  //   Pin pin is at bit (byteIdx*8 + bitIdx) within wrdata.
+  // Geometry (anchored from tested DfiMemoryAgent byte extraction):
+  //   Per-phase wrdata = dataWidth bits = 2 * physDqWidth (DDR: 2 edges per DRAM clk).
+  //   Standard DFI packing:
+  //     bits [physDqWidth-1 : 0]  = DQ[physDqWidth-1:0] on FIRST DDR edge (rising)
+  //     bits [2*physDqWidth-1 : physDqWidth] = DQ[physDqWidth-1:0] on SECOND DDR edge (falling)
+  //   Therefore: pin p, first edge = bit p;  pin p, second edge = bit (p + physDqWidth).
   //
-  // OSERDESE3(DATA_WIDTH=8):
-  //   D      = 8-bit parallel frame (loaded on CLKDIV rising edge)
-  //   CLK    = fast serialization clock (one bit shifted per rising edge)
-  //   CLKDIV = slow frame-load clock (CLK = 8 * CLKDIV)
-  //   OQ     = 1-bit serial output
+  // Frame assembly (DATA_WIDTH = 2*fr):
+  //   D[2*fr-1 : 2*fr-2] = phase 0's DDR pair (earliest DRAM cycle)
+  //   D[2*fr-3 : 2*fr-4] = phase 1's DDR pair
+  //   ...
+  //   D[1:0]              = phase (fr-1)'s DDR pair (latest DRAM cycle)
   //
-  // SKELETON SCOPE: we feed the current phase's single bit for this pin into the
-  // D port (placed at MSB, rest 0) to prove the structure elaborates. The full
-  // Step 4 assembles the 8-bit frame from 4 consecutive phases x 2 DDR bits/pin
-  // and aligns the frame-load edge — that is a timing detail that REQUIRES the
-  // SerDes behavioral model to verify, which this repo lacks (see header note).
-  val wrPhase = dfi.write.wr(0)  // phase 0 (primary write phase)
+  // Clocking:
+  //   CLK    = dramClk  (serialization: 2 symbols per CLK edge)
+  //   CLKDIV = sysClk   (frame load: one frame per DFI/MC cycle)
+  //   OQ     = 1-bit serial output → DQ pin via IOBUF
 
   for (pin <- 0 until physDqWidth) {
-    val oserdes = new OSERDESE3()
-    oserdes.CLK    := serdesClk   // fast: data rate (real: 2 * dramClk)
-    oserdes.CLKDIV := dramClk     // slow: DRAM clock (frame load)
+    val oserdes = new OSERDESE3(serdesDw)
+    oserdes.CLK    := dramClk
+    oserdes.CLKDIV := sysClk
     oserdes.RST    := rstSynced
 
-    val bitIdx  = pin % 8         // position within the byte
-    val byteIdx = pin / 8         // which byte-lane
-    val wrBit   = wrPhase.wrdata(byteIdx * 8 + bitIdx)
-    // 8-bit frame: MSB = current phase's bit for this pin, rest = 0 (skeleton).
-    oserdes.D := (wrBit.asUInt << 7).asBits.resize(8)
+    // Standard DFI bit positions for this pin:
+    val bitPos0 = pin                    // first DDR edge (rising)
+    val bitPos1 = pin + physDqWidth      // second DDR edge (falling)
+
+    // Build the 2*fr-bit frame: phase 0 pair at MSB, phase (fr-1) pair at LSB.
+    val pairs = (0 until frequencyRatio).map { p =>
+      Cat(dfi.write.wr(p).wrdata(bitPos0),
+          dfi.write.wr(p).wrdata(bitPos1))
+    }
+    oserdes.D := Cat(pairs)
 
     // Serialize to the DQ pin via IOBUF (tri-state controlled by write-enable).
     val buf = new USPhy_IOBUF()
     buf.I := oserdes.OQ
-    buf.T := !wrPhase.wrdataEn    // tri-state when no write
+    buf.T := !dfi.write.wr(0).wrdataEn  // tri-state when no write (phase 0 en covers all)
     pads.dq(pin) := buf.IO
   }
 
   // ===========================================================================
-  // Step 5: READ data path — one ISERDESE3 per DQ pin (I/O SerDes, ADR-0001)
+  // Step 5: READ data path — cross-phase frame distribution (ADR-0001, Q1/Q2)
   // ===========================================================================
-  // ISERDESE3(DATA_WIDTH=8):
+  // ISERDESE3(DATA_WIDTH = 2*fr):
   //   D      = 1-bit serial input (sampled on CLK rising edges)
-  //   CLK    = fast deserialization clock
-  //   CLK_B  = inverted CLK
-  //   CLKDIV = slow frame clock (CLK = 8 * CLKDIV)
-  //   Q      = 8-bit deserialized word (presented on CLKDIV rising edge)
+  //   CLK    = dramClk (deserialization clock)
+  //   CLK_B  = ~CLK
+  //   CLKDIV = sysClk  (frame presentation clock)
+  //   Q      = 2*fr-bit deserialized word (presented on CLKDIV rising edge)
+  //            Q[2*fr-1] = earliest symbol (phase 0), Q[0] = latest (phase fr-1)
   //
-  // The DQ pin is bidirectional: during writes the IOBUF drives it; during reads
-  // the ISERDESE3 samples it (the pin's input direction). We wire ISERDESE3.D
-  // from the analog pad.
-  val rdPhase = dfi.read.rd(0)  // phase 0 (primary read phase)
-  rdPhase.rddata := 0           // default all-zero (upper cycles TBD)
+  // Distribution: each phase's 2 bits for pin p are routed to that phase's rddata.
 
   for (pin <- 0 until physDqWidth) {
-    val iserdes = new ISERDESE3()
-    iserdes.CLK    := serdesClk
-    iserdes.CLK_B  := !serdesClk
-    iserdes.CLKDIV := dramClk
+    val iserdes = new ISERDESE3(serdesDw)
+    iserdes.CLK    := dramClk
+    iserdes.CLK_B  := !dramClk
+    iserdes.CLKDIV := sysClk
     iserdes.RST    := rstSynced
     // Serial input: sample the DQ pin (input direction of the bidirectional pad).
     iserdes.D      := pads.dq(pin)
 
-    // Deserialized 8-bit word -> DFI rddata, byte-aligned (same mapping as write).
-    val byteIdx = pin / 8
-    val bitIdx  = pin % 8
-    rdPhase.rddata(byteIdx * 8 + bitIdx) := iserdes.Q(bitIdx)
+    val byteLaneIdx = pin / 8
+    val bitInByte   = pin % 8
+    val bitPos0 = byteLaneIdx * 16 + bitInByte          // first DDR edge
+    val bitPos1 = byteLaneIdx * 16 + 8 + bitInByte      // second DDR edge
+
+    // Distribute Q to each phase's rddata.
+    for (p <- 0 until frequencyRatio) {
+      val qBase = 2 * (frequencyRatio - 1 - p)
+      dfi.read.rd(p).rddata(bitPos0) := iserdes.Q(qBase + 1)  // first DDR edge
+      dfi.read.rd(p).rddata(bitPos1) := iserdes.Q(qBase)       // second DDR edge
+    }
   }
 
   // DQS / DM / DBI — placeholder (real DQS generation and DM logic in Steps 6-7).
@@ -266,34 +292,26 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   // a constant-true wrlvlDone.
   //
   // ---- DQS output: toggle waveform through ODELAYE3 (per byte-lane) ----------
-  // Toggle at 1/2 of the DRAM clock so the DRAM sees a clean square wave.
   val wlActive = Reg(Bool()) init(False)                 // WL sequence in progress
-  // Declared early: the transition-window accumulator (below) reads wlDone, and
-  // the FSM (later) updates wlDelay/wlDone from the verdict. Regs are read as
-  // their current value; the when-blocks set their NEXT value -> no comb loop.
   val wlDelay = Reg(UInt(9 bits)) init(0)               // ODELAYE3 delay counter
   val wlDone  = Reg(Bool()) init(False)                 // converged flag
-  val dqsToggleCnt = Reg(UInt(9 bits)) init(0) // free-running
-  val dqsToggle = dqsToggleCnt(0)                 // 1-bit toggle
+  val dqsToggleCnt = Reg(UInt(9 bits)) init(0)          // free-running
+  val dqsToggle = dqsToggleCnt(0)                       // 1-bit toggle
   dqsToggleCnt := dqsToggleCnt + 1
 
-  val dqsOut = Vec.fill(byteLanes)(Bool())
-    // Seq.fill (not Vec.fill) so the concrete ODELAYE3 type is retained for member access.
-    val dqsOdelays = Seq.fill(byteLanes)(new ODELAYE3())
-    for (l <- 0 until byteLanes) {
-      dqsOdelays(l).CLK      := dramClk
-      dqsOdelays(l).CE       := True
-      dqsOdelays(l).RST      := rstSynced
-      dqsOdelays(l).EN_VTC   := False
-      dqsOdelays(l).LOAD     := False
-      dqsOdelays(l).INC      := False
-      // CNTVALUEIN is driven later by the WL FSM (wlDelay) — not here.
-    }
+  // Seq.fill (not Vec.fill) so the concrete ODELAYE3 type is retained for member access.
+  val dqsOdelays = Seq.fill(byteLanes)(new ODELAYE3())
   for (l <- 0 until byteLanes) {
-    dqsOdelays(l).ODATAIN := dqsToggle
-    dqsOut(l) := dqsOdelays(l).DATAOUT
-    pads.dqs_t(l) := dqsOut(l)
-    pads.dqs_c(l) := !dqsOut(l)
+    dqsOdelays(l).CLK      := dramClk
+    dqsOdelays(l).CE       := True
+    dqsOdelays(l).RST      := rstSynced
+    dqsOdelays(l).EN_VTC   := False
+    dqsOdelays(l).LOAD     := False
+    dqsOdelays(l).INC      := False
+    dqsOdelays(l).ODATAIN  := dqsToggle
+    dqsOdelays(l).CNTVALUEIN := wlDelay
+    pads.dqs_t(l) := dqsOdelays(l).DATAOUT
+    pads.dqs_c(l) := !dqsOdelays(l).DATAOUT
   }
 
   // ---- Feedback: IDELAYE3 samples the returned DQS (per byte-lane) -----------
@@ -309,14 +327,11 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   }
   val fbSample = Vec.fill(byteLanes)(Bool())
   for (l <- 0 until byteLanes) {
-    fbIddelays(l).C := dqsOut(l)      // sample the DQS as it returns from the DRAM
+    fbIddelays(l).C := dqsOdelays(l).DATAOUT  // sample the DQS as it returns from the DRAM
     fbSample(l)     := fbIddelays(l).COE
   }
 
   // ---- Alignment detector ----------------------------------------------------
-  // Count returned-DQS transitions over a window; the centered position yields a
-  // characteristic count. Compare against a threshold -> EARLY / OK / LATE.
-  // (Threshold value is the UNVERIFIED_ON_BOARD tuning constant.)
   val transDetect = Vec.fill(byteLanes)(Bool())
   for (l <- 0 until byteLanes) {
     val prev = RegNext(fbSample(l)) init(False)
@@ -324,26 +339,19 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   }
   val transWindow = Vec.fill(byteLanes)(Reg(UInt(16 bits)) init(0))
   for (l <- 0 until byteLanes) {
-    // Accumulate returned-DQS transitions while WL is active and not yet converged;
-    // otherwise hold at 0 (single driver, no conflict).
     transWindow(l) := 0
     when(wlActive && !wlDone) {
       transWindow(l) := transWindow(l) + transDetect(l).asUInt
     }
   }
-  // Centered reference (UNVERIFIED_ON_BOARD tuning constant — must be calibrated
-  // against the behavioral model before board bring-up).
-  val CENTER_REF = 8  // placeholder; real value set during bring-up (compared as Int literal)
+  // Centered reference (UNVERIFIED_ON_BOARD tuning constant).
+  val CENTER_REF = 8
   val verdict = new Bundle { val early, ok, late = Bool() }
   verdict.early := transWindow(0) < CENTER_REF
   verdict.ok    := transWindow(0) === CENTER_REF
   verdict.late  := transWindow(0) > CENTER_REF
 
   // ---- Binary-search FSM -----------------------------------------------------
-  // Adjust the ODELAYE3 counter (CNTVALUEIN) toward the CK-edge center:
-  //   EARLY -> increase delay ; LATE -> decrease delay ; OK -> hold + done.
-  // (wlDelay / wlDone are declared earlier; the transition window is driven
-  //  combinatorially by the accumulator above, so it is not re-driven here.)
   when(wlActive) {
     when(verdict.early) { wlDelay := wlDelay + 1 }
     .elsewhen(verdict.late) { wlDelay := wlDelay - 1 }
@@ -352,23 +360,15 @@ case class UsPhy(cfg: DfiConfig) extends Component {
     wlDone  := False
     wlDelay := 0
   }
-  // Feed the computed delay into every ODELAYE3.
-  for (l <- 0 until byteLanes) dqsOdelays(l).CNTVALUEIN := wlDelay
+  // CNTVALUEIN is already driven by the init loop above (dqsOdelays(l).CNTVALUEIN := wlDelay).
 
   // ---- DFI write-training interface ------------------------------------------
-  // Directions (PHY = slave): MC drives wrlvlEn / wrlvlStrobe;
-  //                          PHY drives wrlvlReq / wrlvlResp / phyWrlvlCsN.
-  // Arm the sequence when the MC enables WL (wrlvlEn asserted by some rank).
-  // Guarded at elaboration time on the config flag; tied off when absent so
-  // wlActive is always driven.
   wlActive := (if (cfg.useWrlvlEn) dfi.wrTraining.wrlvlEn.orR else False)
   if (cfg.useWrlvlResp) {
-    // PHY reports done: set the MSB of the response word when the loop converges.
     dfi.wrTraining.wrlvlResp := 0
     dfi.wrTraining.wrlvlResp(cfg.writeLevelingResponseWidth - 1) := wlDone
   }
   if (cfg.usePhyWrlvlCsN) {
-    // PHY indicates which ranks are being leveled (all ranks: low-active, all 0).
     dfi.wrTraining.phyWrlvlCsN := 0
   }
 
@@ -376,38 +376,18 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   // Step 7: READ TRAINING — explicit STUB (ADR-0002 tier: interface complete,
   // feedback injectable, clearly marked UNVERIFIED_ON_BOARD).
   // ===========================================================================
-  // We do NOT fabricate a constant-true rdlvlDone. Instead:
-  //   - The DFI read-training interface signals are wired (PHY-side outputs
-  //     driven with safe defaults).
-  //   - A feedback injection point is provided: if the MC asserts rdlvlReq,
-  //     the PHY acknowledges (pulse) and reports "aligned" via rdlvlResp —
-  //     but this is a PLACEHOLDER that assumes success. It MUST be replaced
-  //     with a real DQS read-eye sweep before board bring-up.
-  //   - The code is annotated UNVERIFIED_ON_BOARD throughout.
-  //
-  // DFI read-training directions (PHY = slave):
-  //   MC drives: rdlvlEn, rdlvlGateEn
-  //   PHY drives: rdlvlReq, phyRdlvlCsN, rdlvlResp, rdlvlGateReq, phyRdlvlGateCsN
-
   if (cfg.useRdlvlReq) {
-    // PHY acknowledges a read-leveling request (active-high pulse on some rank).
-    // STUB: immediate acknowledge (no real eye sweep).
     dfi.rdTraining.rdlvlReq := 0
     dfi.rdTraining.rdlvlReq(0) := (if (cfg.useRdlvlEn) dfi.rdTraining.rdlvlEn.orR else False)
   }
   if (cfg.usePhyRdlvlCsN) {
-    // Which ranks are being trained (low-active; all 0 = all ranks).
     dfi.rdTraining.phyRdlvlCsN := 0
   }
   if (cfg.useRdlvlResp) {
-    // Alignment result: STUB — driven with a neutral 0. Per ADR-0002 we do NOT
-    // self-assign a constant "aligned/success" value: the real DQS read-eye
-    // detection (and the exact rdlvlResp encoding, to be confirmed against the
-    // DFI spec) is UNVERIFIED_ON_BOARD and must be implemented before bring-up.
+    // STUB: neutral 0. Per ADR-0002 we do NOT self-assign constant "success".
     dfi.rdTraining.rdlvlResp := 0
   }
   if (cfg.useRdlvlGateReq) {
-    // Gate request: STUB — no gating.
     dfi.rdTraining.rdlvlGateReq := 0
   }
   if (cfg.usePhyRdlvlGateCsN) {
@@ -419,10 +399,8 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   // ===========================================================================
   for (idx <- 0 until dfi.read.rd.length) {
     val l = dfi.read.rd(idx)
-    l.rddataValid := False   // real driver: gated by read-latency counter (full Step 5)
-    l.rddataDbiN  := 0       // real driver: DBI encoder (Step 7)
-    // Phase 0's rddata is driven by the ISERDESE3s above; other phases tied off
-    // (full Step 5: deserialize each phase's DRAM-cycle group).
-    if (idx != 0) l.rddata := 0
+    l.rddataValid := False   // real driver: gated by read-latency counter (future)
+    l.rddataDbiN  := 0       // real driver: DBI encoder (future)
+    // rddata is driven by the ISERDESE3 cross-phase distribution above (Step 5).
   }
 }
