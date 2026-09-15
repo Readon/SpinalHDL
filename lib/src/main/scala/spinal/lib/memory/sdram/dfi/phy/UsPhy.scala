@@ -4,7 +4,41 @@ import spinal.core._
 import spinal.lib._
 import spinal.lib.memory.sdram.dfi._
 
-/** Xilinx UltraScale DDR PHY (redesign) — Steps 1-3 skeleton (elaboration-validated).
+// =============================================================================
+// Minimal I/O SerDes blackbox wrappers (UltraScale E3 family).
+// Defined locally (older-style BlackBox API, same as the working S7 IO.scala
+// on this branch) to avoid a dependency on dfi-new's Ultrascale IO.scala,
+// which targets a newer SpinalHDL API incompatible with this branch.
+// =============================================================================
+case class OSERDESE3(DATA_WIDTH: Int = 8) extends BlackBox {
+  require(Set(4, 8).contains(DATA_WIDTH), "DATA_WIDTH must be 4 or 8")
+  addGeneric("DATA_WIDTH", DATA_WIDTH)
+  val CLK    = in Bool()
+  val CLKDIV = in Bool()
+  val D      = in Bits(DATA_WIDTH bits)
+  val RST    = in Bool()
+  val OQ     = out Bool()
+}
+
+case class ISERDESE3(DATA_WIDTH: Int = 8) extends BlackBox {
+  require(Set(4, 8).contains(DATA_WIDTH), "DATA_WIDTH must be 4 or 8")
+  addGeneric("DATA_WIDTH", DATA_WIDTH)
+  val CLK    = in Bool()
+  val CLK_B  = in Bool()
+  val CLKDIV = in Bool()
+  val D      = in Bool()
+  val RST    = in Bool()
+  val Q      = out Bits(DATA_WIDTH bits)
+}
+
+case class USPhy_IOBUF() extends BlackBox {
+  val I  = in Bool()
+  val T  = in Bool()
+  val O  = out Bool()
+  val IO = inout(Analog(Bool()))
+}
+
+/** Xilinx UltraScale DDR PHY (redesign) — Steps 1-5 (elaboration-validated).
   *
   * Architecture ground truth: see `.usphy_redesign_docs/` (11 ADRs, review report,
   * architecture diagram, glossary). Key decisions baked in here:
@@ -17,33 +51,34 @@ import spinal.lib.memory.sdram.dfi._
   *             a STATIC generation-dependent CA pin mapping only (no encoding/FSM/arbitration)
   *   ADR-0012  top-level port list (refclk, rst_n, dfi, physical pads)
   *
-  * Steps 4-5 (write/read datapath through I/O SerDes) and Steps 6-7 (write-leveling real
-  * closed-loop, read-training stub) are intentionally NOT implemented yet.
+  * Steps 6-7 (write-leveling real closed-loop, read-training stub) intentionally NOT yet.
+  *
+  * ELABORATION STATUS: this file proves the STRUCTURE elaborates to Verilog.
+  * The exact SerDes timing (frame assembly across phases, DDR bit pairing, clock
+  * alignment) is NOT behaviorally verified here — the repo has no SerDes/DRAM
+  * behavioral Verilog models, so cycle-accurate proof requires building those
+  * (a separate effort). See the honest-status note in the handoff.
   */
 case class UsPhy(cfg: DfiConfig) extends Component {
 
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
   // Step 1: top-level ports (ADR-0006, ADR-0012)
-  // ---------------------------------------------------------------------------
-  // ADR-0006: the ONLY clock entering the PHY is refclk; everything else is derived
-  // internally. rst_n is asynchronous, released synchronously inside.
+  // ===========================================================================
   val refclk = in Bool()
   val rst_n  = in Bool()
-
-  // ADR-0007: consume the existing Dfi bundle verbatim (PHY = DFI slave). No adapter,
-  // no re-declaration of DFI signals.
-  val dfi = slave(Dfi(cfg))
+  val dfi    = slave(Dfi(cfg))
 
   // Parameter axes (ADR-0003). All derived from cfg — no extra external knobs.
   val generation     = cfg.sdram.generation
   val frequencyRatio = cfg.frequencyRatio
-  val dataWidth      = cfg.sdram.dataWidth
+  val dataWidth      = cfg.dataWidth        // DFI logical per-phase width (= dataRate * sdram.dataWidth)
+  val physDqWidth    = cfg.sdram.dataWidth  // PHYSICAL DQ pin count (what the board wires)
   val nranks         = cfg.chipSelectNumber
-  val byteLanes      = dataWidth / 8
+  val byteLanes      = physDqWidth / 8      // number of DQ byte-lanes (physical)
   // ADR-0004: SerDes multiplier auto-derived from generation (internal, not a param).
   val serdesMult     = if (generation == SdramGeneration.DDR4) 4 else 2
 
-  // Physical pads (ADR-0012 frozen port list). Scale with the parameters above.
+  // Physical pads (ADR-0012 frozen port list).
   val pads = new Bundle {
     // Command / clock — PARALLEL I/O, never serialized (ADR-0001)
     val ck_t    = out Bool()
@@ -57,22 +92,21 @@ case class UsPhy(cfg: DfiConfig) extends Component {
     val odt     = out(Vec(Bool(), nranks))
     val reset_n = out Bool()
     val par     = out Bool()
-    // Data path (per byte lane) — I/O SerDes carrier, filled in Steps 4-5
-    val dq       = out(Vec(Vec(Bool(), 8), byteLanes))
+    // Data path — BIDIRECTIONAL I/O SerDes carrier (inout).
+    val dq       = inout(Vec(Analog(Bool()), physDqWidth))
     val dqs_t    = out(Vec(Bool(), byteLanes))
     val dqs_c    = out(Vec(Bool(), byteLanes))
     val dm_dbi_n = out(Vec(Bool(), byteLanes))
   }
 
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
   // Step 2: clock generation (skeleton) — ADR-0006
-  // ---------------------------------------------------------------------------
-  // refclk is the sole source; an MMCM derives the DRAM / SerDes / DFI clocks.
-  // In this elaboration skeleton every domain aliases refclk (the real frequency
-  // division is a P&R-stage MMCM concern — what matters now is the domain naming
-  // and the reset discipline). The rest of the design targets these three names.
+  // ===========================================================================
+  // In the full design: refclk -> MMCM -> {dramClk, serdesClk, sysClk}.
+  // In this elaboration skeleton all domains alias refclk; the domain NAMES
+  // are what matter (the rest of the design targets these three names).
   val sysClk    = refclk   // DFI clock domain (MC-PHY interface)
-  val serdesClk = refclk   // SerDes work clock  (real: refclk * serdesMult / 2)
+  val serdesClk = refclk   // SerDes fast clock (real: data rate = 2 * dramClk)
   val dramClk   = refclk   // DRAM clock         (real: refclk / frequencyRatio)
 
   // Asynchronous reset, 2-stage synchronous release (ADR-0006 consequence).
@@ -80,38 +114,16 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   rst := !rst_n
   val rstSynced = RegNext(rst) init(True)
 
-  // ---------------------------------------------------------------------------
+  // ===========================================================================
   // Step 3: DFI command -> parallel CA pins (per-phase pass-through) — ADR-0008
-  // ---------------------------------------------------------------------------
-  // The DFI control bus packs ONE command per DFI phase, phase 0 in the LSBs.
-  // The PHY does NOT decode or re-encode: it forwards the MC-encoded command onto
-  // the parallel DRAM CA/command pins. This is a STATIC, generation-dependent pin
-  // mapping — the only "logic" in the command path (ADR-0008). No SerDes here
-  // (ADR-0001). No FSM, no arbitration, no MR table (those live in the MC, ADR-0010).
-  //
-  // Skeleton note: we forward the phase-0 slice combinationally. Two refinements
-  // are deliberately deferred to the full Step 3 (structure is proven here):
-  //   (a) spreading the `frequencyRatio` phases across successive DRAM clock edges
-  //       (+ the DFI->DRAM clock-domain crossing), and
-  //   (b) the generation-specific STATIC mapping of the discrete command control
-  //       signals (dfi.control.rasN/casN/weN/actN) onto their CA-pin POSITIONS —
-  //       e.g. on DDR4 the RAS/CAS/WE pins double as RA[15:13] during ACT. This is
-  //       the "static CA pin mapping" of ADR-0008: a per-generation wiring table,
-  //       still no encoding/FSM/arbitration.
+  // ===========================================================================
   // Phase 0 occupies the LOWEST (width / frequencyRatio) bits of each packed
-  // per-phase DFI control vector (phase N is at [N*w .. N*w+w-1]). Take the low slice.
+  // per-phase DFI control vector.
   def phase0(bits: Bits): Bits = bits.take(bits.getWidth / frequencyRatio)
 
-  // Command/address bus (always present; MC-packed, bit order preserved, ADR-0008).
-  // Carries the address portion; the discrete command controls map to CA-pin
-  // positions per refinement (b) above.
   pads.ca := phase0(dfi.control.address).asBools
-  // Per-rank control (always present; CS is per-rank, orthogonal to byte lanes).
   pads.cs_n := phase0(dfi.control.csN).asBools
   pads.cke  := phase0(dfi.control.cke).asBools
-  // Conditionally-generated command controls — guarded on the config flag (Scala-level,
-  // elaboration-time, so only the taken branch compiles). Absent signals tie to their
-  // inactive level. This is the generation-dependent STATIC mapping (ADR-0008).
   if (cfg.useOdt) pads.odt := phase0(dfi.control.odt).asBools
   else pads.odt.foreach(_ := False)
   pads.act_n   := (if (cfg.useAckN) phase0(dfi.control.actN)(0) else True)
@@ -125,20 +137,91 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   pads.ck_t    := dramClk
   pads.ck_c    := !dramClk
 
-  // ---------------------------------------------------------------------------
-  // Datapath placeholders (Steps 4-5) — tied off so the skeleton elaborates.
-  // Will be replaced by per-byte-lane I/O SerDes (OSERDESE3/ISERDESE3 + O/I-DELAYE3).
-  // ---------------------------------------------------------------------------
-  for (l <- pads.dq) l.foreach(_ := False)
+  // ===========================================================================
+  // Step 4: WRITE data path — one OSERDESE3 per DQ pin (I/O SerDes, ADR-0001)
+  // ===========================================================================
+  // DFI->DQ mapping (verified from tested DfiMemoryAgent, writeDataRxd):
+  //   wrdata(phase) is `dataWidth` bits = (dataWidth/8) bytes.
+  //   Byte j -> DQ byte-lane j -> physical DQ pins [8j+7 : 8j].
+  //   Pin pin is at bit (byteIdx*8 + bitIdx) within wrdata.
+  //
+  // OSERDESE3(DATA_WIDTH=8):
+  //   D      = 8-bit parallel frame (loaded on CLKDIV rising edge)
+  //   CLK    = fast serialization clock (one bit shifted per rising edge)
+  //   CLKDIV = slow frame-load clock (CLK = 8 * CLKDIV)
+  //   OQ     = 1-bit serial output
+  //
+  // SKELETON SCOPE: we feed the current phase's single bit for this pin into the
+  // D port (placed at MSB, rest 0) to prove the structure elaborates. The full
+  // Step 4 assembles the 8-bit frame from 4 consecutive phases x 2 DDR bits/pin
+  // and aligns the frame-load edge — that is a timing detail that REQUIRES the
+  // SerDes behavioral model to verify, which this repo lacks (see header note).
+  val wrPhase = dfi.write.wr(0)  // phase 0 (primary write phase)
+
+  for (pin <- 0 until physDqWidth) {
+    val oserdes = new OSERDESE3()
+    oserdes.CLK    := serdesClk   // fast: data rate (real: 2 * dramClk)
+    oserdes.CLKDIV := dramClk     // slow: DRAM clock (frame load)
+    oserdes.RST    := rstSynced
+
+    val bitIdx  = pin % 8         // position within the byte
+    val byteIdx = pin / 8         // which byte-lane
+    val wrBit   = wrPhase.wrdata(byteIdx * 8 + bitIdx)
+    // 8-bit frame: MSB = current phase's bit for this pin, rest = 0 (skeleton).
+    oserdes.D := (wrBit.asUInt << 7).asBits.resize(8)
+
+    // Serialize to the DQ pin via IOBUF (tri-state controlled by write-enable).
+    val buf = new USPhy_IOBUF()
+    buf.I := oserdes.OQ
+    buf.T := !wrPhase.wrdataEn    // tri-state when no write
+    pads.dq(pin) := buf.IO
+  }
+
+  // ===========================================================================
+  // Step 5: READ data path — one ISERDESE3 per DQ pin (I/O SerDes, ADR-0001)
+  // ===========================================================================
+  // ISERDESE3(DATA_WIDTH=8):
+  //   D      = 1-bit serial input (sampled on CLK rising edges)
+  //   CLK    = fast deserialization clock
+  //   CLK_B  = inverted CLK
+  //   CLKDIV = slow frame clock (CLK = 8 * CLKDIV)
+  //   Q      = 8-bit deserialized word (presented on CLKDIV rising edge)
+  //
+  // The DQ pin is bidirectional: during writes the IOBUF drives it; during reads
+  // the ISERDESE3 samples it (the pin's input direction). We wire ISERDESE3.D
+  // from the analog pad.
+  val rdPhase = dfi.read.rd(0)  // phase 0 (primary read phase)
+  rdPhase.rddata := 0           // default all-zero (upper cycles TBD)
+
+  for (pin <- 0 until physDqWidth) {
+    val iserdes = new ISERDESE3()
+    iserdes.CLK    := serdesClk
+    iserdes.CLK_B  := !serdesClk
+    iserdes.CLKDIV := dramClk
+    iserdes.RST    := rstSynced
+    // Serial input: sample the DQ pin (input direction of the bidirectional pad).
+    iserdes.D      := pads.dq(pin)
+
+    // Deserialized 8-bit word -> DFI rddata, byte-aligned (same mapping as write).
+    val byteIdx = pin / 8
+    val bitIdx  = pin % 8
+    rdPhase.rddata(byteIdx * 8 + bitIdx) := iserdes.Q(bitIdx)
+  }
+
+  // DQS / DM / DBI — placeholder (real DQS generation and DM logic in Steps 6-7).
   pads.dqs_t.foreach(_ := False)
   pads.dqs_c.foreach(_ := False)
   pads.dm_dbi_n.foreach(_ := False)
 
-  // Tie off the DFI PHY-side (slave) outputs so the skeleton elaborates cleanly.
-  // (Real drivers arrive in Steps 4-7.)
-  dfi.read.rd.foreach { r =>
-    r.rddataValid := False
-    r.rddata := 0
-    r.rddataDbiN := 0
+  // ===========================================================================
+  // DFI PHY-side (slave) outputs — driven by the datapath above.
+  // ===========================================================================
+  for (idx <- 0 until dfi.read.rd.length) {
+    val l = dfi.read.rd(idx)
+    l.rddataValid := False   // real driver: gated by read-latency counter (full Step 5)
+    l.rddataDbiN  := 0       // real driver: DBI encoder (Step 7)
+    // Phase 0's rddata is driven by the ISERDESE3s above; other phases tied off
+    // (full Step 5: deserialize each phase's DRAM-cycle group).
+    if (idx != 0) l.rddata := 0
   }
 }
