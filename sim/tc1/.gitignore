@@ -9,3 +9,4 @@
 !ddr4_min_model.v
 !.gitignore
 !tc1_loopback.v
+!tc2_bl8_write.v
