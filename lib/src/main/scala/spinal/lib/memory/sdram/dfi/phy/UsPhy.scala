@@ -238,12 +238,19 @@ case class UsPhy(cfg: DfiConfig) extends Component {
     oserdes.CLKDIV := sysClk
     oserdes.RST    := rstSynced
 
-    // Standard DFI bit positions for this pin:
-    val bitPos0 = pin                    // first DDR edge (rising)
-    val bitPos1 = pin + physDqWidth      // second DDR edge (falling)
+    // DFI canonical bit positions for this pin (anchored from tested
+    // DfiMemoryAgent byte extraction, mirrored EXACTLY by the read side so
+    // wrdata/rddata address the same word layout):
+    //   byte j (pins 8j..8j+7), edge0 -> bit 16j   ; edge1 -> bit 16j+8
+    val byteLaneIdx = pin / 8
+    val bitInByte   = pin % 8
+    val bitPos0 = byteLaneIdx * 16 + bitInByte          // first DDR edge
+    val bitPos1 = byteLaneIdx * 16 + 8 + bitInByte      // second DDR edge
 
-    // Build the 2*fr-bit frame: phase 0 pair at MSB, phase (fr-1) pair at LSB.
-    val pairs = (0 until frequencyRatio).map { p =>
+    // Build the 2*fr-bit frame. OSERDESE3 transmits D[MSB] first, and the
+    // DFI/read-side convention is phase 0 = EARLIEST. So phase 0 must occupy
+    // the MSB (serialized first) and phase (fr-1) the LSB (last).
+    val pairs = (0 until frequencyRatio).reverse.map { p =>
       Cat(dfi.write.wr(p).wrdata(bitPos0),
           dfi.write.wr(p).wrdata(bitPos1))
     }
