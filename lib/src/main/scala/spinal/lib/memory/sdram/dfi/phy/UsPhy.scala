@@ -51,7 +51,7 @@ case class USPhy_TFF() extends BlackBox {
 /** ODELAYE3: variable output delay (time-based). Drives the DQS write-strobe
   * delay — the quantity write leveling adjusts. */
 case class ODELAYE3() extends BlackBox {
-  addGeneric("DELAY_TYPE", "VARIABLE")
+  addGeneric("DELAY_TYPE", "VAR_LOAD")
   addGeneric("DELAY_VALUE", 0)
   val CLK         = in Bool()
   val ODATAIN     = in Bool()
@@ -326,6 +326,9 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   val wlActive = Reg(Bool()) init(False)                 // WL sequence in progress
   val wlDelay = Reg(UInt(9 bits)) init(0)               // ODELAYE3 delay counter
   val wlDone  = Reg(Bool()) init(False)                 // converged flag
+  // ODELAYE3(VAR_LOAD) latches CNTVALUEIN on a LOAD pulse; pulse on every
+  // change of wlDelay so the output delay tracks the WL adjustment.
+  val wlLoadPulse = RegNext(wlDelay) =/= wlDelay
   // DQS write-strobe: T-FF clocked by dramClk → square wave at f_dramClk/2 = f_refclk.
   // This is the NORMAL-mode DQS (valid during write windows; the DRAM ignores it outside).
   val dqsTff = new USPhy_TFF()
@@ -340,7 +343,7 @@ case class UsPhy(cfg: DfiConfig) extends Component {
     dqsOdelays(l).CE       := True
     dqsOdelays(l).RST      := rstSynced
     dqsOdelays(l).EN_VTC   := False
-    dqsOdelays(l).LOAD     := False
+    dqsOdelays(l).LOAD     := wlLoadPulse
     dqsOdelays(l).INC      := False
     dqsOdelays(l).ODATAIN  := dqsToggle
     dqsOdelays(l).CASC_IN     := False
