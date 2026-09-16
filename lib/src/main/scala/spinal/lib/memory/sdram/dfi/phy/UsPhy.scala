@@ -134,6 +134,7 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   val dramClk = in Bool()  // DRAM clock (= refclk * frequencyRatio; production: from internal MMCM)
   val rst_n   = in Bool()
   val dfi    = slave(Dfi(cfg))
+  val wlDelayOut = out(UInt(9 bits))   // observability: current ODELAYE3 delay counter (dramClk domain)
 
   // Parameter axes (ADR-0003). All derived from cfg — no extra external knobs.
   val generation     = cfg.sdram.generation
@@ -323,35 +324,16 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   // a constant-true wrlvlDone.
   //
   // ---- DQS output: toggle waveform through ODELAYE3 (per byte-lane) ----------
-  val wlActive = Reg(Bool()) init(False)                 // WL sequence in progress
-  val wlDelay = Reg(UInt(9 bits)) init(0)               // ODELAYE3 delay counter
-  val wlDone  = Reg(Bool()) init(False)                 // converged flag
-  // ODELAYE3(VAR_LOAD) latches CNTVALUEIN on a LOAD pulse; pulse on every
-  // change of wlDelay so the output delay tracks the WL adjustment.
-  val wlLoadPulse = RegNext(wlDelay) =/= wlDelay
-  // DQS write-strobe: T-FF clocked by dramClk → square wave at f_dramClk/2 = f_refclk.
-  // This is the NORMAL-mode DQS (valid during write windows; the DRAM ignores it outside).
+  // wlActive is a slow control flag (default/refclk domain).
+  // WL enable: pure combinational (derived from the MC input port wrlvlEn, which is
+  //   not clock-bound) so it can be consumed in BOTH the refclk and dramClk domains.
+  val wlActive = (if (cfg.useWrlvlEn) dfi.wrTraining.wrlvlEn.orR else False)
+
+  // DQS write-strobe: T-FF clocked by dramClk -> square wave at f_dramClk/2.
   val dqsTff = new USPhy_TFF()
   dqsTff.CLK := dramClk
   dqsTff.T   := True
   val dqsToggle = dqsTff.Q
-
-  // Seq.fill (not Vec.fill) so the concrete ODELAYE3 type is retained for member access.
-  val dqsOdelays = Seq.fill(byteLanes)(new ODELAYE3())
-  for (l <- 0 until byteLanes) {
-    dqsOdelays(l).CLK      := dramClk
-    dqsOdelays(l).CE       := True
-    dqsOdelays(l).RST      := rstSynced
-    dqsOdelays(l).EN_VTC   := False
-    dqsOdelays(l).LOAD     := wlLoadPulse
-    dqsOdelays(l).INC      := False
-    dqsOdelays(l).ODATAIN  := dqsToggle
-    dqsOdelays(l).CASC_IN     := False
-    dqsOdelays(l).CASC_RETURN := False
-    dqsOdelays(l).CNTVALUEIN := wlDelay
-    pads.dqs_t(l) := dqsOdelays(l).DATAOUT
-    pads.dqs_c(l) := !dqsOdelays(l).DATAOUT
-  }
 
   // ---- Feedback: IDELAYE3 samples the returned DQS (per byte-lane) -----------
   val fbIddelays = Seq.fill(byteLanes)(new IDELAYE3())
@@ -363,52 +345,110 @@ case class UsPhy(cfg: DfiConfig) extends Component {
     fbIddelays(l).LOAD     := False
     fbIddelays(l).INC      := False
     fbIddelays(l).CNTVALUEIN := 0
-  }
-  val fbSample = Vec.fill(byteLanes)(Bool())
-  for (l <- 0 until byteLanes) {
     fbIddelays(l).DATAIN := pads.dqs_in_t(l)      // sample the DQS as it RETURNS FROM THE DRAM (real closed loop)
     fbIddelays(l).IDATAIN := False
     fbIddelays(l).CASC_IN := False
     fbIddelays(l).CASC_RETURN := False
-    fbSample(l)     := fbIddelays(l).DATAOUT
+  }
+  val fbSample = Vec.fill(byteLanes)(Bool())
+  for (l <- 0 until byteLanes) {
+    fbSample(l) := fbIddelays(l).DATAOUT
   }
 
-  // ---- Alignment detector ----------------------------------------------------
-  val transDetect = Vec.fill(byteLanes)(Bool())
-  for (l <- 0 until byteLanes) {
-    val prev = RegNext(fbSample(l)) init(False)
-    transDetect(l) := fbSample(l) ^ prev
-  }
-  val transWindow = Vec.fill(byteLanes)(Reg(UInt(16 bits)) init(0))
-  for (l <- 0 until byteLanes) {
-    transWindow(l) := 0
-    when(wlActive && !wlDone) {
-      transWindow(l) := transWindow(l) + transDetect(l).asUInt
-    }
-  }
-  // Centered reference (UNVERIFIED_ON_BOARD tuning constant).
-  val CENTER_REF = 8
-  val verdict = new Bundle { val early, ok, late = Bool() }
-  verdict.early := transWindow(0) < CENTER_REF
-  verdict.ok    := transWindow(0) === CENTER_REF
-  verdict.late  := transWindow(0) > CENTER_REF
+  // ===========================================================================
+  // Bang-bang write-leveling phase detector — DRAM_CLK DOMAIN (cd { } block).
+  //
+  // The reference edge is the LOCAL DQS rising edge (dqsToggle is a T-FF on
+  // dramClk, so its rising edge lands exactly on a dramClk edge). We sample
+  // the RETURNED DQS (fbSample) at that edge:
+  //   fbSample HIGH at dqsToggle-rise -> returned DQS leads  -> delay too big -> CUT (n-1)
+  //   fbSample LOW  at dqsToggle-rise -> returned DQS lags   -> delay too small-> ADD (n+1)
+  // Equilibrium: returned DQS coincides with the local DQS edge (net loop
+  // delay delta = 0). UNVERIFIED_ON_BOARD per ADR-0002: wrlvlDone is EARNED
+  // numerically (counter drift small over 16 DQS periods for 8 straight
+  // windows), never self-assigned constant-true.
+  //
+  // NOTE: `cd { }` (block form) is required — `import cd._` does NOT switch
+  // the clock domain and leaves the Regs in refclk, where dqsToggle is
+  // constant-HIGH at every refclk edge and edge-detection never fires.
+  // ===========================================================================
+  val cd = ClockDomain(dramClk, rstSynced)
+  val wb = cd {
+    // Seed the delay line at MID-RANGE (256 of 0..511). Real write-leveling
+    // trains from the centre of the adjustable range so it can correct in
+    // EITHER direction; starting at 0 would underflow (wrap to 511) on any
+    // "cut" verdict and bounce forever.
+    val wlDelay = Reg(UInt(9 bits)) init(256)
+    val wlDone  = Reg(Bool()) init(False)
+    val wlLoadPulse = Reg(Bool()) init(False)
+    val dqsTogPrev = Reg(Bool()) init(False)
+    val dqsTogRise = !dqsTogPrev && dqsToggle   // Low->High = dqsToggle rising edge
+    val bbHist = Vec.fill(16)(Reg(UInt(9 bits)) init(256))
+    val bbConv = Reg(UInt(4 bits)) init(0)
 
-  // ---- Binary-search FSM -----------------------------------------------------
-  when(wlActive) {
-    when(verdict.early) { wlDelay := wlDelay + 1 }
-    .elsewhen(verdict.late) { wlDelay := wlDelay - 1 }
-    .otherwise          { wlDone  := True }
-  }.otherwise {
-    wlDone  := False
-    wlDelay := 0
+    dqsTogPrev := dqsToggle
+    when(!wlActive) {                    // training not requested: park at mid-range
+      bbConv  := 0
+      wlDelay := 256
+      wlDone  := False
+    }.elsewhen(!wlDone) {               // active, not yet converged: run the loop
+      when(dqsTogRise) {                // fire once per local DQS rising edge
+        for (i <- 15 downto 1) { bbHist(i) := bbHist(i-1) }
+        bbHist(0) := wlDelay
+        // Converged when the counter is stable (+-3 taps) over 16 DQS periods
+        // for 8 straight windows (bang-bang settles into a +-1 tap oscillation
+        // around the lock point).
+        val drifted = (bbHist(0) > (bbHist(15) + 3)) || (bbHist(15) > (bbHist(0) + 3))
+        when(drifted) { bbConv := 0 }
+        .otherwise    { bbConv := bbConv + 1 }
+        // Bang-bang. The dqsToggle edge IS the local DQS rising edge, so
+        // fbSample (the returned DQS) is sampled exactly there:
+        //   fbSample HIGH -> returned DQS lags  -> delay too big -> CUT (n-1)
+        //   fbSample LOW  -> returned DQS leads -> delay too small-> ADD (n+1)
+        // Attractor: net loop delay delta -> 0 (returned DQS aligned to CK).
+        when(fbSample(0)) { wlDelay := wlDelay - 1 }
+        .otherwise        { wlDelay := wlDelay + 1 }
+        when(bbConv > 7)  { wlDone  := True }
+      }
+    }                                    // wlActive && wlDone: hold (no reset)
+    // Pulse whenever the counter changed this dramClk edge (VarLoad latch).
+    val wlDelayPrev = RegNext(wlDelay)
+    wlLoadPulse := wlDelay =/= wlDelayPrev
+    new Bundle { val delay = wlDelay; val done = wlDone; val load = wlLoadPulse }
   }
-  // CNTVALUEIN is already driven by the init loop above (dqsOdelays(l).CNTVALUEIN := wlDelay).
+  val wlDelay = wb.delay
+  val wlDone  = wb.done
+  val wlLoadPulse = wb.load
+  wlDelayOut := wb.delay
+
+  // Seq.fill (not Vec.fill) so the concrete ODELAYE3 type is retained.
+  val dqsOdelays = Seq.fill(byteLanes)(new ODELAYE3())
+  for (l <- 0 until byteLanes) {
+    dqsOdelays(l).CLK      := dramClk
+    dqsOdelays(l).CE       := True
+    dqsOdelays(l).RST      := rstSynced
+    dqsOdelays(l).EN_VTC   := False
+    dqsOdelays(l).LOAD     := wlLoadPulse
+    dqsOdelays(l).INC      := False
+    dqsOdelays(l).ODATAIN  := dqsToggle
+    dqsOdelays(l).CASC_IN     := False
+    dqsOdelays(l).CASC_RETURN := False
+    dqsOdelays(l).CNTVALUEIN := wb.delay
+    pads.dqs_t(l) := dqsOdelays(l).DATAOUT
+    pads.dqs_c(l) := !dqsOdelays(l).DATAOUT
+  }
+
+  // CNTVALUEIN is driven by the loop above (dqsOdelays(l).CNTVALUEIN := wb.delay).
 
   // ---- DFI write-training interface ------------------------------------------
-  wlActive := (if (cfg.useWrlvlEn) dfi.wrTraining.wrlvlEn.orR else False)
+  // PHY never INITIATES training (MC-initiated design): tie request/ack outputs to 0.
+  if (cfg.useWrlvlReq) { dfi.wrTraining.wrlvlReq := 0 }
+  if (cfg.usePhylvlAckCsN) { dfi.phyRequestedTraining.phylvlAckCsN := 0 }
   if (cfg.useWrlvlResp) {
-    dfi.wrTraining.wrlvlResp := 0
-    dfi.wrTraining.wrlvlResp(cfg.writeLevelingResponseWidth - 1) := wlDone
+    // Per-bit construction (avoids whole-vs-bit assignment overlap when width==1).
+    for (k <- 0 until cfg.writeLevelingResponseWidth) {
+      dfi.wrTraining.wrlvlResp(k) := (if (k == cfg.writeLevelingResponseWidth - 1) wlDone else False)
+    }
   }
   if (cfg.usePhyWrlvlCsN) {
     dfi.wrTraining.phyWrlvlCsN := 0
@@ -419,8 +459,11 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   // feedback injectable, clearly marked UNVERIFIED_ON_BOARD).
   // ===========================================================================
   if (cfg.useRdlvlReq) {
-    dfi.rdTraining.rdlvlReq := 0
-    dfi.rdTraining.rdlvlReq(0) := (if (cfg.useRdlvlEn) dfi.rdTraining.rdlvlEn.orR else False)
+    // Per-bit construction (avoid whole-vs-bit overlap when width==1).
+    val en = (if (cfg.useRdlvlEn) dfi.rdTraining.rdlvlEn.orR else False)
+    for (k <- 0 until dfi.rdTraining.rdlvlReq.getWidth) {
+      dfi.rdTraining.rdlvlReq(k) := (if (k == 0) en else False)
+    }
   }
   if (cfg.usePhyRdlvlCsN) {
     dfi.rdTraining.phyRdlvlCsN := 0
