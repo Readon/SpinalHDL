@@ -12,7 +12,7 @@ import scala.concurrent.Await
 import scala.sys.process._
 
 abstract class SpinalTesterCocotbBase extends AnyFunSuite /* with BeforeAndAfterAll with ParallelTestExecution*/ {
-  def workspaceRoot = "./cocotbWorkspace"
+  def workspaceRoot = s"${spinal.tester.projectRoot}/cocotbWorkspace"
   def waveFolder = sys.env.getOrElse("WAVES_DIR", new File(workspaceRoot).getAbsolutePath.replace('\\', '/'))
   var withWaveform = false
   var spinalMustPass = true
