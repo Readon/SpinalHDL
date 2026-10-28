@@ -1,0 +1,7 @@
+# Sim work dir (TC3): commit only OUR source. Vendor IP (OSERDESE3/ISERDESE3/*.vp),
+# the generated UsPhy.v netlist, shared sim sources (borrowed from sim/tc4),
+# and xsim work products are bootstrapped by run_tc3.sh and must NOT be committed.
+*
+!run_tc3.sh
+!tc3_bl8_read.v
+!.gitignore
