@@ -156,6 +156,12 @@ case class UsPhy(cfg: DfiConfig) extends Component {
     val cke     = out(Vec(Bool(), nranks))
     val cs_n    = out(Vec(Bool(), nranks))
     val ca      = out(Vec(Bool(), cfg.addressWidth))
+    // Command strobes (active-low). DDR4 distinguishes command TYPE by the
+    // RAS#/CAS#/WE#/ACT# combination, so these must reach the pins for any
+    // pin-level receiver (DRAM or behavioral model) to decode commands.
+    val ras_n = out Bool()
+    val cas_n = out Bool()
+    val we_n  = out Bool()
     val act_n   = out Bool()
     val bg      = out(Vec(Bool(), cfg.sdram.bgWidth))
     val cid     = out(Vec(Bool(), cfg.sdram.cidWidth))
@@ -190,13 +196,17 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   val rstSynced = RegNext(rst) init(True)
 
   // ===========================================================================
-  // Step 3: DFI command -> parallel CA pins (per-phase pass-through) — ADR-0008
+  // Step 3: DFI command -> parallel CA/command pins (per-phase pass-through) — ADR-0008
   // ===========================================================================
   // Phase 0 occupies the LOWEST (width / frequencyRatio) bits of each packed
   // per-phase DFI control vector.
   def phase0(bits: Bits): Bits = bits.take(bits.getWidth / frequencyRatio)
 
   pads.ca := phase0(dfi.control.address).asBools
+  // Command strobes: real DFI signals when enabled, High (=inactive) otherwise.
+  pads.ras_n := (if (cfg.useRasN) phase0(dfi.control.rasN)(0) else True)
+  pads.cas_n := (if (cfg.useCasN) phase0(dfi.control.casN)(0) else True)
+  pads.we_n  := (if (cfg.useWeN)  phase0(dfi.control.weN)(0)  else True)
   pads.cs_n := phase0(dfi.control.csN).asBools
   pads.cke  := phase0(dfi.control.cke).asBools
   if (cfg.useOdt) pads.odt := phase0(dfi.control.odt).asBools
