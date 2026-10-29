@@ -123,6 +123,13 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   require(cfg.frequencyRatio >= 2,
     s"UsPhy v1 requires frequencyRatio >= 2 (got ${cfg.frequencyRatio}); " +
     s"fr=1 would require OSERDES2 which is not supported.")
+  // L2 boundary (ADR-0013): UsPhy consumes commands from DFI phase 0 only (phase0() below).
+  // The MC (Task2IDFI/CAAlignment) legally places commands on ANY phase (cmdPhase in [0,fr)),
+  // so a nonzero cmdPhase would leave the command pins stuck at NOP forever — a silent
+  // functional failure. Reject it at elaboration instead.
+  require(cfg.timeConfig.cmdPhase == 0,
+    s"UsPhy v1 consumes DFI command phase 0 only (got cmdPhase=${cfg.timeConfig.cmdPhase}); " +
+    s"configure the MC with cmdPhase = 0.")
   // NOTE: UsPhy v1 does not implement DBI inversion logic. If DBI is enabled in config,
   // the DM/DBI pins are driven low (no inversion). Marked UNVERIFIED_ON_BOARD.
 
@@ -200,6 +207,19 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   // ===========================================================================
   // Phase 0 occupies the LOWEST (width / frequencyRatio) bits of each packed
   // per-phase DFI control vector.
+  //
+  // L2 boundary (ADR-0013): command SHAPING is the MC's job, and it is already met:
+  //   - Task2IDFI drives each command on exactly ONE phase (cmdPhase) and idles all
+  //     phases at setAll()/valid=false;
+  //   - CAAlignment packs phase i into slice i and holds deterministic NOP idle
+  //     (csN/actN/ras/cas/we = 1, cid/address/bank = 0) plus CKE=1 on EVERY phase;
+  //   - DDR4 decodes commands from the {ACT,RAS,CAS,WE,BG,BA,A,CS} level combo at the
+  //     CK rising edge (JESD79-4B Table 37); there is no mid-cycle command toggling
+  //     (unlike DDR3 2N mode), so pass-through of phase 0 is COMPLETE — no extra
+  //     multi-cycle shaping is needed on the PHY side.
+  // Remaining pin-level obligations (setup/hold of the pins vs the CK rising edge)
+  // are a board/P&R attribute (ODDR/IODR alignment) — UNVERIFIED_ON_BOARD, same
+  // treatment as the training paths (ADR-0002).
   def phase0(bits: Bits): Bits = bits.take(bits.getWidth / frequencyRatio)
 
   pads.ca := phase0(dfi.control.address).asBools
