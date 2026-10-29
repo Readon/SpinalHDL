@@ -113,7 +113,7 @@ module tc8_pin_model;
     .cas_n    (dut.pads_cas_n),
     .we_n     (dut.pads_we_n),
     .bg       (dut.pads_bg_0),
-    .ba       (pin_a[2:0]),
+    .ba       ({dut.pads_ba_2, dut.pads_ba_1, dut.pads_ba_0}),  // dedicated BA pads (ADR-0012 amd)
     .a        (pin_a),
     .cid      (dut.pads_cid_0),
     .q_act_pulse(), .q_rd_pulse(), .q_wr_pulse(), .q_pre_pulse(),
@@ -174,6 +174,14 @@ module tc8_pin_model;
     rst_n = 1'b0;
     #3;
     rst_n = 1'b1;
+
+    // Wait for the PHY's two-stage reset (rstSynced) to release (~t=17.5 ns)
+    // and re-anchor on a refclk edge. Without this, the first command window
+    // straddles the release: dramPhase is held at False (reset value) across
+    // BOTH DRAM cycles of the window, so phase 0 decodes twice. Waiting an
+    // INTEGER number of refclk cycles (each = 2 DRAM cycles) preserves the
+    // toggle parity of dramPhase for all subsequent vectors.
+    repeat(4) @(posedge refclk);
 
     // ---- v1: ACT rank0, row=16'hE123 = {1,1,1, 13'h123}, bank={bg0,ba4} ----
     //      (0xE123 = 1110_0001_0010_0011: row[15:13]=111, row[12:0]=13'h123)

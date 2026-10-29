@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh"><head><meta charset="utf-8">
+<title>XilinxUSPhy 重构蓝图</title>
+<style>
+  html,body{margin:0;padding:0;background:#0d1117;font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
+  .wrap{padding:24px;}
+  svg{display:block;width:100%;height:auto;}
+  text{fill:#e6edf3;}
+  .muted{fill:#8b949e;}
+</style></head><body><div class="wrap">
+<svg viewBox="0 0 1400 1000" xmlns="http://www.w3.org/2000/svg">
+<defs>
+  <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+    <path d="M0,0 L9,3 L0,6 z" fill="#8b949e"/>
+  </marker>
+  <marker id="arrB" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+    <path d="M0,0 L9,3 L0,6 z" fill="#3b82f6"/>
+  </marker>
+  <marker id="arrP" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+    <path d="M0,0 L9,3 L0,6 z" fill="#8b5cf6"/>
+  </marker>
+  <marker id="arrA" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+    <path d="M0,0 L9,3 L0,6 z" fill="#f59e0b"/>
+  </marker>
+  <marker id="arrK" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+    <path d="M0,0 L9,3 L0,6 z" fill="#ec4899"/>
+  </marker>
+  <marker id="arrG" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+    <path d="M0,0 L9,3 L0,6 z" fill="#10b981"/>
+  </marker>
+</defs>
+
+<!-- background grid -->
+<g opacity="0.5">
+  <rect x="0" y="0" width="1400" height="1000" fill="#0d1117"/>
+  <g stroke="rgba(48,54,61,0.25)" stroke-width="1">
+    <!-- vertical -->
+    <line x1="100" y1="0" x2="100" y2="1000"/><line x1="200" y1="0" x2="200" y2="1000"/>
+    <line x1="300" y1="0" x2="300" y2="1000"/><line x1="400" y1="0" x2="400" y2="1000"/>
+    <line x1="500" y1="0" x2="500" y2="1000"/><line x1="600" y1="0" x2="600" y2="1000"/>
+    <line x1="700" y1="0" x2="700" y2="1000"/><line x1="800" y1="0" x2="800" y2="1000"/>
+    <line x1="900" y1="0" x2="900" y2="1000"/><line x1="1000" y1="0" x2="1000" y2="1000"/>
+    <line x1="1100" y1="0" x2="1100" y2="1000"/><line x1="1200" y1="0" x2="1200" y2="1000"/>
+    <line x1="1300" y1="0" x2="1300" y2="1000"/>
+    <!-- horizontal -->
+    <line x1="0" y1="100" x2="1400" y2="100"/><line x1="0" y1="200" x2="1400" y2="200"/>
+    <line x1="0" y1="300" x2="1400" y2="300"/><line x1="0" y1="400" x2="1400" y2="400"/>
+    <line x1="0" y1="500" x2="1400" y2="500"/><line x1="0" y1="600" x2="1400" y2="600"/>
+    <line x1="0" y1="700" x2="1400" y2="700"/><line x1="0" y1="800" x2="1400" y2="800"/>
+    <line x1="0" y1="900" x2="1400" y2="900"/>
+  </g>
+</g>
+
+<!-- Title -->
+<text x="700" y="42" text-anchor="middle" font-size="27" font-weight="700">XilinxUSPhy 重构蓝图 — DDR4 I/O-SerDes PHY</text>
+<text x="700" y="70" text-anchor="middle" font-size="14" class="muted">顶层仅 refclk+rst_n · 内部 MMCM 自产时钟 · 命令走并行 I/O（非串行）· 数据走 byte-lane I/O SerDes · 写 leveling 真实闭环</text>
+
+<!-- ====== THREE ZONES ====== -->
+<!-- LEFT: MC -->
+<rect x="40" y="95" width="272" height="835" rx="10" fill="rgba(59,130,246,0.06)" stroke="#3b82f6" stroke-width="1.5"/>
+<text x="176" y="122" text-anchor="middle" font-size="16" font-weight="700" fill="#3b82f6">MC 侧 · DFI Master</text>
+<text x="176" y="140" text-anchor="middle" font-size="11" class="muted">(feat/ddr4-support 蓝本)</text>
+
+<!-- CENTER: PHY -->
+<rect x="340" y="95" width="722" height="835" rx="10" fill="rgba(22,27,34,0.55)" stroke="#e6edf3" stroke-width="1.5"/>
+<text x="701" y="122" text-anchor="middle" font-size="17" font-weight="700">PHY（本片重构目标）</text>
+<text x="701" y="140" text-anchor="middle" font-size="11" class="muted">对上一 DFI · 对下一 SDRAM pin · 自包含时钟</text>
+
+<!-- RIGHT: SDRAM pins -->
+<rect x="1082" y="95" width="278" height="835" rx="10" fill="rgba(139,92,246,0.06)" stroke="#8b5cf6" stroke-width="1.5"/>
+<text x="1221" y="122" text-anchor="middle" font-size="16" font-weight="700" fill="#8b5cf6">DDR SDRAM 引脚</text>
+<text x="1221" y="140" text-anchor="middle" font-size="11" class="muted">(JESD79-4B x32 ballout)</text>
+
+<!-- ============================================================
+     BAND A: CLOCK  (y 160-300)
+============================================================ -->
+<rect x="356" y="158" width="690" height="150" rx="8" fill="rgba(245,158,11,0.05)" stroke="#f59e0b" stroke-width="1.2" stroke-dasharray="4 3"/>
+<text x="372" y="180" font-size="13" font-weight="700" fill="#f59e0b">时钟生成（ADR-0006：PHY 自产全部时钟）</text>
+
+<!-- refclk / rst_n inputs -->
+<line x1="340" y1="215" x2="410" y2="215" stroke="#f59e0b" stroke-width="2" marker-end="url(#arrA)"/>
+<text x="344" y="211" font-size="12" fill="#f59e0b">refclk</text>
+<line x1="340" y1="255" x2="410" y2="255" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+<text x="344" y="251" font-size="12" class="muted">rst_n</text>
+
+<!-- MMCM -->
+<rect x="412" y="192" width="150" height="90" rx="8" fill="rgba(245,158,11,0.12)" stroke="#f59e0b" stroke-width="2"/>
+<text x="487" y="228" text-anchor="middle" font-size="15" font-weight="700">MMCM</text>
+<text x="487" y="248" text-anchor="middle" font-size="10" class="muted">单一 refclk 进</text>
+<text x="487" y="262" text-anchor="middle" font-size="10" class="muted">派生 3 时钟域</text>
+
+<!-- 3 clock domain pills -->
+<rect x="600" y="176" width="180" height="34" rx="6" fill="rgba(245,158,11,0.10)" stroke="#f59e0b" stroke-width="1.2"/>
+<text x="690" y="198" text-anchor="middle" font-size="12">DRAM CK / CKE</text>
+<rect x="600" y="220" width="180" height="34" rx="6" fill="rgba(16,185,129,0.10)" stroke="#10b981" stroke-width="1.2"/>
+<text x="690" y="242" text-anchor="middle" font-size="12">SerDes clk (4x)</text>
+<rect x="600" y="264" width="180" height="34" rx="6" fill="rgba(59,130,246,0.10)" stroke="#3b82f6" stroke-width="1.2"/>
+<text x="690" y="286" text-anchor="middle" font-size="12">DFI clk</text>
+
+<line x1="562" y1="218" x2="600" y2="194" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#arrA)"/>
+<line x1="562" y1="237" x2="600" y2="237" stroke="#10b981" stroke-width="1.5" marker-end="url(#arrG)"/>
+<line x1="562" y1="256" x2="600" y2="281" stroke="#3b82f6" stroke-width="1.5" marker-end="url(#arrB)"/>
+
+<!-- freq ratio note -->
+<text x="800" y="200" font-size="11" class="muted">frequencyRatio 决定</text>
+<text x="800" y="216" font-size="11" class="muted">DFI 域 : DRAM 域倍数</text>
+<text x="800" y="232" font-size="11" class="muted">(首版 1:2)</text>
+
+<!-- ============================================================
+     BAND B: COMMAND PATH  (y 320-500)
+============================================================ -->
+<rect x="356" y="322" width="690" height="185" rx="8" fill="rgba(99,102,241,0.05)" stroke="#6366f1" stroke-width="1.2" stroke-dasharray="4 3"/>
+<text x="372" y="344" font-size="13" font-weight="700" fill="#6366f1">命令路径（ADR-0001/0008：并行 I/O，非串行）</text>
+
+<!-- DFI command in -->
+<rect x="372" y="360" width="176" height="64" rx="7" fill="rgba(59,130,246,0.10)" stroke="#3b82f6" stroke-width="1.5"/>
+<text x="460" y="384" text-anchor="middle" font-size="12" font-weight="600">DFI 命令 (per-phase)</text>
+<text x="460" y="402" text-anchor="middle" font-size="10" class="muted">ras/cas/we/act/bg/cid</text>
+<text x="460" y="416" text-anchor="middle" font-size="10" class="muted">cs / ca / odt / cke</text>
+
+<line x1="548" y1="392" x2="576" y2="392" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+<!-- per-phase expand -->
+<rect x="578" y="360" width="150" height="64" rx="7" fill="rgba(99,102,241,0.10)" stroke="#6366f1" stroke-width="1.5"/>
+<text x="653" y="384" text-anchor="middle" font-size="12" font-weight="600">per-phase 展开</text>
+<text x="653" y="402" text-anchor="middle" font-size="10" class="muted">按 frequencyRatio</text>
+<text x="653" y="416" text-anchor="middle" font-size="10" class="muted">折叠到 DRAM 沿</text>
+
+<line x1="728" y1="392" x2="756" y2="392" stroke="#8b949e" stroke-width="1.5" marker-end="url(#arr)"/>
+
+<!-- static CA mapping -->
+<rect x="758" y="352" width="220" height="80" rx="7" fill="rgba(99,102,241,0.14)" stroke="#6366f1" stroke-width="2"/>
+<text x="868" y="378" text-anchor="middle" font-size="12" font-weight="700">静态 CA 引脚映射</text>
+<text x="868" y="398" text-anchor="middle" font-size="10" class="muted">随 generation 切换</text>
+<text x="868" y="414" text-anchor="middle" font-size="10" class="muted">复用 MC 编码事实（单一来源）</text>
+
+<!-- out to SDRAM command pins -->
+<line x1="978" y1="392" x2="1082" y2="392" stroke="#8b5cf6" stroke-width="2" marker-end="url(#arrP)"/>
+
+<!-- BAD DESIGN contrast badge -->
+<rect x="372" y="448" width="410" height="44" rx="6" fill="rgba(239,68,68,0.10)" stroke="#ef4444" stroke-width="1.2"/>
+<text x="384" y="468" font-size="11" fill="#ef4444" font-weight="700">✗ 旧设计罪状 #1/#2：把 CA/CK 塞进 OSERDESE3 串行化</text>
+<text x="384" y="484" font-size="11" fill="#ef4444">✓ 新设计：命令/时钟走并行 I/O 引脚，CK 由 MMCM 干净产生</text>
+
+<!-- SDRAM command pins (right zone) -->
+<rect x="1100" y="352" width="242" height="80" rx="7" fill="rgba(139,92,246,0.10)" stroke="#8b5cf6" stroke-width="1.5"/>
+<text x="1221" y="376" text-anchor="middle" font-size="12" font-weight="600">命令/时钟引脚</text>
+<text x="1221" y="396" text-anchor="middle" font-size="10" class="muted">CK_t/CK_c · CKE · CS_n[r]</text>
+<text x="1221" y="412" text-anchor="middle" font-size="10" class="muted">CA[aw] · ACT_n · BG · CID</text>
+<text x="1221" y="428" text-anchor="middle" font-size="10" class="muted">ODT · RESET_n · PAR</text>
+
+<!-- ============================================================
+     BAND C: DATA PATH  (y 520-880)
+============================================================ -->
+<rect x="356" y="520" width="690" height="360" rx="8" fill="rgba(16,185,129,0.05)" stroke="#10b981" stroke-width="1.2" stroke-dasharray="4 3"/>
+<text x="372" y="542" font-size="13" font-weight="700" fill="#10b981">数据通路（ADR-0001/0004：per byte-lane I/O SerDes，仅 DQ/DQS/DM）</text>
+
+<!-- DFI wrdata / rddata rails (left) -->
+<text x="372" y="576" font-size="11" fill="#3b82f6">wrdata ↓</text>
+<text x="372" y="852" font-size="11" fill="#3b82f6">rddata ↑</text>
+
+<!-- 4 byte lanes -->
+<!-- lane geometry: x0=392, w=150, gap=8 ; centers -->
+<!-- lane i x: 392, 550, 708, 866 ; each w=150 -->
+
+<!-- LANE 0 -->
+<g>
+  <rect x="392" y="580" width="150" height="250" rx="7" fill="rgba(16,185,129,0.05)" stroke="#10b981" stroke-width="1"/>
+  <text x="467" y="598" text-anchor="middle" font-size="11" font-weight="700" fill="#10b981">byte lane 0</text>
+  <!-- write -->
+  <rect x="404" y="608" width="126" height="40" rx="5" fill="rgba(16,185,129,0.14)" stroke="#10b981" stroke-width="1.5"/>
+  <text x="467" y="626" text-anchor="middle" font-size="11" font-weight="600">OSERDESE3</text>
+  <text x="467" y="640" text-anchor="middle" font-size="9" class="muted">4x 写 (自动推导)</text>
+  <rect x="404" y="654" width="126" height="26" rx="4" fill="rgba(245,158,11,0.10)" stroke="#f59e0b" stroke-width="1"/>
+  <text x="467" y="671" text-anchor="middle" font-size="10">ODELAYE3</text>
+  <!-- read -->
+  <rect x="404" y="690" width="126" height="26" rx="4" fill="rgba(245,158,11,0.10)" stroke="#f59e0b" stroke-width="1"/>
+  <text x="467" y="707" text-anchor="middle" font-size="10">IDELAYE3+bitslip</text>
+  <rect x="404" y="722" width="126" height="40" rx="5" fill="rgba(16,185,129,0.14)" stroke="#10b981" stroke-width="1.5"/>
+  <text x="467" y="740" text-anchor="middle" font-size="11" font-weight="600">ISERDESE3</text>
+  <text x="467" y="754" text-anchor="middle" font-size="9" class="muted">4x 读</text>
+  <!-- DQS write leveling tap (lane0 only) -->
+  <rect x="404" y="768" width="126" height="48" rx="5" fill="rgba(236,72,153,0.12)" stroke="#ec4899" stroke-width="1.5"/>
+  <text x="467" y="785" text-anchor="middle" font-size="9.5" fill="#ec4899" font-weight="700">写 leveling 闭环</text>
+  <text x="467" y="799" text-anchor="middle" font-size="8.5" class="muted">DQS回采→比较→ODELAY</text>
+  <text x="467" y="811" text-anchor="middle" font-size="8.5" fill="#ef4444">真实 (非自我赋值)</text>
+</g>
+
+<!-- LANE 1 -->
+<g>
+  <rect x="550" y="580" width="150" height="250" rx="7" fill="rgba(16,185,129,0.04)" stroke="#10b981" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="625" y="598" text-anchor="middle" font-size="11" font-weight="700" fill="#10b981">byte lane 1</text>
+  <rect x="562" y="608" width="126" height="40" rx="5" fill="rgba(16,185,129,0.10)" stroke="#10b981" stroke-width="1.2"/>
+  <text x="625" y="632" text-anchor="middle" font-size="10">OSERDESE3</text>
+  <rect x="562" y="656" width="126" height="24" rx="4" fill="rgba(245,158,11,0.08)" stroke="#f59e0b" stroke-width="1"/>
+  <text x="625" y="672" text-anchor="middle" font-size="9">ODELAYE3</text>
+  <rect x="562" y="688" width="126" height="24" rx="4" fill="rgba(245,158,11,0.08)" stroke="#f59e0b" stroke-width="1"/>
+  <text x="625" y="704" text-anchor="middle" font-size="9">IDELAYE3</text>
+  <rect x="562" y="720" width="126" height="40" rx="5" fill="rgba(16,185,129,0.10)" stroke="#10b981" stroke-width="1.2"/>
+  <text x="625" y="744" text-anchor="middle" font-size="10">ISERDESE3</text>
+  <text x="625" y="790" text-anchor="middle" font-size="8.5" class="muted">写 leveling (独立)</text>
+</g>
+
+<!-- LANE 2 -->
+<g>
+  <rect x="708" y="580" width="150" height="250" rx="7" fill="rgba(16,185,129,0.04)" stroke="#10b981" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="783" y="598" text-anchor="middle" font-size="11" font-weight="700" fill="#10b981">byte lane 2</text>
+  <rect x="720" y="608" width="126" height="40" rx="5" fill="rgba(16,185,129,0.10)" stroke="#10b981" stroke-width="1.2"/>
+  <text x="783" y="632" text-anchor="middle" font-size="10">OSERDESE3</text>
+  <rect x="720" y="656" width="126" height="24" rx="4" fill="rgba(245,158,11,0.08)" stroke="#f59e0b" stroke-width="1"/>
+  <text x="783" y="672" text-anchor="middle" font-size="9">ODELAYE3</text>
+  <rect x="720" y="688" width="126" height="24" rx="4" fill="rgba(245,158,11,0.08)" stroke="#f59e0b" stroke-width="1"/>
+  <text x="783" y="704" text-anchor="middle" font-size="9">IDELAYE3</text>
+  <rect x="720" y="720" width="126" height="40" rx="5" fill="rgba(16,185,129,0.10)" stroke="#10b981" stroke-width="1.2"/>
+  <text x="783" y="744" text-anchor="middle" font-size="10">ISERDESE3</text>
+  <text x="783" y="790" text-anchor="middle" font-size="8.5" class="muted">写 leveling (独立)</text>
+</g>
+
+<!-- LANE 3 -->
+<g>
+  <rect x="866" y="580" width="150" height="250" rx="7" fill="rgba(16,185,129,0.04)" stroke="#10b981" stroke-width="1" stroke-dasharray="3 2"/>
+  <text x="941" y="598" text-anchor="middle" font-size="11" font-weight="700" fill="#10b981">byte lane 3</text>
+  <rect x="878" y="608" width="126" height="40" rx="5" fill="rgba(16,185,129,0.10)" stroke="#10b981" stroke-width="1.2"/>
+  <text x="941" y="632" text-anchor="middle" font-size="10">OSERDESE3</text>
+  <rect x="878" y="656" width="126" height="24" rx="4" fill="rgba(245,158,11,0.08)" stroke="#f59e0b" stroke-width="1"/>
+  <text x="941" y="672" text-anchor="middle" font-size="9">ODELAYE3</text>
+  <rect x="878" y="688" width="126" height="24" rx="4" fill="rgba(245,158,11,0.08)" stroke="#f59e0b" stroke-width="1"/>
+  <text x="941" y="704" text-anchor="middle" font-size="9">IDELAYE3</text>
+  <rect x="878" y="720" width="126" height="40" rx="5" fill="rgba(16,185,129,0.10)" stroke="#10b981" stroke-width="1.2"/>
+  <text x="941" y="744" text-anchor="middle" font-size="10">ISERDESE3</text>
+  <text x="941" y="790" text-anchor="middle" font-size="8.5" class="muted">写 leveling (独立)</text>
+</g>
+
+<!-- DFI wrdata rail to lanes (top) -->
+<line x1="372" y1="572" x2="392" y2="608" stroke="#3b82f6" stroke-width="1.2" marker-end="url(#arrB)"/>
+<line x1="372" y1="572" x2="550" y2="608" stroke="#3b82f6" stroke-width="1" opacity="0.5"/>
+<line x1="372" y1="572" x2="708" y2="608" stroke="#3b82f6" stroke-width="1" opacity="0.5"/>
+<line x1="372" y1="572" x2="866" y2="608" stroke="#3b82f6" stroke-width="1" opacity="0.5"/>
+<!-- DFI rddata rail from lanes (bottom) -->
+<line x1="392" y1="830" x2="372" y2="850" stroke="#3b82f6" stroke-width="1.2" marker-end="url(#arrB)"/>
+<line x1="550" y1="830" x2="372" y2="852" stroke="#3b82f6" stroke-width="1" opacity="0.5"/>
+<line x1="708" y1="830" x2="372" y2="852" stroke="#3b82f6" stroke-width="1" opacity="0.5"/>
+<line x1="866" y1="830" x2="372" y2="852" stroke="#3b82f6" stroke-width="1" opacity="0.5"/>
+
+<!-- data pins to SDRAM (right) -->
+<line x1="1016" y1="628" x2="1082" y2="628" stroke="#8b5cf6" stroke-width="1.5" marker-end="url(#arrP)"/>
+<line x1="1016" y1="700" x2="1082" y2="700" stroke="#8b5cf6" stroke-width="1.5" marker-end="url(#arrP)"/>
+<line x1="1082" y1="740" x2="1016" y2="740" stroke="#8b5cf6" stroke-width="1.5" marker-start="url(#arrP)"/>
+
+<!-- SDRAM data pins (right zone) -->
+<rect x="1100" y="600" width="242" height="160" rx="7" fill="rgba(139,92,246,0.10)" stroke="#8b5cf6" stroke-width="1.5"/>
+<text x="1221" y="624" text-anchor="middle" font-size="12" font-weight="600">数据引脚 (per byte lane)</text>
+<text x="1221" y="648" text-anchor="middle" font-size="10" class="muted">DQ[7:0] (SSTL12)</text>
+<text x="1221" y="664" text-anchor="middle" font-size="10" class="muted">DQS_t / DQS_c (SSTL12_D)</text>
+<text x="1221" y="680" text-anchor="middle" font-size="10" class="muted">DM/DBI_n (复用)</text>
+<text x="1221" y="700" text-anchor="middle" font-size="9" class="muted">x32 = 4 byte lane</text>
+<text x="1221" y="716" text-anchor="middle" font-size="9" class="muted">写 leveling 按 lane 独立</text>
+<text x="1221" y="744" text-anchor="middle" font-size="9" class="muted">(JEDEC L2701)</text>
+
+<!-- board-level excluded note (right zone bottom) -->
+<rect x="1100" y="780" width="242" height="60" rx="6" fill="rgba(139,92,246,0.05)" stroke="#8b5cf6" stroke-width="1" stroke-dasharray="3 2"/>
+<text x="1221" y="802" text-anchor="middle" font-size="10" class="muted">排除在数字 port 外：</text>
+<text x="1221" y="820" text-anchor="middle" font-size="10" class="muted">VDD/VDDQ/VPP/VREF</text>
+<text x="1221" y="836" text-anchor="middle" font-size="9" class="muted">(board-level 电阻分压)</text>
+
+<!-- ============================================================
+     LEGEND
+============================================================ -->
+<g transform="translate(356, 900)">
+  <rect x="0" y="0" width="690" height="60" rx="6" fill="rgba(22,27,34,0.7)" stroke="#30363d" stroke-width="1"/>
+  <circle cx="24" cy="20" r="6" fill="#f59e0b"/>
+  <text x="38" y="24" font-size="11">时钟 (MMCM 自产)</text>
+  <circle cx="160" cy="20" r="6" fill="#6366f1"/>
+  <text x="174" y="24" font-size="11">命令 (并行 I/O)</text>
+  <circle cx="300" cy="20" r="6" fill="#10b981"/>
+  <text x="314" y="24" font-size="11">数据 (I/O SerDes)</text>
+  <circle cx="440" cy="20" r="6" fill="#ec4899"/>
+  <text x="454" y="24" font-size="11">训练 (写 leveling 真实)</text>
+  <circle cx="24" cy="44" r="6" fill="#3b82f6"/>
+  <text x="38" y="48" font-size="11">DFI (复用 Dfi bundle)</text>
+  <circle cx="180" cy="44" r="6" fill="#8b5cf6"/>
+  <text x="194" y="48" font-size="11">SDRAM 引脚</text>
+  <text x="320" y="48" font-size="10" class="muted">虚线框 = 逻辑分区 · 实色 = 功能块</text>
+</g>
+
+</svg>
+</div></body></html>
