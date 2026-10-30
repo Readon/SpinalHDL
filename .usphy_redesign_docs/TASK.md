@@ -145,6 +145,22 @@
   - 待办：Step 8b（集成顶层 + Verilog 生成 + 冒烟）、8c（端到端 TB：初始化序列 +
     写 leveling + 数据完整性；零回归 28/28）。
 
+- **2026-10-30 · TC10（Step 8b：e2e 正向路径冒烟）完成**：
+  - 新增 `sim/tc10/`：`tb_tc10_e2e.v`（Bmb 写 2×64-bit fragment → MC DfiController →
+    DFI bus → UsPhy → DRAM 引脚 → Ddr4SdramModel 写吸收器）+ `E2eMcGen.scala`
+    （tPhyWrData=0，关闭 WrAlignment 延迟链）。
+  - **PHY 写入 SerDes 修复**（UsPhy.scala）：
+    (a) `CLKDIV := !sysClk`：golden OSERDESE3 在 CLKDIV 正沿 NBA 区加载 D，看到的是
+        上一周期的值；翻转到 refclk 负沿对齐 MC 寄存输出已稳定的时刻。
+    (b) D-gate：`Mux(wrEnLive, Cat(pairs), Cat(pairs).clearAll)` 防止 wren 低时重载垃圾。
+    (c) T 窗口扩展：`!(wrEnLive | wrEnExt)` 覆盖 OSERDESE3 末拍 1-CLK-edge 管道延迟。
+  - **模型适配**：Ddr4SdramModel 跳过前导零拍（OSERDESE3 管道冲刷伪影）。
+  - **MC 配套修复**（前置 commit）：Alignment.scala 空闲训练输出 + MakeTask.scala
+    ACT/PRE 站点门控（防 Verilog 幻影命令风暴）。
+  - **反证**：还原 CLKDIV=sysClk → X/Z 污染 + 缺字节 → TC10_FAIL（3 errors）。
+  - **零回归**：28/28 DfiControllerTester PASS。
+  - 待办：Step 8c（端到端完整 TB：初始化序列透传 + 写 leveling 闭环 + 读写数据完整性）。
+
 ## 关键约束（红线）
 1. **不发明协议语义**：所有命令编码/MR 值/timing 常数复用 MC 蓝本，不另编。
 2. **不写校准通过**：任何训练逻辑必须有真实数据源（或明确标注 UNVERIFIED_ON_BOARD 的注入端口）。

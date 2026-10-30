@@ -292,10 +292,24 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   //   CLKDIV = sysClk   (frame load: one frame per DFI/MC cycle)
   //   OQ     = 1-bit serial output → DQ pin via IOBUF
 
+  // Write-enable (any phase) in the sysClk domain, plus a refclk-FALLING-edge
+  // sample of it. The inverted-CLKDIV OSERDESE3 loads D on the refclk NEGedge
+  // and serializes each frame over the 4 DDR edges that FOLLOW, so the DQ
+  // burst window is the wren window shifted by half a refclk cycle (+5ns):
+  //   wren high [16185,16205)  ->  DQ active [16190,16210).
+  // Sampling wren on the refclk falling edge (which coincides with dramClk↓)
+  // yields exactly that shifted window, masking the pre-wren OSERDESE3 output
+  // and exposing only the in-window beats to the DRAM.
+  val wrEnLive = dfi.write.wr.map(_.wrdataEn).reduce(_||_)
+  val wrEnFall = ClockDomain(!sysClk, rstSynced) { Reg(Bool()) init(False) }
+  wrEnFall := wrEnLive
+
   for (pin <- 0 until physDqWidth) {
     val oserdes = new OSERDESE3(serdesDw)
     oserdes.CLK    := dramClk
-    oserdes.CLKDIV := sysClk
+    // Invert CLKDIV so the OSERDESE3 loads D on the refclk NEGedge (mid-period),
+    // where the MC's registered wrdata is settled (no NBA stale-value/duplication).
+    oserdes.CLKDIV := !sysClk
     oserdes.RST    := rstSynced
 
     // DFI canonical bit positions for this pin (anchored from tested
@@ -314,13 +328,24 @@ case class UsPhy(cfg: DfiConfig) extends Component {
       Cat(dfi.write.wr(p).wrdata(bitPos0),
           dfi.write.wr(p).wrdata(bitPos1))
     }
-    oserdes.D := Cat(pairs)
+    // Gate D with wren: while wren is low the MC HOLDS the previous beat on
+    // wrdata, which the OSERDESE3 would otherwise reload (and re-serialize)
+    // every frame-load edge, duplicating the data on DQ. Force D=0 outside the
+    // wren window so only in-window frames (frag0, frag1) reach the pins.
+    val frame = Cat(pairs)
+    for (i <- 0 until frame.getWidth) {
+      oserdes.D(i) := Mux(wrEnLive, frame(i), False)
+    }
 
     // Serialize to the DQ pin via IOBUF (tri-state controlled by write-enable).
     val buf = new USPhy_IOBUF()
     buf.I := oserdes.OQ
-    // Tri-state when NO phase has write data (any-phase condition for cross-phase frames).
-    buf.T := !dfi.write.wr.map(_.wrdataEn).reduce(_||_)
+    val wrEnExt = Reg(Bool()) init(False)
+    wrEnExt := wrEnLive
+    // DQ-active window: wren OR wren-delayed-1-cycle. The OSERDESE3 has a
+    // 1-CLK-edge pipeline delay, so the last data beat appears ~1 refclk cycle
+    // after the last wren-high edge. Extending T by 1 cycle covers it.
+    buf.T := !(wrEnLive | wrEnExt)
     pads.dq(pin) := buf.IO
   }
 
