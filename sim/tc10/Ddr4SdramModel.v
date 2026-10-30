@@ -27,7 +27,8 @@ module Ddr4SdramModel #(
   parameter BL_BEATS       = 8,    // BL8 x16: 8 beats = 8 ck_t edges
   parameter MEM_ENTRIES    = 65536,
   parameter KEY_W          = 16,   // {row[5:0], col[4:0], bank[3:0], rank[1:0]}
-  parameter ECHO_DELAY_EDGES = 0
+  parameter ECHO_DELAY_EDGES = 0,
+  parameter TCL_DELAY_EDGES  = 3    // tCL emulation: delay before driving DQ on read
 )(
   // ---- command pins (mirrors Ddr4PinModel) --------------------------------
   input  wire                  ck_t,
@@ -181,25 +182,35 @@ module Ddr4SdramModel #(
 
   // ==========================================================================
   // READ burst driver
-  //   16 beats driven starting on the edge AFTER the RD command decode.
+  //   BL_BEATS beats driven starting TCL_DELAY_EDGES ck_t edges after RD decode.
+  //   The delay emulates DRAM tCL so that the burst aligns with ISERDESE3
+  //   Q-frame windows (each Q frame = 4 ck_t edges = 1 refclk cycle).
   //   Model drives dq only while rd_driving (z otherwise).
   // ==========================================================================
   reg        driving;
   reg [4:0]  rd_edges;   // 5 bits: counts up to BL_BEATS (8) inclusive
+  reg [4:0]  rd_cl;      // tCL countdown
   reg [127:0] rd_reg;
 
   wire rd_cmd = |q_rd_pulse;
 
   always @(posedge ck_t or negedge ck_t) begin
     if (!rst_n) begin
-      driving <= 1'b0; rd_edges <= 5'd0; rd_reg <= 128'h0;
+      driving <= 1'b0; rd_edges <= 5'd0; rd_cl <= 5'd0; rd_reg <= 128'h0;
       rd_key_last <= {KEY_W{1'b0}}; rd_pending_err <= 1'b0;
-    end else if (rd_cmd && !driving) begin
-      driving <= 1'b1;
-      rd_edges <= 5'd1;
-      rd_reg   <= mem[{row_state[rd_rank][5:0], last_col[4:0], bank_state[rd_rank], rd_rank[RW-1:0]}];
+    end else if (rd_cmd && !driving && rd_cl == 0) begin
+      // Start tCL countdown
+      rd_cl   <= TCL_DELAY_EDGES[4:0];
+      rd_reg  <= mem[{row_state[rd_rank][5:0], last_col[4:0], bank_state[rd_rank], rd_rank[RW-1:0]}];
       rd_key_last <= {row_state[rd_rank][5:0], last_col[4:0], bank_state[rd_rank], rd_rank[RW-1:0]};
       rd_pending_err <= !written[{row_state[rd_rank][5:0], last_col[4:0], bank_state[rd_rank], rd_rank[RW-1:0]}];
+    end else if (rd_cl > 0) begin
+      rd_cl <= rd_cl - 5'd1;
+      if (rd_cl == 1) begin
+        // tCL done: start driving on next edge
+        driving  <= 1'b1;
+        rd_edges <= 5'd1;
+      end
     end else if (driving) begin
       if (rd_edges == BL_BEATS) begin
         driving <= 1'b0;

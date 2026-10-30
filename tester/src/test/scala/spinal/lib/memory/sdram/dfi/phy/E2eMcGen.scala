@@ -29,7 +29,7 @@ object E2eMcGen {
       // delay chain, pushing beat k's data out of the wren window (stale-duplicate bug).
       tPhyWrLat = sdram.tPhyWrlat, tPhyWrData = 0,
       tPhyWrCsGap = 3, tRddataEn = sdram.tRddataEn,
-      tPhyRdlat = 4, tPhyRdCsGap = 3, tPhyRdCslat = 0, tPhyWrCsLat = 0,
+      tPhyRdlat = 1, tPhyRdCsGap = 3, tPhyRdCslat = 0, tPhyWrCsLat = 0,
       tWrlvlResp = 16
     )
     val signalConfig = new DDR4SignalConfig(DfiFunctionConfig(useTrainingSignals = true), false) {}

@@ -21,7 +21,7 @@ object UsPhyGen {
       frequencyRatio = 2, cmdPhase = 0,
       tPhyWrLat = sdram.tPhyWrlat, tPhyWrData = 2,
       tPhyWrCsGap = 3, tRddataEn = sdram.tRddataEn,
-      tPhyRdlat = 4, tPhyRdCsGap = 3, tPhyRdCslat = 0, tPhyWrCsLat = 0,
+      tPhyRdlat = 1, tPhyRdCsGap = 3, tPhyRdCslat = 0, tPhyWrCsLat = 0,
       tWrlvlResp = 16
     )
     val signalConfig = new DDR4SignalConfig(DfiFunctionConfig(useTrainingSignals = true), false) {}

@@ -161,6 +161,24 @@
   - **零回归**：28/28 DfiControllerTester PASS。
   - 待办：Step 8c（端到端完整 TB：初始化序列透传 + 写 leveling 闭环 + 读写数据完整性）。
 
+- **2026-10-31 · TC10（Step 8c①：e2e 读路径 + 初始化透传验证）完成**：
+  - **读使能核心修复**（UsPhy.scala）：`dfi.read.rd(p).rddataValid` 由硬编码 `False`
+    改为 `History(rden(p), tPhyRdlat+1)(tPhyRdlat)` —— rden 的纯 tPhyRdlat 周期延迟
+    （ISERDESE3 连续解串 DQ，rddataValid 只需镜像移位后的 rden，时长天然等于 rden 时长）。
+  - **配置**：E2eMcGen/UsPhyGen `tPhyRdlat` 4→1（匹配模型 tCL + golden SerDes 实际延迟）。
+  - **模型 tCL 仿真**：Ddr4SdramModel 增 `TCL_DELAY_EDGES=3` 参数 —— RD 解码后延迟
+    3 个 ck_t 边沿再驱动 DQ，使突发对准 ISERDESE3 Q 帧窗（每帧 = 4 ck_t 边沿 = 1 refclk）。
+  - **TB 修复**：`bmb_cmd_length` 1→15（Bmb 约定 length=size_in_bytes−1；原来只转发
+    第一 fragment，第二片被 BmbAdapter 丢弃）；rsp ready 恒定 1（确定性）；调试探针清除。
+  - **验收**：写后同地址读，逐字节精确往返 —— `frag0=0706050403020100`、
+    `frag1=0f0e0d0c0b0a0908` 与写入字节完全一致（TB 内置精确比对断言）。
+  - **初始化透传**：同一 TB 内验证 MC Ddr4InitSequencer 命令流 —— `INITCHK mrs=7 zqcl=1
+    ref=0 illegal=0`（7×MRS + ZQCL 到达模型，无非法命令）。
+  - **反证**：撤销 Q 分布的半字交换（`rdBitPos0<-Q(qBase)`）→ 所有半字翻转 →
+    两条精确断言均 FAIL（`frag0=0607040502030001`）；恢复后网表逐字节相同，PASS。
+  - **零回归**：28/28 DfiControllerTester PASS。
+  - 待办：Step 8c②（写 leveling 闭环：PHY IDELAYE3 采 DQS 回响 → 比较 → 调 ODELAYE3）。
+
 ## 关键约束（红线）
 1. **不发明协议语义**：所有命令编码/MR 值/timing 常数复用 MC 蓝本，不另编。
 2. **不写校准通过**：任何训练逻辑必须有真实数据源（或明确标注 UNVERIFIED_ON_BOARD 的注入端口）。

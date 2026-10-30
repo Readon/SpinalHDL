@@ -98,6 +98,16 @@ module tb_tc10_e2e;
   wire [255:0] mem_wr_word_last;
   wire         mem_rd_driving, mem_rd_pending_err;
 
+  // ---- model command counters (hierarchical probe into Ddr4PinModel) ---------
+  wire [15:0] init_cnt_mrs   = mem.cmd.cnt_mrs;
+  wire [15:0] init_cnt_zqcl  = mem.cmd.cnt_zqcl;
+  wire [15:0] init_cnt_ref   = mem.cmd.cnt_ref;
+  wire [15:0] init_cnt_act   = mem.cmd.cnt_act;
+  wire [15:0] init_cnt_wr    = mem.cmd.cnt_wr;
+  wire [15:0] init_cnt_rd    = mem.cmd.cnt_rd;
+  wire [15:0] init_cnt_pre   = mem.cmd.cnt_pre;
+  wire [15:0] init_cnt_illegal = mem.cmd.cnt_illegal;
+
   // ===========================================================================
   // MC
   // ===========================================================================
@@ -301,6 +311,8 @@ module tb_tc10_e2e;
   integer errors = 0;
   reg [127:0] wr_word;
   integer bv, bb, cnt;
+  reg [63:0] rsp_fragments [0:1];
+  integer rsp_count;
   task check(input cond, input string msg);
     begin
       if (cond !== 1'b1) begin
@@ -318,6 +330,16 @@ module tb_tc10_e2e;
     repeat(4) @(posedge refclk);
     rst_n = 1'b1;
     repeat(100) @(posedge refclk);   // let MC/PHY settle post-reset
+
+    // ---- INIT SEQUENCE VERIFICATION (Step 8c) ---------------------------------
+    // After the 15us wait, the MC's Ddr4InitSequencer should have completed.
+    // Verify the model saw the expected command types (counts > 0, no illegal).
+    $display("INITCHK t=%0t mrs=%0d zqcl=%0d ref=%0d act=%0d wr=%0d rd=%0d pre=%0d illegal=%0d",
+             $time, init_cnt_mrs, init_cnt_zqcl, init_cnt_ref,
+             init_cnt_act, init_cnt_wr, init_cnt_rd, init_cnt_pre, init_cnt_illegal);
+    check(init_cnt_mrs > 0, "INIT: no MRS commands arrived at model");
+    check(init_cnt_zqcl > 0, "INIT: no ZQCL command arrived at model");
+    check(init_cnt_illegal === 16'd0, "INIT: illegal command decoded at model");
 
     // ---- W1: Bmb WRITE -> model --------------------------------------------
     // The MC plays its built-in DDR4 init sequence (Ddr4InitSequencer: 7xMRS + ZQCL,
@@ -358,8 +380,65 @@ module tb_tc10_e2e;
     end
     check(mem_rd_pending_err !== 1'b1, "W1: spurious rd_pending_err");
 
+    // ---- R1: Bmb READ of same address -> verify data roundtrip ---------------
+    // Issue a read of the same address we just wrote. The model returns the
+    // stored 128-bit word via ISERDESE3 -> DFI -> MC -> Bmb response.
+    bmb_cmd_valid = 1'b1;
+    bmb_cmd_opcode = 1'b0;   // READ
+    bmb_cmd_address = {1'b0, 13'h1000, 4'h1, 11'h040};
+    bmb_cmd_length  = 10'd15; // Bmb convention: length = size(bytes)-1 ; 16B BL8 burst -> 15
+    bmb_cmd_data    = 64'h0; // don't care for read
+    bmb_cmd_mask    = 8'hFF;
+    bmb_cmd_context = 2'b00;
+    bmb_cmd_last    = 1'b1;  // single fragment read (BL8/2=4 beats = 1 frag?)
+    @(posedge refclk);
+    while (!bmb_cmd_ready) @(posedge refclk);
+    bmb_cmd_valid = 1'b0;
+
+    // Collect Bmb read response fragments
+    rsp_count = 0;
+    begin : rsp_collect
+      integer kt;
+      for (kt = 0; kt < 500; kt = kt + 1) begin
+        @(posedge refclk);
+        if (bmb_rsp_valid && bmb_rsp_ready) begin
+          rsp_fragments[rsp_count] = bmb_rsp_data;
+          rsp_count = rsp_count + 1;
+          if (bmb_rsp_last) disable rsp_collect;
+        end
+      end
+    end
+    $display("R1DBG t=%0t rsp_count=%0d frag0=%h frag1=%h", $time, rsp_count, rsp_fragments[0], rsp_fragments[1]);
+    check(rsp_count >= 1, "R1: no read response received");
+    // Exact roundtrip: read must return exactly the bytes written (Bmb order).
+    check(rsp_count == 2, "R1: expected 2 response fragments, got ");
+    check(rsp_fragments[0] === 64'h07060504_03020100, "R1: frag0 != written frag0 (got ");
+    check(rsp_fragments[1] === 64'h0F0E0D0C_0B0A0908, "R1: frag1 != written frag1 (got ");
+    // Byte-content check: all 16 bytes 0x00-0x0F must appear across the fragments
+    begin : r1_byte_check
+      integer rb, rc, rt;
+      reg [7:0] all_bytes [0:15];
+      integer byte_ptr;
+      byte_ptr = 0;
+      for (rb = 0; rb < rsp_count && byte_ptr < 16; rb = rb + 1) begin
+        for (rc = 0; rc < 8 && byte_ptr < 16; rc = rc + 1) begin
+          all_bytes[byte_ptr] = rsp_fragments[rb][rc*8 +: 8];
+          byte_ptr = byte_ptr + 1;
+        end
+      end
+      for (bv = 0; bv < 16; bv = bv + 1) begin
+        cnt = 0;
+        for (bb = 0; bb < byte_ptr; bb = bb + 1)
+          if (all_bytes[bb] === bv[7:0]) cnt = cnt + 1;
+        if (cnt !== 1) begin
+          errors = errors + 1;
+          $display("FAIL: R1: byte 0x%02x appears %0d times (exp 1, have %0d bytes)", bv, cnt, byte_ptr);
+        end
+      end
+    end
+
     if (errors == 0)
-      $display("TC10_PASS: e2e forward path (Bmb write -> MC -> DFI -> PHY -> model)");
+      $display("TC10_PASS: e2e forward+read path (Bmb WR/RD -> MC -> DFI -> PHY -> model)");
     else
       $display("TC10_FAIL: %0d errors", errors);
     $finish;

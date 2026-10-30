@@ -373,14 +373,28 @@ case class UsPhy(cfg: DfiConfig) extends Component {
 
     val byteLaneIdx = pin / 8
     val bitInByte   = pin % 8
-    val bitPos0 = byteLaneIdx * 16 + bitInByte          // first DDR edge
-    val bitPos1 = byteLaneIdx * 16 + 8 + bitInByte      // second DDR edge
+    // READ uses simple LE byte order (matching DfiMemoryAgent convention):
+    //   byte j of the 32-bit rddata word sits at bits[j*8+7 : j*8]
+    //   byte 0 = DQ[7:0] @ first edge, byte 1 = DQ[15:8] @ first edge,
+    //   byte 2 = DQ[7:0] @ second edge, byte 3 = DQ[15:8] @ second edge
+    val rdBitPos0 = byteLaneIdx * 16 + bitInByte            // first DDR edge (mirror write bitPos)
+    val rdBitPos1 = byteLaneIdx * 16 + 8 + bitInByte        // second DDR edge (mirror write bitPos)
 
     // Distribute Q to each phase's rddata.
+    // Golden ISERDESE3: Q[0] = EARLIEST sample (lowest addr), Q[DW-1] = latest.
+    // (Verified empirically: source p=0->{Q[1],Q[0]} reproduced observed d0/d1,
+    //  which required Q[0]=earliest indexing.)
+    // MC assembles fragment = {phase0_word, phase1_word} with phase0 in the UPPER
+    // 32 bits (RdDataRxd: data[63:32] = input(0)). For the fragment to be the
+    // little-endian byte sequence, phase0 must carry the HIGHER-address bytes:
+    //   phase p: byte 0,1 <- beat 2*(fr-1-p)   = Q[2*(fr-1-p)]
+    //            byte 2,3 <- beat 2*(fr-1-p)+1 = Q[2*(fr-1-p)+1]
+    // (Symmetric inverse of the write path, which expands phase0 word to the
+    //  later beats 2,3 of the burst.)
     for (p <- 0 until frequencyRatio) {
       val qBase = 2 * (frequencyRatio - 1 - p)
-      dfi.read.rd(p).rddata(bitPos0) := iserdes.Q(qBase + 1)  // first DDR edge
-      dfi.read.rd(p).rddata(bitPos1) := iserdes.Q(qBase)       // second DDR edge
+      dfi.read.rd(p).rddata(rdBitPos0) := iserdes.Q(qBase + 1)   // halfword-swap: mirror write edge order
+      dfi.read.rd(p).rddata(rdBitPos1) := iserdes.Q(qBase)
     }
   }
 
@@ -563,10 +577,14 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   // ===========================================================================
   // DFI PHY-side (slave) outputs — driven by the datapath above.
   // ===========================================================================
-  for (idx <- 0 until dfi.read.rd.length) {
-    val l = dfi.read.rd(idx)
-    l.rddataValid := False   // real driver: gated by read-latency counter (future)
-    l.rddataDbiN  := 0       // real driver: DBI encoder (future)
-    // rddata is driven by the ISERDESE3 cross-phase distribution above (Step 5).
+  // Read data valid: tPhyRdlat DFI cycles after rden on the same phase.
+  // Implemented as a pure delay of rden: the ISERDESE3 continuously
+  // deserializes DQ, so rddataValid simply mirrors rden shifted by tPhyRdlat.
+  // Duration matches rden duration (beatCount DFI cycles for BL8/fr=2).
+  val tPhyRdlatVal = cfg.timeConfig.tPhyRdlat
+  for (p <- 0 until frequencyRatio) {
+    val rdenHist = History(dfi.read.rden(p), tPhyRdlatVal + 1)
+    dfi.read.rd(p).rddataValid := rdenHist(tPhyRdlatVal)
+    dfi.read.rd(p).rddataDbiN  := 0  // DBI encoder (future)
   }
 }
