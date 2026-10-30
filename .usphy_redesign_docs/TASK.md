@@ -206,6 +206,15 @@
   - 至此 Step 8（端到端集成）三项验收全部达成：初始化透传 ✓、写 leveling 闭环 ✓、
     读写数据完整性 ✓。
 
+- **2026-10-31 · 合并上游 `origin/dev`（de72faf60）**：
+  - 上游自 merge-base 领先 187 提交，主要落在 SpinalHDL core（Phase.scala +195、
+    sim/package.scala +169 等），**dfi 包零改动**（我方 MC/PHY 源码不受影响）。
+  - 唯一冲突：`dfi/function/BmbSpliter.scala`（modify/delete）。我方已在 1c53f0228
+    删除其为被遮蔽死代码（通配符导入使 BmbAligner 绑定到 lib BmbSpecificBridges 版，
+    fork 拷贝零引用且携带 rsp.last 重算旧 bug）；上游仅做机械性 range→bitsRange
+    改名。**裁决：保留删除**。解决后 28/28 + TC10 复验全绿（网表对新 core 重新生成，
+    数值与合并前逐项一致）。merge commit 4b06bd38c。
+
 ## 关键约束（红线）
 1. **不发明协议语义**：所有命令编码/MR 值/timing 常数复用 MC 蓝本，不另编。
 2. **不写校准通过**：任何训练逻辑必须有真实数据源（或明确标注 UNVERIFIED_ON_BOARD 的注入端口）。
