@@ -65,7 +65,7 @@ object PathTracer {
     }
   }
   def impl(from: Expression, to: Expression): Node = {
-    val walkedId = GlobalData.get.allocateAlgoIncrementale()
+    val walkedId = GlobalData.get.allocateAlgoIncremental()
     val keyToNode = mutable.LinkedHashMap[BaseNode, Node]()
 
     val toNode = new Node(to)
@@ -103,9 +103,9 @@ object PathTracer {
     }
 
     def foreach(that: BaseNode)(onUp : (BaseNode, Int) => Unit): Unit = {
-//      if(that.algoIncrementale == walkedId)
+//      if(that.algoIncremental == walkedId)
 //        return
-//      that.algoIncrementale = walkedId
+//      that.algoIncremental = walkedId
 //      if(that == from)
 //        return
 
@@ -117,6 +117,10 @@ object PathTracer {
                 onUp(input, 1)
               })
             case port : MemReadWrite =>
+              port.foreachDrivingExpression(input => {
+                onUp(input, 1)
+              })
+            case port : MemReadAsyncWrite =>
               port.foreachDrivingExpression(input => {
                 onUp(input, 1)
               })
@@ -153,6 +157,9 @@ object PathTracer {
             onUp(input, 1)
           }
           onUp(that.mem, 1)
+        case that : MemReadAsyncWrite =>
+          that.foreachDrivingExpression(input => onUp(input, 1))
+          onUp(that.mem, 0)
         case that : MemReadAsync =>
           that.foreachDrivingExpression(input => {
             onUp(input, 0)

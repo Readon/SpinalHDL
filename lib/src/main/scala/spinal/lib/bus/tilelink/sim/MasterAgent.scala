@@ -198,6 +198,35 @@ class MasterAgent (val bus : Bus, val cd : ClockDomain)(implicit idAllocator: Id
     d
   }
 
+  private def atomic(source : Int, address : Long, opcode : Opcode.A.E, param : Int, data : Seq[Byte]) : TransactionD = {
+    val bytes = data.size
+    val debugId = allocateDebugId()
+    val a = TransactionA()
+    a.opcode  = opcode
+    a.param   = param
+    a.size    = log2Up(bytes)
+    a.source  = source
+    a.address = address
+    a.debugId = debugId
+    a.data = data.toArray
+    a.mask = Array.fill(data.size)(true)
+    driver.scheduleA(a)
+
+    val d = waitAtoD(source)
+    assert(d.opcode == Opcode.D.ACCESS_ACK_DATA, s"Unexpected transaction on $bus")
+    assert(d.bytes == bytes, s"Unexpected transaction on $bus")
+    freeDebugId(debugId)
+    d
+  }
+
+  def arithmeticData(source : Int, address : Long, param : Int, data : Seq[Byte]) : TransactionD = {
+    atomic(source, address, Opcode.A.ARITHMETIC_DATA, param, data)
+  }
+
+  def logicalData(source : Int, address : Long, param : Int, data : Seq[Byte]) : TransactionD = {
+    atomic(source, address, Opcode.A.LOGICAL_DATA, param, data)
+  }
+
 
 
   def probeAck(source : Int,
@@ -270,7 +299,7 @@ class MasterAgent (val bus : Bus, val cd : ClockDomain)(implicit idAllocator: Id
         if(debug) println(f"acquireBlock src=$source%02x addr=$address%x 1 -> 0 time=${simTime()}")
         onGrant(source, address, param)
       }
-      case Opcode.D.GRANT_DATA => { //TODO on naxriscv, may sent a aquire BtoT but may have been probed out meanwhile => test
+      case Opcode.D.GRANT_DATA => { // TODO on NaxRiscv, may sent a acquire BtoT but may have been probed out meanwhile => test
         assert(!block.contains(source, address))
         onGrant(source, address, param)
         b = new Block(source, address, d.param, bytes, false, d.data){

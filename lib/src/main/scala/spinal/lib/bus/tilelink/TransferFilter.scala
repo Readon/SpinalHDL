@@ -33,8 +33,14 @@ class TransferFilter(unp : NodeParameters, dnp : NodeParameters, spec : Seq[Mapp
         target += term
       }
     }
-    def aquire(param : Int, getter : M2sTransfers => SizeRange): Unit = aquireImpl(param, getter(ipEmits), getter(st))
-    def aquireImpl(param : Int, is: SizeRange, os: SizeRange): Unit ={
+
+    def acquire(param : Int, getter : M2sTransfers => SizeRange): Unit = acquireImpl(param, getter(ipEmits), getter(st))
+
+    // TODO enable deprecation
+    //@deprecated("Use correctly spelled 'acquire' instead", since = "1.16.0")
+    def aquire(param : Int, getter : M2sTransfers => SizeRange): Unit = acquire(param, getter)
+
+    def acquireImpl(param : Int, is: SizeRange, os: SizeRange): Unit ={
       ipEmits.acquireB.foreach{ size =>
         val term = Masked(6 | (log2Up(size) << 3) | (param << 3 + io.up.p.sizeWidth), (1 << io.up.p.sizeWidth+3+3)-2) //-2 to cover opcode 6 and 7
         val target = if(os.contains(size)) trueTerms else falseTerms
@@ -42,15 +48,19 @@ class TransferFilter(unp : NodeParameters, dnp : NodeParameters, spec : Seq[Mapp
       }
     }
 
+    // TODO enable deprecation
+    //@deprecated("Use correctly spelled 'acquireImpl' instead", since = "1.16.0")
+    def aquireImpl(param : Int, is: SizeRange, os: SizeRange): Unit = acquireImpl(param, is, os)
+
     simple(0, _.putFull)
     simple(1, _.putPartial)
     simple(2, _.arithmetic)
     simple(3, _.logical)
     simple(4, _.get)
     simple(5, _.hint)
-    aquire(Param.Grow.NtoB, _.acquireB)
-    aquire(Param.Grow.NtoT, _.acquireT)
-    aquire(Param.Grow.BtoT, _.acquireT)
+    acquire(Param.Grow.NtoB, _.acquireB)
+    acquire(Param.Grow.NtoT, _.acquireT)
+    acquire(Param.Grow.BtoT, _.acquireT)
 
     val argHit = Symplify(instruction, trueTerms, falseTerms)
     val addrHit = AddressMapping.decode(addrKey, s.mapping)
@@ -72,17 +82,20 @@ class TransferFilter(unp : NodeParameters, dnp : NodeParameters, spec : Seq[Mapp
   io.up.d.sink.removeAssignments() := io.down.d.sink.resized
   when(doIt){
     io.up.d.valid := True
-    io.up.d.opcode := opcode.mux(
+    val ackOpcode = opcode.mux(
       Opcode.A.PUT_FULL_DATA -> Opcode.D.ACCESS_ACK(),
       Opcode.A.PUT_PARTIAL_DATA -> Opcode.D.ACCESS_ACK(),
+      Opcode.A.ARITHMETIC_DATA -> Opcode.D.ACCESS_ACK_DATA(),
+      Opcode.A.LOGICAL_DATA -> Opcode.D.ACCESS_ACK_DATA(),
       Opcode.A.GET -> Opcode.D.ACCESS_ACK_DATA(),
       Opcode.A.ACQUIRE_BLOCK -> Opcode.D.GRANT_DATA(),
       Opcode.A.ACQUIRE_PERM -> Opcode.D.GRANT()
     )
+    io.up.d.opcode := ackOpcode
     io.up.d.size := size
     io.up.d.source := source
     io.up.d.denied := True
-    io.up.d.corrupt := False
+    io.up.d.corrupt := Opcode.D.isData(ackOpcode)
     io.up.d.param := 0
     if(unp.withBCE) io.up.d.sink.msb := True
     when(io.up.d.ready) {
@@ -116,8 +129,8 @@ class TransferFilter(unp : NodeParameters, dnp : NodeParameters, spec : Seq[Mapp
         target ++= addressMasked.map(_ fuse term)
       }
     }
-    def aquire(param : Int, getter : M2sTransfers => SizeRange): Unit = aquireImpl(param, getter(ipEmits), getter(st))
-    def aquireImpl(param : Int, is: SizeRange, os: SizeRange): Unit ={
+    def acquire(param : Int, getter : M2sTransfers => SizeRange): Unit = acquireImpl(param, getter(ipEmits), getter(st))
+    def acquireImpl(param : Int, is: SizeRange, os: SizeRange): Unit ={
       ipEmits.acquireB.foreach{ size =>
         val term = Masked(6 | (log2Up(size) << 3) | (param << 3 + io.up.p.sizeWidth), (1 << io.up.p.sizeWidth+3+3)-2) //-2 to cover opcode 6 and 7
         val target = if(os.contains(size)) trueTerms else falseTerms
@@ -131,9 +144,9 @@ class TransferFilter(unp : NodeParameters, dnp : NodeParameters, spec : Seq[Mapp
     simple(3, _.logical)
     simple(4, _.get)
     simple(5, _.hint)
-    aquire(Param.Grow.NtoB, _.acquireB)
-    aquire(Param.Grow.NtoT, _.acquireT)
-    aquire(Param.Grow.BtoT, _.acquireT)
+    acquire(Param.Grow.NtoB, _.acquireB)
+    acquire(Param.Grow.NtoT, _.acquireT)
+    acquire(Param.Grow.BtoT, _.acquireT)
   }
 
   val instruction = io.up.a.address ## io.up.a.param ## io.up.a.size ## io.up.a.opcode

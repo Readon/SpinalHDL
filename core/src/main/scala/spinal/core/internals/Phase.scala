@@ -706,6 +706,7 @@ class MemTopology(val mem: Mem[_], val consumers : mutable.HashMap[Expression, A
   val readsAsync               = ArrayBuffer[MemReadAsync]()
   val readsSync                = ArrayBuffer[MemReadSync]()
   val readWriteSync            = ArrayBuffer[MemReadWrite]()
+  val readAsyncWrite           = ArrayBuffer[MemReadAsyncWrite]()
   val writeReadSameAddressSync = ArrayBuffer[(MemWrite, MemReadSync)]() //DISABLED
 
   var portCount = 0
@@ -716,6 +717,7 @@ class MemTopology(val mem: Mem[_], val consumers : mutable.HashMap[Expression, A
       case p: MemReadAsync => readsAsync += p
       case p: MemReadSync  => readsSync += p
       case p: MemReadWrite => readWriteSync += p
+      case p: MemReadAsyncWrite => readAsyncWrite += p
     }
   })
 }
@@ -833,6 +835,34 @@ trait PhaseMemBlackboxing extends PhaseNetlist {
               }
               wrapConsumers(port, buffer)
             }
+            case port : MemReadAsyncWrite => {
+              assert(port.aspectRatio == 1)
+              assert(port.readUnderWrite == dontCare || port.readUnderWrite == writeFirst)
+              val storage = port.clockDomain(Reg(Bits(mem.width bits)))
+              storage.addTags(mem.getTags())
+              if(mem.initialContent != null){
+                assert(mem.initialContent.size == 1)
+                storage.init(mem.initialContent.head)
+              }
+              content := storage
+              val readValue = Bits(mem.width bits)
+              readValue := content
+              readValue.addTags(port.getTags())
+              wrapConsumers(port, readValue)
+              when(port.writeEnable.asInstanceOf[Bool]){
+                if(port.mask == null) {
+                  storage := port.data.asInstanceOf[Bits]
+                } else {
+                  val dst = storage.subdivideIn(port.mask.getWidth slices)
+                  val src = port.data.asInstanceOf[Bits].subdivideIn(port.mask.getWidth slices)
+                  for(i <- 0 until port.mask.getWidth) {
+                    when(port.mask.asInstanceOf[Bits](i)) {
+                      dst(i) := src(i)
+                    }
+                  }
+                }
+              }
+            }
           }
 
           if(mem.initialContent != null && content.dlcIsEmpty){
@@ -894,7 +924,7 @@ case class MemReadBufferTag(reg: BaseType, rs: MemPortStatement, through: List[B
 
 class MemReadBufferPhase extends PhaseNetlist {
   override def impl(pc: PhaseContext): Unit = {
-    val algo = pc.globalData.allocateAlgoIncrementale()
+    val algo = pc.globalData.allocateAlgoIncremental()
     val portsHits = ArrayBuffer[MemPortStatement]()
     pc.walkDeclarations {
       case reg: BaseType if reg.isReg && !reg.hasInit && reg.hasOnlyOneStatement => {
@@ -917,7 +947,7 @@ class MemReadBufferPhase extends PhaseNetlist {
             portsHits += rs
             rs.addTag(new MemReadBufferTag(reg, rs, through))
             through.foreach { bn =>
-              bn.algoIncrementale = algo
+              bn.algoIncremental = algo
               bn.algoInt = hitId
             }
           }
@@ -934,9 +964,9 @@ class MemReadBufferPhase extends PhaseNetlist {
     }
 
     pc.walkStatements { s =>
-      if (s.algoIncrementale != algo) {
+      if (s.algoIncremental != algo) {
         s.walkDrivingExpressions { e =>
-          if (e.algoIncrementale == algo) {
+          if (e.algoIncremental == algo) {
 //            println("Remove it")
             val port = portsHits(e.algoInt)
             clean(port)
@@ -990,7 +1020,7 @@ class PhaseMemBlackBoxingDefault(policy: MemBlackboxingPolicy) extends PhaseMemB
     if (mem.initialContent != null) {
       return "Can't blackbox ROM"  //TODO
       //      } else if (topo.writes.size == 1 && topo.readsAsync.size == 1 && topo.portCount == 2) {
-    } else if (topo.writes.size == 1 && (topo.readsAsync.nonEmpty || topo.readsSync.nonEmpty) && topo.writeReadSameAddressSync.isEmpty && topo.readWriteSync.isEmpty) {
+    } else if (topo.writes.size == 1 && (topo.readsAsync.nonEmpty || topo.readsSync.nonEmpty) && topo.writeReadSameAddressSync.isEmpty && topo.readWriteSync.isEmpty && topo.readAsyncWrite.isEmpty) {
       mem.component.rework {
         val wr = topo.writes(0)
         for (rd <- topo.readsAsync) {
@@ -1094,6 +1124,39 @@ class PhaseMemBlackBoxingDefault(policy: MemBlackboxingPolicy) extends PhaseMemB
           ram.setName(mem.getName())
         }
 
+        removeMem()
+      }
+
+    } else if (topo.portCount == 1 && topo.readAsyncWrite.size == 1) {
+
+      mem.component.rework {
+        val port = topo.readAsyncWrite.head
+
+        val ram = port.clockDomain on new Ram_1wra(
+          wordWidth = port.width,
+          wordCount = mem.wordCount*mem.width/port.width,
+          technology = mem.technology,
+          readUnderWrite = port.readUnderWrite,
+          duringWrite = port.duringWrite,
+          maskWidth = if (port.mask != null) port.mask.getWidth else 1,
+          maskEnable = port.mask != null
+        )
+
+        ram.addTag(new MemBlackboxOf(topo.mem.asInstanceOf[Mem[Data]]))
+
+        ram.io.addr.assignFrom(port.address)
+        ram.io.en.assignFrom(port.clockDomain.isClockEnableActive)
+        ram.io.wr.assignFrom(port.writeEnable)
+        ram.io.wrData.assignFrom(port.data)
+
+        if (port.mask != null)
+          ram.io.mask.assignFrom(port.mask)
+        else
+          ram.io.mask := B"1"
+
+        wrapConsumers(port, ram.io.rdData)
+
+        ram.setName(mem.getName())
         removeMem()
       }
     } else if (topo.portCount == 1 && topo.readWriteSync.size == 1) {
@@ -1407,11 +1470,11 @@ class PhaseInferEnumEncodings(pc: PhaseContext, encodingSwap: (SpinalEnumEncodin
     val nodes           = ArrayBuffer[Expression with EnumEncoded]()
     val nodesInferrable = ArrayBuffer[Expression with InferableEnumEncoding]()
     val consumers       = mutable.HashMap[Expression , ArrayBuffer[Expression]]()
-    var algo            = globalData.allocateAlgoIncrementale()
+    var algo            = globalData.allocateAlgoIncremental()
 
     def walkExpression(node: Expression): Unit ={
-      if(node.algoIncrementale != algo) {
-        node.algoIncrementale = algo
+      if(node.algoIncremental != algo) {
+        node.algoIncremental = algo
 
         if (node.isInstanceOf[EnumEncoded]) nodes += node.asInstanceOf[Expression with EnumEncoded]
 
@@ -1458,7 +1521,7 @@ class PhaseInferEnumEncodings(pc: PhaseContext, encodingSwap: (SpinalEnumEncodin
       senum.swapEncoding(encodingSwap(senum.getEncoding))
     })
 
-    algo = globalData.allocateAlgoIncrementale()
+    algo = globalData.allocateAlgoIncremental()
 
     nodes.foreach(senum => {
       if(senum.propagateEncoding){
@@ -1466,9 +1529,9 @@ class PhaseInferEnumEncodings(pc: PhaseContext, encodingSwap: (SpinalEnumEncodin
         def propagateOn(that : Expression): Unit = {
           that match {
             case that: InferableEnumEncoding =>
-              if(that.algoIncrementale == algo) return
+              if(that.algoIncremental == algo) return
 
-              that.algoIncrementale = algo
+              that.algoIncremental = algo
 
               if(that.encodingProposal(senum.getEncoding)) {
                 that match {
@@ -1548,7 +1611,7 @@ class PhaseDeviceDefault extends PhaseDeviceHandler{
   }
 
   override def onCrossClockBuffer(config : SpinalConfig, bt: BaseType) = {
-    if(config.device.isVendorDefault || config.device.vendor == Device.XILINX.vendor) {
+    if(config.device.isVendorDefault || config.device.vendor == Device.XILINX.vendor || config.device.vendor == Device.EFINIX.vendor) {
       bt.addAttribute("async_reg", "true")
     }
   }
@@ -1578,6 +1641,7 @@ class PhaseDevice(pc : PhaseContext) extends PhaseMisc{
           case port: MemReadAsync => hit = true
           case port: MemWrite => withWrite = true
           case port: MemReadWrite => withWrite = true
+          case port: MemReadAsyncWrite => withWrite = true
           case port: MemReadSync =>
         }
         val alreadyTagged = mem.getTags().exists{
@@ -1590,6 +1654,7 @@ class PhaseDevice(pc : PhaseContext) extends PhaseMisc{
         mem.dlcForeach(e => e match {
           case port: MemWrite      =>
           case port: MemReadWrite  => onlyDontCare &= port.readUnderWrite == dontCare
+          case port: MemReadAsyncWrite => onlyDontCare &= port.readUnderWrite == dontCare
           case port: MemReadSync   => onlyDontCare &= port.readUnderWrite == dontCare
           case port: MemReadAsync  => onlyDontCare &= port.readUnderWrite == dontCare
         })
@@ -1628,6 +1693,7 @@ class PhaseDevice(pc : PhaseContext) extends PhaseMisc{
           }
           case e: MemReadSync =>
           case e: MemReadWrite =>
+          case e: MemReadAsyncWrite =>
           case e: Expression => e.foreachDrivingExpression(forExp)
         }
         s.walkParentTreeStatementsUntilRootScope{sParent =>
@@ -1788,13 +1854,13 @@ class PhaseCheckCombinationalLoops() extends PhaseCheck{
   override def impl(pc: PhaseContext): Unit = {
     import pc._
 
-    val walkingId = GlobalData.get.allocateAlgoIncrementale()
-    val okId      = GlobalData.get.allocateAlgoIncrementale()
+    val walkingId = GlobalData.get.allocateAlgoIncremental()
+    val okId      = GlobalData.get.allocateAlgoIncremental()
 
     def walk(path : List[(BaseNode)], node: BaseNode): Unit = {
       val newPath = node :: path
 
-      if (node.algoIncrementale == walkingId) {
+      if (node.algoIncremental == walkingId) {
         val ordred  = newPath.reverseIterator
         val filtred = ordred.dropWhile((e) => (e != node)).drop(1).toArray
 
@@ -1810,26 +1876,27 @@ class PhaseCheckCombinationalLoops() extends PhaseCheck{
           PendingError(s"COMBINATORIAL LOOP :\n  Partial chain :\n${wellNameLoop}\n  Full chain :${multiLineLoop}")
         }
 
-      }else if (node.algoIncrementale != okId) {
-        node.algoIncrementale = walkingId
+      }else if (node.algoIncremental != okId) {
+        node.algoIncremental = walkingId
         node match {
           case node: BaseType =>
             if(node.isComb) {
-              node.algoIncrementale = walkingId
+              node.algoIncremental = walkingId
               node.foreachStatements(s => walk(newPath, s))
-              node.algoIncrementale = okId
+              node.algoIncremental = okId
             }
           case node: AssignmentStatement =>
             node.foreachDrivingExpression(e => walk(newPath, e))
             node.walkParentTreeStatementsUntilRootScope(s => walk(newPath, s))
           case node: TreeStatement =>
-            if (node.algoIncrementale != okId) {
+            if (node.algoIncremental != okId) {
               node.foreachDrivingExpression(e => walk(newPath, e))
-              node.algoIncrementale = okId
+              node.algoIncremental = okId
             }
           case node: Mem[_]       =>
           case node: MemReadSync  =>
           case node: MemReadWrite =>
+          case node: MemReadAsyncWrite =>
           case node: MemWrite     =>
           case node: Expression   =>
             node.foreachDrivingExpression(e => walk(newPath, e))
@@ -1837,11 +1904,11 @@ class PhaseCheckCombinationalLoops() extends PhaseCheck{
             node.foreachDrivingExpression(e => walk(newPath, e))
         }
       }
-      node.algoIncrementale = okId
+      node.algoIncremental = okId
     }
 
     walkStatements(s => {
-      if (s.algoIncrementale != okId) {
+      if (s.algoIncremental != okId) {
         walk(s :: Nil, s)
       }
     })
@@ -1861,10 +1928,10 @@ class PhaseCheckCrossClock() extends PhaseCheck{
 
     def populateCdTag(that : BaseType): Unit = {
       val cds = mutable.LinkedHashSet[ClockDomain]()
-      val walkedId = pc.globalData.allocateAlgoIncrementale
+      val walkedId = pc.globalData.allocateAlgoIncremental
       def walk(n : BaseNode): Unit = {
-        if(n.algoIncrementale == walkedId) return
-        n.algoIncrementale = walkedId
+        if(n.algoIncremental == walkedId) return
+        n.algoIncremental = walkedId
         n match {
           case node: SpinalTagReady if node.hasTag(classOf[ClockDomainTag]) =>
             cds += node.getTag(classOf[ClockDomainTag]).get.clockDomain
@@ -1882,6 +1949,7 @@ class PhaseCheckCrossClock() extends PhaseCheck{
           case node: MemReadAsync => node.foreachDrivingExpression(e => walk(e))
           case node: MemReadSync => cds += node.clockDomain
           case node: MemReadWrite => cds += node.clockDomain
+          case node: MemReadAsyncWrite => cds += node.clockDomain
           case node: Expression => node.foreachDrivingExpression(e => walk(e))
         }
       }
@@ -1934,14 +2002,15 @@ class PhaseCheckCrossClock() extends PhaseCheck{
           case s : MemReadAsync =>
           case s : MemWrite => if(!areSynchronous(s.clockDomain, targetCd)) issueRaw(s, s.clockDomain, newPath, targetCd)
           case s : MemReadWrite => if(!areSynchronous(s.clockDomain, targetCd)) issueRaw(s, s.clockDomain, newPath, targetCd)
+          case s : MemReadAsyncWrite => if(!areSynchronous(s.clockDomain, targetCd)) issueRaw(s, s.clockDomain, newPath, targetCd)
         }
       }
 
 
       def walk(node: BaseNode, path: List[(BaseNode)], clockDomain: ClockDomain): Unit = {
-        if(node.algoIncrementale == walked) return
+        if(node.algoIncremental == walked) return
 
-        node.algoIncrementale = walked
+        node.algoIncremental = walked
 
         val newPath = node :: path
 
@@ -1989,6 +2058,10 @@ class PhaseCheckCrossClock() extends PhaseCheck{
             if(!areSynchronous(node.clockDomain, clockDomain)) {
               issue(node, node.clockDomain)
             }
+          case node: MemReadAsyncWrite =>
+            if(!areSynchronous(node.clockDomain, clockDomain)) {
+              issue(node, node.clockDomain)
+            }
           case node: Expression =>
             node.foreachDrivingExpression(e => walk(e, newPath, clockDomain))
         }
@@ -2000,34 +2073,41 @@ class PhaseCheckCrossClock() extends PhaseCheck{
         case s: BaseType if s.hasTag(classOf[ClockDomainTag]) =>
           if (!s.isReg) {
             // if it not a reg, perform the check if the ClockDomainTag is present
-            walked = GlobalData.get.allocateAlgoIncrementale()
+            walked = GlobalData.get.allocateAlgoIncremental()
             s.foreachStatements(as => walk(as, as :: s :: Nil, s.getTag(classOf[ClockDomainTag]).get.clockDomain))
           }
           else {
             PendingError(s"Can't add ClockDomainTag to registers:\n" + s.getScalaLocationLong)
           }
         case s: BaseType if s.isReg && !s.hasTag(crossClockDomain) =>
-          walked = GlobalData.get.allocateAlgoIncrementale()
+          walked = GlobalData.get.allocateAlgoIncremental()
           s.foreachStatements(as => walk(as, as :: s :: Nil, s.clockDomain))
         case s: MemReadSync if !s.hasTag(crossClockDomain) =>
           if (s.hasTag(classOf[ClockDomainTag])) {
             PendingError(s"Can't add ClockDomainTag to memory ports:\n" + s.getScalaLocationLong)
           }
-          walked = GlobalData.get.allocateAlgoIncrementale()
+          walked = GlobalData.get.allocateAlgoIncremental()
           s.foreachDrivingExpression(as => walk(as, as :: s :: Nil, s.clockDomain))
           checkMem(s.mem, s :: Nil, s.clockDomain)
         case s: MemReadWrite if !s.hasTag(crossClockDomain) =>
           if (s.hasTag(classOf[ClockDomainTag])) {
             PendingError(s"Can't add ClockDomainTag to memory ports:\n" + s.getScalaLocationLong)
           }
-          walked = GlobalData.get.allocateAlgoIncrementale()
+          walked = GlobalData.get.allocateAlgoIncremental()
+          s.foreachDrivingExpression(as => walk(as, as :: s :: Nil, s.clockDomain))
+          checkMem(s.mem, s :: Nil, s.clockDomain)
+        case s: MemReadAsyncWrite if !s.hasTag(crossClockDomain) =>
+          if (s.hasTag(classOf[ClockDomainTag])) {
+            PendingError(s"Can't add ClockDomainTag to memory ports:\n" + s.getScalaLocationLong)
+          }
+          walked = GlobalData.get.allocateAlgoIncremental()
           s.foreachDrivingExpression(as => walk(as, as :: s :: Nil, s.clockDomain))
           checkMem(s.mem, s :: Nil, s.clockDomain)
         case s: MemWrite if !s.hasTag(crossClockDomain) =>
           if (s.hasTag(classOf[ClockDomainTag])) {
             PendingError(s"Can't add ClockDomainTag to memory ports:\n" + s.getScalaLocationLong)
           }
-          walked = GlobalData.get.allocateAlgoIncrementale()
+          walked = GlobalData.get.allocateAlgoIncremental()
           s.foreachDrivingExpression(as => walk(as, as :: s :: Nil, s.clockDomain))
         case _ =>
       }
@@ -2085,7 +2165,7 @@ class PhaseRemoveUselessStuff(postClockPulling: Boolean, tagVitals: Boolean) ext
   override def impl(pc: PhaseContext): Unit = {
     import pc._
 
-    val okId = globalData.allocateAlgoIncrementale()
+    val okId = globalData.allocateAlgoIncremental()
 
     def getComponentOrThrowForPulledDataCache(s: Statement, operation: String): Component = {
       val comp = s.component
@@ -2109,8 +2189,8 @@ class PhaseRemoveUselessStuff(postClockPulling: Boolean, tagVitals: Boolean) ext
         SpinalWarning("propagate called with null root statement.")
         return
       }
-      if (root.algoIncrementale == okId) return
-      root.algoIncrementale = okId
+      if (root.algoIncremental == okId) return
+      root.algoIncremental = okId
 
       val pending = mutable.ArrayStack[Statement](root)
 
@@ -2119,8 +2199,8 @@ class PhaseRemoveUselessStuff(postClockPulling: Boolean, tagVitals: Boolean) ext
             SpinalWarning("propagateInner called with null statement in pending queue.")
             return
         }
-        if (s.algoIncrementale != okId) {
-          s.algoIncrementale = okId
+        if (s.algoIncremental != okId) {
+          s.algoIncremental = okId
           pending.push(s)
         }
       }
@@ -2187,6 +2267,7 @@ class PhaseRemoveUselessStuff(postClockPulling: Boolean, tagVitals: Boolean) ext
           case smem: Mem[_] => smem.foreachStatements {
             case p: MemWrite => propagateInner(p)
             case p: MemReadWrite => propagateInner(p)
+            case p: MemReadAsyncWrite => propagateInner(p)
             case p: MemReadSync if p.isInstanceOf[Statement] => propagateInner(p.asInstanceOf[Statement])
             case p: MemReadAsync if p.isInstanceOf[Statement] => propagateInner(p.asInstanceOf[Statement])
             case _ =>
@@ -2198,6 +2279,10 @@ class PhaseRemoveUselessStuff(postClockPulling: Boolean, tagVitals: Boolean) ext
             smrw.isVital |= vital
             if (smrw.mem != null) propagateInner(smrw.mem) else SpinalWarning(s"MemReadWrite statement [$smrw] has null mem reference.")
             smrw.walkExpression { case e: Statement => propagateInner(e); case _ => }
+          case smrwas: MemReadAsyncWrite =>
+            smrwas.isVital |= vital
+            if (smrwas.mem != null) propagateInner(smrwas.mem) else SpinalWarning(s"MemReadAsyncWrite statement [$smrwas] has null mem reference.")
+            smrwas.walkExpression { case e: Statement => propagateInner(e); case _ => }
           case smrs: MemReadSync =>
             smrs.isVital |= vital
             if (smrs.mem != null) propagateInner(smrs.mem) else SpinalWarning(s"MemReadSync statement [$smrs] has null mem reference.")
@@ -2230,12 +2315,13 @@ class PhaseRemoveUselessStuff(postClockPulling: Boolean, tagVitals: Boolean) ext
       case s: AssignmentStatement  =>
       case s: MemWrite             =>
       case s: MemReadWrite         =>
+      case s: MemReadAsyncWrite    =>
       case s: MemReadSync          =>
       case s: MemReadAsync         =>
     }
 
     walkStatements(s => {
-      if(s.algoIncrementale != okId){
+      if(s.algoIncremental != okId){
         s.removeStatement()
       }
     })
@@ -2260,7 +2346,7 @@ class PhaseRemoveIntermediateUnnameds(onlyTypeNode: Boolean) extends PhaseNetlis
   override def impl(pc: PhaseContext): Unit = {
     import pc._
 
-    val koId = globalData.allocateAlgoIncrementale()
+    val koId = globalData.allocateAlgoIncremental()
 
     walkDeclarations(e => e.algoInt = 0)
 
@@ -2271,15 +2357,15 @@ class PhaseRemoveIntermediateUnnameds(onlyTypeNode: Boolean) extends PhaseNetlis
       case _ =>
     }
 
-    walkStatements(s => if(s.algoIncrementale != koId){
+    walkStatements(s => if(s.algoIncremental != koId){
       s.walkRemapDrivingExpressions {
         case ref: BaseType =>
           if (ref.algoInt == 1 && ref.isComb && ref.isDirectionLess && (!onlyTypeNode || ref.isTypeNode) && ref.canSymplifyIt && Statement.isSomethingToFullStatement(ref) /*&& ref != excepted*/ ) {
             //TODO IR keep it
             ref.algoInt = 0
             val head = ref.head
-            ref.algoIncrementale = koId
-            head.algoIncrementale = koId
+            ref.algoIncremental = koId
+            head.algoIncremental = koId
             head.source
           } else {
             ref
@@ -2289,7 +2375,7 @@ class PhaseRemoveIntermediateUnnameds(onlyTypeNode: Boolean) extends PhaseNetlis
     })
 
     walkStatements{
-      case s if s.algoIncrementale == koId =>
+      case s if s.algoIncremental == koId =>
         s.removeStatement()
       case s =>
     }
@@ -2859,20 +2945,21 @@ class PhaseGetInfoRTL(prunedSignals: mutable.Set[BaseType], unusedSignals: mutab
       case _            =>
     }
 
-    val usedId = GlobalData.get.allocateAlgoIncrementale()
+    val usedId = GlobalData.get.allocateAlgoIncremental()
 
     walkStatements(s => {
-      s.walkDrivingExpressions(e => e.algoIncrementale = usedId)
+      s.walkDrivingExpressions(e => e.algoIncremental = usedId)
       s match {
-        case s: MemReadSync  => s.algoIncrementale = usedId
-        case s: MemReadAsync => s.algoIncrementale = usedId
-        case s: MemReadWrite => s.algoIncrementale = usedId
+        case s: MemReadSync  => s.algoIncremental = usedId
+        case s: MemReadAsync => s.algoIncremental = usedId
+        case s: MemReadWrite => s.algoIncremental = usedId
+        case s: MemReadAsyncWrite => s.algoIncremental = usedId
         case s =>
       }
     })
 
     prunedSignals.foreach(s => {
-      if(s.algoIncrementale != usedId) {
+      if(s.algoIncremental != usedId) {
         unusedSignals += s
       }
     })
@@ -2882,7 +2969,7 @@ class PhaseGetInfoRTL(prunedSignals: mutable.Set[BaseType], unusedSignals: mutab
 class PhasePropagateNames(pc: PhaseContext) extends PhaseMisc {
   override def impl(pc: PhaseContext) : Unit = {
     import pc._
-    val algoId = globalData.allocateAlgoIncrementale() //Allows to avoid chaining allocated names
+    val algoId = globalData.allocateAlgoIncremental() // Allows to avoid chaining allocated names
 
     // All unnamed signals are cleaned up to avoid composite / partial name side effects
     walkStatements{
@@ -2892,14 +2979,14 @@ class PhasePropagateNames(pc: PhaseContext) extends PhaseMisc {
 
     // propagate all named signals names to their unnamed drivers
     walkStatements{
-      case dst : BaseType => if (dst.isNamed && dst.algoIncrementale != algoId) {
+      case dst : BaseType => if (dst.isNamed && dst.algoIncremental != algoId) {
         def explore(bt: BaseType, depth : Int): Unit = {
           bt.foreachStatements{s =>
             s.walkDrivingExpressions{
-              case src : BaseType => if(src.isUnnamed || (src.algoIncrementale == algoId && src.algoInt > depth)){
+              case src : BaseType => if(src.isUnnamed || (src.algoIncremental == algoId && src.algoInt > depth)){
                 src.unsetName()
                 src.setWeakName(globalData.anonymSignalPrefix + "_" + dst.getName())
-                src.algoIncrementale = algoId
+                src.algoIncremental = algoId
                 src.algoInt = depth
                 explore(src, depth + 1)
               }

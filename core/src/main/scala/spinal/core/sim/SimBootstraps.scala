@@ -93,7 +93,7 @@ object SpinalVerilatorBackend {
       })
 
       bt.algoInt = signalId
-      bt.algoIncrementale = -1
+      bt.algoIncremental = -1
       signal.id = signalId
       vconfig.signals += signal
       signalId += 1
@@ -107,7 +107,7 @@ object SpinalVerilatorBackend {
         case mem : Mem[_] if mem.hasTag(Verilator.public) => {
           val tag = mem.getTag(classOf[MemSymbolesTag])
           mem.algoInt = signalId
-          mem.algoIncrementale = -1
+          mem.algoIncremental = -1
           tag match {
             case None => addSignal(mem)
             case Some(tag) => {
@@ -137,7 +137,7 @@ object SpinalVerilatorBackend {
       })
 
       bt.algoInt = signalId
-      bt.algoIncrementale = -1
+      bt.algoIncremental = -1
       signal.id = signalId
       vconfig.signals += signal
       signalId += 1
@@ -394,7 +394,7 @@ object SpinalVpiBackend {
       })
 
       bt.algoInt = signalId
-      bt.algoIncrementale = -1
+      bt.algoIncremental = -1
       signal.id = signalId
       signalsCollector += signal
       signalId += 1
@@ -408,7 +408,7 @@ object SpinalVpiBackend {
         case mem : Mem[_] if mem.hasTag(SimPublic) => {
           val tag = mem.getTag(classOf[MemSymbolesTag])
           mem.algoInt = signalId
-          mem.algoIncrementale = -1
+          mem.algoIncremental = -1
           tag match {
             case None => addSignal(mem)
             case Some(tag) => {
@@ -438,7 +438,7 @@ object SpinalVpiBackend {
       })
 
       bt.algoInt = signalId
-      bt.algoIncrementale = -1
+      bt.algoIncremental = -1
       signal.id = signalId
       signalsCollector += signal
       signalId += 1
@@ -497,7 +497,7 @@ object SpinalXSimBackend {
       })
 
       bt.algoInt = signalId
-      bt.algoIncrementale = -1
+      bt.algoIncremental = -1
       signal.id = signalId
       signalsCollector += signal
       signalId += 1
@@ -705,7 +705,19 @@ case class SpinalSimConfig(
   ){
 
 
-  def  withVerilator : this.type = {
+  /** Use C++ compiled Verilator simulation engine.
+    *
+    * The `'x'` and `'z'` unknown state behavior is configured to have maximal
+    * randomization. 
+    *
+    * More specifically, the it is equivalent to using [[https://verilator.org/guide/latest/exe_verilator.html#cmdoption-x-assign --x-assign unique]]
+    * at compilation and [[https://verilator.org/guide/latest/exe_sim.html#cmdoption-arg-verilator-rand-reset-value +verilator+rand+reset+2]]
+    * [[https://verilator.org/guide/latest/exe_sim.html#cmdoption-arg-verilator-seed-value +verilator+seed+value]]
+    * invocation with `value` being the `seed` of [[SimConfig.doSim()]].
+    *
+    * @see [[https://verilator.org/guide/latest/languages.html#unknown-states Verilator unknown states handling]]
+    */
+  def withVerilator : this.type = {
     _backend = SpinalSimBackendSel.VERILATOR
     this
   }

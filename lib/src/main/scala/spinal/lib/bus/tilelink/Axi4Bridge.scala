@@ -46,8 +46,8 @@ class Axi4Bridge(p : NodeParameters, withAxi3 : Boolean = false, forceAxi4Len : 
 
     val (cmdFork, dataFork) = StreamFork2(halted)
     val cmd = new Area {
-      val filtred = cmdFork.takeWhen(cmdFork.isFirst())
-      val buffered = filtred.pipelined(halfRate = true)
+      val filtered = cmdFork.takeWhen(cmdFork.isFirst())
+      val buffered = filtered.pipelined(halfRate = true)
       val isGet = buffered.opcode === Opcode.A.GET
 
       io.down.aw.valid := buffered.valid && !isGet
@@ -68,8 +68,8 @@ class Axi4Bridge(p : NodeParameters, withAxi3 : Boolean = false, forceAxi4Len : 
       io.down.aw.allStrb := buffered.opcode === Opcode.A.PUT_FULL_DATA
     }
     val data = new Area{
-      val filtred = dataFork.takeWhen(dataFork.opcode === Opcode.A.PUT_FULL_DATA || dataFork.opcode === Opcode.A.PUT_PARTIAL_DATA)
-      val buffer = filtred.pipelined(m2s = true)
+      val filtered = dataFork.takeWhen(dataFork.opcode === Opcode.A.PUT_FULL_DATA || dataFork.opcode === Opcode.A.PUT_PARTIAL_DATA)
+      val buffer = filtered.pipelined(m2s = true)
       io.down.w.arbitrationFrom(buffer)
       io.down.w.data := buffer.data
       io.down.w.strb := buffer.mask
@@ -98,13 +98,14 @@ class Axi4Bridge(p : NodeParameters, withAxi3 : Boolean = false, forceAxi4Len : 
 
     a.ctx.io.query.id := io.up.d.source
     io.up.d.arbitrationFrom(arbiter.io.output)
-    io.up.d.opcode := arbiter.io.chosen(0).mux(Opcode.D.ACCESS_ACK_DATA(), Opcode.D.ACCESS_ACK())
+    val ackOpcode = arbiter.io.chosen(0).mux(Opcode.D.ACCESS_ACK_DATA(), Opcode.D.ACCESS_ACK())
+    io.up.d.opcode := ackOpcode
     io.up.d.param := 0
     io.up.d.source := arbiter.io.output.source
     io.up.d.sink := 0
     io.up.d.denied := arbiter.io.output.denied
     io.up.d.data := io.down.r.data
-    io.up.d.corrupt := False
+    io.up.d.corrupt := arbiter.io.output.denied && Opcode.D.isData(ackOpcode)
     io.up.d.size := a.ctx.io.query.context
   }
 }

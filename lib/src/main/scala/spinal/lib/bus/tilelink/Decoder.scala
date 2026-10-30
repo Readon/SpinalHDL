@@ -37,7 +37,7 @@ case class DecoderDownSpec(mappeds : Seq[MappedTransfers],
                            nodeParam : NodeParameters)
 case class Decoder(upNode : NodeParameters,
                    downsSpec : Seq[DecoderDownSpec]) extends Component{
-  //TODO it doesn't check for overlapp (elaboration time)
+  // TODO it doesn't check for overlap (elaboration time)
   val io = new Bundle{
     val up = slave(Bus(upNode))
     val downs = Vec(downsSpec.map(e => master(Bus(e.nodeParam))))
@@ -58,6 +58,8 @@ case class Decoder(upNode : NodeParameters,
     op(_.get.some, 4)
     op(_.putFull.some, 0)
     op(_.putPartial.some, 1)
+    op(_.arithmetic.some, 2)
+    op(_.logical.some, 3)
     op(e => e.acquireB.some || e.acquireT.some, 6)
     op(e => e.acquireB.some || e.acquireT.some, 7)
     val terms = ArrayBuffer[Masked]()
