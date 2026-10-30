@@ -179,6 +179,33 @@
   - **零回归**：28/28 DfiControllerTester PASS。
   - 待办：Step 8c②（写 leveling 闭环：PHY IDELAYE3 采 DQS 回响 → 比较 → 调 ODELAYE3）。
 
+- **2026-10-31 · TC10（Step 8c②：写 leveling 闭环）完成**：
+  - **职责划分**：MC 永不驱动 `wrlvlEn`（Alignment.scala 注释明确 DFI 级训练发起超出
+    MC 范围），故 **TB 充当训练发起方**：拉高 `tr_wrlvlEn` → PHY `wlActive` → 收敛后
+    `wrlvlResp` 挣得 → TB 采样 `wlDelayOut` 并放下使能。PHY 既有硬件无需改动
+    （ODELAYE3 反馈环 + bang-bang + 漂移窗口收敛判据均为先前步骤落地）。
+  - **模型模拟回响**（Ddr4SdramModel）：DQS 输入经 `ECHO_DELAY_PS=2500` 模拟延迟
+    返回（`always @(dqs_in[k]) q <= #(ECHO_DELAY_PS/1000.0) dqs_in[k];`）——必须用实数
+    ns 换算，文件 timescale 为 1ns/1ps，裸 `#(2500)` 会被解释为 2500ns（千倍过慢，
+    首版即踩此坑：回响恒 X）。
+  - **拓扑修复**：回响路径此前从未真正接通 —— 模型 `.dqs_echo` 悬空、PHY
+    `.pads_dqs_in_t` 读无驱动线（多驱→Z）。现为：模型 `dqs_echo` → TB `dqs_echo_raw`
+    →（负证旋钮 `WL_ECHO_CUT_P` 门控）→ `p_dqs_in_t` → PHY 反馈输入。
+  - **收敛点推导**：检测器在每个本地 DQS 上升沿后半个周期采样反馈；吸引子为总环路
+    延迟 = k×DQS 周期（回响与本地 DQS 同相）：`wb_delay×50ps + 2500ps ≡ 0 (mod 10000ps)`
+    → `wb_delay ≡ 150 (mod 200)`。种子 256 → ADD 行走至 350↔351 锁定（漂移≤1<3，
+    连续 8 窗达标）→ `wrlvlResp=1`。**实测**：t=2.175µs 挣得，`wb_delay=350`，断言带
+    [345..355]。
+  - **反证**：负证旋钮 `WL_ECHO_CUT_P=0` 为正式文件常量；反证用变异副本
+    `sed 's/parameter WL_ECHO_CUT_P = 0;/parameter WL_ECHO_CUT_P = 1;/' tb_tc10_e2e.v
+    > tb_tc10_e2e_cut.v` + `TB_FILE=tb_tc10_e2e_cut.v ./run_tc10.sh`（切断 DQS 反馈）→
+    循环无法收敛，2000 周期超时 `resp=0`，W2 两项检查 FAIL → TC10_FAIL。（注：
+    xvlog 2023.1 全文件列表下 `-define` 宏不可靠，故弃用宏方案改用变异副本；
+    且 run_tc10.sh 自带完整 xvlog+xelab 管线，手工编译会被覆盖。）
+  - **零回归**：28/28 DfiControllerTester PASS。
+  - 至此 Step 8（端到端集成）三项验收全部达成：初始化透传 ✓、写 leveling 闭环 ✓、
+    读写数据完整性 ✓。
+
 ## 关键约束（红线）
 1. **不发明协议语义**：所有命令编码/MR 值/timing 常数复用 MC 蓝本，不另编。
 2. **不写校准通过**：任何训练逻辑必须有真实数据源（或明确标注 UNVERIFIED_ON_BOARD 的注入端口）。

@@ -1,17 +1,32 @@
 // ============================================================================
-// tb_tc10_e2e.v — TC10: end-to-end integration smoke (Step 8b)
+// tb_tc10_e2e.v — TC10: end-to-end integration (Steps 8b + 8c)
 //
 //   DfiController (MC, generated)  --DFI-->  UsPhy (PHY, generated)
 //         ^                                        | pads
 //         | Bmb                                    v
 //      (TB)                                Ddr4SdramModel (TC9)
 //
-// Checks (forward path first):
-//   W1: a Bmb WRITE reaches the model — wr_key_last latches a sane key and
-//       wr_word_last matches the 256-bit payload driven on Bmb.
-//   W2: no illegal command decodes (hierarchical probe of the pin model).
-// Stretch (enabled once W1 is green):
-//   R1: a Bmb READ of the same address returns the written data on bmb_rsp.
+// Check sequence:
+//   INIT: MC's init sequencer passes through untouched (mrs/zqcl counters,
+//         zero illegal decodes).
+//   W2:  write leveling CLOSED LOOP: the TB acts as training initiator
+//        (wrlvlEn); PHY echoes DQS through ODELAYE3(wb_delay), the model
+//        returns it with a 2.5ns analog delay, IDELAYE3 feeds it back and
+//        the bang-bang loop converges (attractor: total loop delay =
+//        k*DQS period, i.e. wb_delay ~= 150 mod 200 from the 256 seed ->
+//        350<->351). wrlvlResp is EARNED by the convergence check.
+//   W1:  a Bmb WRITE reaches the model — wr_key_last latches a sane key and
+//        wr_word matches the 256-bit Bmb payload.
+//   R1:  a Bmb READ of the same address returns the EXACT written bytes
+//        (frag0/frag1 roundtrip equality).
+//   W2*: no illegal command decodes (hierarchical probe of the pin model).
+//
+// Negative proof (write leveling): mutate the feedback severance knob in a
+// COPY, keep this canonical file:
+//     sed 's/parameter WL_ECHO_CUT_P = 0;/parameter WL_ECHO_CUT_P = 1;/' \
+//         tb_tc10_e2e.v > tb_tc10_e2e_cut.v
+//     TB_FILE=tb_tc10_e2e_cut.v ./run_tc10.sh
+//   Expect: TC10_FAIL (wrlvlResp never earned — loop cannot converge).
 //
 // Clocking: refclk 100MHz, dramClk 200MHz (fr=2), same phase convention as
 // tb_tc1.v. The model is clocked from the TB's dramClk net directly (clean
@@ -67,7 +82,9 @@ module tb_tc10_e2e;
   wire [3:0]  dfi_rd_0_dbIN, dfi_rd_1_dbIN;
   wire        tr_rdlvlReq, tr_rdlvlEn, tr_rdlvlResp, tr_rdlvlGateReq, tr_rdlvlGateEn;
   wire [1:0]  tr_phyRdlvlCsN, tr_phyRdlvlGateCsN;
-  wire        tr_wrlvlReq, tr_wrlvlEn, tr_wrlvlStrobe, tr_wrlvlResp;
+  wire        tr_wrlvlReq, tr_wrlvlStrobe, tr_wrlvlResp;
+  wire        tr_wrlvlEn_mc;   // MC idles this at 0 (DFI training initiation out of MC scope)
+  reg         tr_wrlvlEn = 1'b0; // TB acts as the training initiator (see W2)
   wire [1:0]  tr_phyWrlvlCsN;
   wire [3:0]  tr_lvlPattern;
   wire        tr_lvlPeriodic;
@@ -82,15 +99,22 @@ module tb_tc10_e2e;
   wire [2:0]  p_ba;
   wire [2:0]  pads_ba;
   wire        p_odt_0, p_odt_1, p_reset_n, p_par;
-  wire [1:0]  p_dqs_t, p_dqs_c, p_dqs_in_t, p_dm_dbi_n;
-  wire [1:0]  pads_dqs_t, pads_dqs_c, pads_dqs_in_t, pads_dm_dbi_n;
+  wire [1:0]  p_dqs_t, p_dqs_c, p_dm_dbi_n;
+  wire [1:0]  dqs_echo_raw;   // model output (returned DQS)
+  wire [1:0]  p_dqs_in_t;     // cut-muxed feed to the PHY dqs_in_t pads
+  wire [1:0]  pads_dqs_t, pads_dqs_c, pads_dm_dbi_n;
   wire [8:0]  wlDelayOut;
 
   assign p_ca      = pads_ca;
   assign p_ba      = pads_ba;
   assign p_dqs_t   = pads_dqs_t;
   assign p_dqs_c   = pads_dqs_c;
-  assign p_dqs_in_t = pads_dqs_in_t;
+  // Negative-proof knob (mutant run): flip to 1 in a COPIED tb
+  // (sed -> tb_tc10_e2e_cut.v) to sever the DQS feedback path; the PHY must
+  // then fail to converge (wrlvlResp never earns). Kept 0 in this canonical
+  // file. (xvlog -define turned out unreliable on the full file list.)
+  parameter WL_ECHO_CUT_P = 0;
+  assign p_dqs_in_t = WL_ECHO_CUT_P ? 2'b00 : dqs_echo_raw;
   assign p_dm_dbi_n = pads_dm_dbi_n;
 
   // ---- model observability ----------------------------------------------------
@@ -167,7 +191,7 @@ module tb_tc10_e2e;
     .io_dfi_rdTraining_rdlvlGateEn(tr_rdlvlGateEn),
     .io_dfi_wrTraining_wrlvlReq(tr_wrlvlReq),
     .io_dfi_wrTraining_phyWrlvlCsN(tr_phyWrlvlCsN),
-    .io_dfi_wrTraining_wrlvlEn(tr_wrlvlEn),
+    .io_dfi_wrTraining_wrlvlEn(tr_wrlvlEn_mc),
     .io_dfi_wrTraining_wrlvlStrobe(tr_wrlvlStrobe),
     .io_dfi_wrTraining_wrlvlResp(tr_wrlvlResp),
     .io_dfi_levelingTraining_lvlPattern(tr_lvlPattern),
@@ -252,14 +276,14 @@ module tb_tc10_e2e;
     .pads_dq_12(dq[12]), .pads_dq_13(dq[13]), .pads_dq_14(dq[14]), .pads_dq_15(dq[15]),
     .pads_dqs_t_0(pads_dqs_t[0]), .pads_dqs_t_1(pads_dqs_t[1]),
     .pads_dqs_c_0(pads_dqs_c[0]), .pads_dqs_c_1(pads_dqs_c[1]),
-    .pads_dqs_in_t_0(pads_dqs_in_t[0]), .pads_dqs_in_t_1(pads_dqs_in_t[1]),
+    .pads_dqs_in_t_0(p_dqs_in_t[0]), .pads_dqs_in_t_1(p_dqs_in_t[1]),
     .pads_dm_dbi_n_0(pads_dm_dbi_n[0]), .pads_dm_dbi_n_1(pads_dm_dbi_n[1])
   );
 
   // ===========================================================================
   // SDRAM behavioral model (TC9)
   // ===========================================================================
-  Ddr4SdramModel mem (
+  Ddr4SdramModel #(.ECHO_DELAY_PS(2500)) mem (
     .ck_t(dramClk),          // clean TB reference (pads_ck_t observable-only)
     .rst_n(rst_n),
     .cs_n({p_cs_n_1, p_cs_n_0}),
@@ -269,7 +293,7 @@ module tb_tc10_e2e;
     .bg(p_bg), .ba(p_ba), .cid(p_cid),
     .dq(dq),
     .dqs_in(p_dqs_t),
-    .dqs_echo(p_dqs_in_t),
+    .dqs_echo(dqs_echo_raw),
     .wr_key_last(mem_wr_key_last),
     .rd_key_last(mem_rd_key_last),
     .wr_word_last(mem_wr_word_last),
@@ -313,6 +337,7 @@ module tb_tc10_e2e;
   integer bv, bb, cnt;
   reg [63:0] rsp_fragments [0:1];
   integer rsp_count;
+  reg [8:0]  wl_converged;
   task check(input cond, input string msg);
     begin
       if (cond !== 1'b1) begin
@@ -340,6 +365,35 @@ module tb_tc10_e2e;
     check(init_cnt_mrs > 0, "INIT: no MRS commands arrived at model");
     check(init_cnt_zqcl > 0, "INIT: no ZQCL command arrived at model");
     check(init_cnt_illegal === 16'd0, "INIT: illegal command decoded at model");
+
+    // ---- W2: WRITE LEVELING closed loop (PHY-internal) ----------------------
+    // The MC idles DFI-level training initiation (documented: a future training
+    // initiator replaces the ties), so the TB acts as initiator: assert wrlvlEn.
+    // The PHY must drive its DQS toggle through ODELAYE3, let the model echo it
+    // back (2.5ns analog delay), sample it via IDELAYE3, and bang-bang-converge
+    // the ODELAYE3 counter. The detector samples fbSample 5ns AFTER the local
+    // DQS rise (mid-high-phase), so the attractor is TOTAL loop delay
+    // wb_delay*50ps + 2500ps ~= k*10000ps (echo in PHASE with local DQS):
+    // wb_delay ~= 150 (mod 200). From the 256 seed the loop walks UP to the
+    // 350<->351 oscillation. wrlvlResp is EARNED by the convergence check,
+    // never self-assigned.
+    begin : wl_phase
+      integer wk;
+      wl_converged = 9'h000;
+      tr_wrlvlEn = 1'b1;
+      for (wk = 0; wk < 2000; wk = wk + 1) begin
+        @(posedge refclk);
+        if (tr_wrlvlResp) begin
+          wl_converged = wlDelayOut;
+          disable wl_phase;
+        end
+      end
+      tr_wrlvlEn = 1'b0;
+    end
+    tr_wrlvlEn = 1'b0;
+    $display("WLDBG t=%0t resp=%b mc_en=%b delay=%0d", $time, tr_wrlvlResp, tr_wrlvlEn_mc, wl_converged);
+    check(tr_wrlvlResp === 1'b1, "W2: wrlvlResp never earned (loop did not converge)");
+    check(wl_converged >= 9'd345 && wl_converged <= 9'd355, "W2: converged ODELAYE3 delay outside expected band [345..355] taps");
 
     // ---- W1: Bmb WRITE -> model --------------------------------------------
     // The MC plays its built-in DDR4 init sequence (Ddr4InitSequencer: 7xMRS + ZQCL,

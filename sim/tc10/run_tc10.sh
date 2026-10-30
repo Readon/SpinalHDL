@@ -9,6 +9,7 @@ XV=${XILINX_VIVADO:-/tools/Xilinx/Vivado/2023.1}
 UV="$XV/data/verilog/src/unisims"
 SP="$XV/data/secureip"
 WORK="$(cd "$(dirname "$0")" && pwd)"
+TB_FILE="${TB_FILE:-tb_tc10_e2e.v}"  # negative proofs: TB_FILE=tb_tc10_e2e_cut.v
 export PATH="$XV/bin:$PATH"
 cd "$WORK"
 
@@ -26,7 +27,7 @@ xvlog -sv glbl.v custom_modules.v custom_unisims_sim.v \
       $VPFILES \
       Ddr4PinModel.v Ddr4SdramModel.v \
       UsPhy.v DfiController.v \
-      tb_tc10_e2e.v
+      $TB_FILE
 
 echo "===== xelab ====="
 xelab tb_tc10_e2e -s tb_tc10_e2e -d . --debug typical

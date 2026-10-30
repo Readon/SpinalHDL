@@ -27,7 +27,7 @@ module Ddr4SdramModel #(
   parameter BL_BEATS       = 8,    // BL8 x16: 8 beats = 8 ck_t edges
   parameter MEM_ENTRIES    = 65536,
   parameter KEY_W          = 16,   // {row[5:0], col[4:0], bank[3:0], rank[1:0]}
-  parameter ECHO_DELAY_EDGES = 0,
+  parameter ECHO_DELAY_PS    = 0,   // analog DQS echo delay in ps (granularity-preserving for WL)
   parameter TCL_DELAY_EDGES  = 3    // tCL emulation: delay before driving DQ on read
 )(
   // ---- command pins (mirrors Ddr4PinModel) --------------------------------
@@ -227,17 +227,20 @@ module Ddr4SdramModel #(
   // ==========================================================================
   // DQS echo (write-leveling feedback)
   // ==========================================================================
+  // Analog (ps-granular) echo: a ck_t-edge pipeline would QUANTIZE the echo to
+  // 2.5ns steps and destroy the 50ps ODELAYE3 tap granularity the WL loop needs.
   generate
-    if (ECHO_DELAY_EDGES == 0) begin : g_echo_direct
+    if (ECHO_DELAY_PS == 0) begin : g_echo_direct
       assign dqs_echo = dqs_in;
-    end else begin : g_echo_pipe
-      reg [1:0] pipe [0:ECHO_DELAY_EDGES-1];
-      integer ei;
-      always @(posedge ck_t or negedge ck_t) begin
-        pipe[0] <= dqs_in;
-        for (ei = 1; ei < ECHO_DELAY_EDGES; ei = ei + 1) pipe[ei] <= pipe[ei-1];
+    end else begin : g_echo_analog
+      genvar ek;
+      for (ek = 0; ek < 2; ek = ek + 1) begin : g_lane
+        reg q;
+        // File timescale is 1ns/1ps: convert the ps parameter to a REAL ns delay
+        // (a bare #(ECHO_DELAY_PS) would be parsed in ns -> 1000x too slow).
+        always @(dqs_in[ek]) q <= #(ECHO_DELAY_PS / 1000.0) dqs_in[ek];
+        assign dqs_echo[ek] = q;
       end
-      assign dqs_echo = pipe[ECHO_DELAY_EDGES-1];
     end
   endgenerate
 
