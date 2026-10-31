@@ -237,6 +237,59 @@
     run_tc10.sh 新增 MODEL_FILE/PHY_FILE 变异旋钮（与 TB_FILE 同机制）。
   - **零回归**：28/28 DfiControllerTester PASS。
   - commit 9375c59f3。
+- **2026-10-31 · TC11（Step 8c④：随机 e2e 压力 + 模型页状态修复）完成**：
+  - 新增 `sim/tc11/`：`tb_tc11_stress.v`（512W+512R Bmb 随机事务，LCG(SEED=42)，
+    内容寻址载荷 `byte[i]=key[7:0]^key[15:8]^i`（免历史记分牌），64 槽近期地址环
+    限读，~10% 空闲间隙，地址 16B 对齐）+ 复用 TC10 拓扑与自定义模型。
+  - **暴露并修复模型真缺陷**（MC/PHY 经 DFI 引脚相关性日志排除嫌疑）：
+    (a) RD/WR 须显式解 bank（JESD79-4B Table 17：RD/WR 行 BG/BA 列皆有效），
+        原模型沿用 DDR3 隐式 bank 假设；
+    (b) 打开页状态 per-rank 单份 → **per-(rank,bank)**（16 bank/rank 随机命中下
+        旧影子把读键到错误单元）。详见 ADR-0015。
+  - **验收**：512/512 读逐字节精确往返、context 回显 2'b01、`PINCHK
+    mrs=7 zqcl=1 ref=23 act=841 wr=512 rd=512 pre=558 illegal=0`（引脚计数
+    == BMB 计数：无重复/丢失）。
+  - **反证**（两变异体均 1024 errors FAIL）：`MODEL_FILE=Ddr4SdramModel_noarm.v`
+    （删 1 边沿 arm 级）；`PHY_FILE=UsPhy_phaseswap.v`（读 Q tap 相位互换）。
+  - **零回归**：28/28 PASS；TC10 同步修复模型后复验 PASS。
+  - commit 7e3f96008（含 .gitignore 白名单修复 33c4f818f）。
+
+- **2026-10-31 · Step 8c⑤：配置矩阵 elaboration 冒烟完成**：
+  - 新增 `tester/.../dfi/phy/E2eSmokeGen.scala`：对超出黄金点（x16/fr=2/nranks=2）
+    的两组配置跑 SpinalVerilog elaboration（UsPhy + DfiController 双侧）：
+    x32/fr=2/nranks=2、x16/fr=2/nranks=1。产出写入临时目录，不动根网表，无 xsim。
+  - **内置常驻反证**：fr=1 必须被 `UsPhy.scala` 的 `require(frequencyRatio>=2)`
+    拒绝——若静默放行说明边界悄悄消失。
+  - **结果**：`SMOKE_x32_fr2_OK` / `SMOKE_x16_fr2nr1_OK` /
+    `SMOKE_negative_fr1_rejected_OK` / `SMOKE_ALL_OK`（一次通过，无框架 bug）。
+  - commit d61d7e998。
+
+- **2026-10-31 · 文档收尾（Plan 阶段 3）**：
+  - ADR-0014（自定义硅语义 SerDes 模型：零延迟假设与绝对/相对延迟迁移规则）、
+    ADR-0015（模型命令语义：Table 17 RD/WR bank + per-(rank,bank) 页状态）。
+  - 新增「已知限制」章节（见下）。
+
+## 已知限制（KNOWN LIMITATIONS）
+
+以下为**有意保留的边界**（非欠账；硬件范围已冻结，见 2026-10-31 目标裁定）：
+
+1. **中途复位 = 未定义行为**：`rst_n` 在突发进行中拉低的语义未定义、未建模
+   （板级同样如此）；复位只在突发之间生效。
+2. **fr=1 不支持**：`UsPhy` 要求 `frequencyRatio >= 2`（OSERDESE3/ISERDESE3
+   k=4；fr=1 需 OSERDES2，v1 范围外）。fr=2 之外的高 fr 仅有 elaboration
+   冒烟覆盖，无 e2e 仿真。
+3. **SerDes 模型零输出流水**（ADR-0014）：仿真中的绝对延迟（tPhyRdlat/wb_delay
+   等）是模型世界的自洽解，**不得用于板级绝对时间戳推断**；相对对齐关系可迁移。
+4. **TC11 排除非对齐读**（ADR-0015）：模型 32B 单元粒度 vs MC 16B 突发步进；
+   非对齐双突发读是 MC 能力，由 28/28 SpinalSim 覆盖。
+5. **§二 残留骨架**（有意不补）：无 MMCM（dramClk 顶层直入，ck_t/ck_c 别名）；
+   DQS 写选通为自由翻转 TFF（无 tDQSS 空白）；无 DBI/DM；读训练 stub
+   （`rdlvlResp:=0`，ADR-0002 tier A）；DFI update/status 未驱动。
+6. **§三 板级属性**（UNVERIFIED_ON_BOARD，行为仿真不可表达）：CA setup/hold、
+   MMCM 绝对相位、PVT/VTC、硅片眼图签核。
+7. **模型键截断**：row[5:0]/col[4:0] 环绕（64×32 单元/rank/bank），TB 地址
+   契约限定在该空间内。
+
 ## 关键约束（红线）
 1. **不发明协议语义**：所有命令编码/MR 值/timing 常数复用 MC 蓝本，不另编。
 2. **不写校准通过**：任何训练逻辑必须有真实数据源（或明确标注 UNVERIFIED_ON_BOARD 的注入端口）。
