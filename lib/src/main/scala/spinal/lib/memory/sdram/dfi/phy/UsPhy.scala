@@ -292,14 +292,13 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   //   CLKDIV = sysClk   (frame load: one frame per DFI/MC cycle)
   //   OQ     = 1-bit serial output → DQ pin via IOBUF
 
-  // Write-enable (any phase) in the sysClk domain, plus a refclk-FALLING-edge
-  // sample of it. The inverted-CLKDIV OSERDESE3 loads D on the refclk NEGedge
-  // and serializes each frame over the 4 DDR edges that FOLLOW, so the DQ
-  // burst window is the wren window shifted by half a refclk cycle (+5ns):
-  //   wren high [16185,16205)  ->  DQ active [16190,16210).
-  // Sampling wren on the refclk falling edge (which coincides with dramClk↓)
-  // yields exactly that shifted window, masking the pre-wren OSERDESE3 output
-  // and exposing only the in-window beats to the DRAM.
+  // Write-enable (any phase) in the sysClk domain. With the silicon-semantics
+  // OSERDESE3 model (CLKDIV posedge load, see sim/tc10/custom_unisims_sim.v),
+  // a frame loaded at refclk edge t is serialized over the 4 DDR edges STARTING
+  // AT t (model omits the ~2-CLK silicon output pipeline). The DQ burst window
+  // is therefore the wren window shifted by one refclk cycle (+10ns = one full
+  // DQS period, so DQ-vs-DQS relative alignment is unchanged):
+  //   wren high [ws, ws+20)  ->  DQ active [ws+10, ws+35).
   val wrEnLive = dfi.write.wr.map(_.wrdataEn).reduce(_||_)
   val wrEnFall = ClockDomain(!sysClk, rstSynced) { Reg(Bool()) init(False) }
   wrEnFall := wrEnLive
@@ -307,9 +306,10 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   for (pin <- 0 until physDqWidth) {
     val oserdes = new OSERDESE3(serdesDw)
     oserdes.CLK    := dramClk
-    // Invert CLKDIV so the OSERDESE3 loads D on the refclk NEGedge (mid-period),
-    // where the MC's registered wrdata is settled (no NBA stale-value/duplication).
-    oserdes.CLKDIV := !sysClk
+    // Silicon wiring: CLKDIV = sysClk (non-inverted). The golden-model NBA
+    // sampling workaround (CLKDIV := !sysClk) is retired now that the bench
+    // uses the silicon-semantics behavioral OSERDESE3 model.
+    oserdes.CLKDIV := sysClk
     oserdes.RST    := rstSynced
 
     // DFI canonical bit positions for this pin (anchored from tested
@@ -340,12 +340,16 @@ case class UsPhy(cfg: DfiConfig) extends Component {
     // Serialize to the DQ pin via IOBUF (tri-state controlled by write-enable).
     val buf = new USPhy_IOBUF()
     buf.I := oserdes.OQ
-    val wrEnExt = Reg(Bool()) init(False)
-    wrEnExt := wrEnLive
-    // DQ-active window: wren OR wren-delayed-1-cycle. The OSERDESE3 has a
-    // 1-CLK-edge pipeline delay, so the last data beat appears ~1 refclk cycle
-    // after the last wren-high edge. Extending T by 1 cycle covers it.
-    buf.T := !(wrEnLive | wrEnExt)
+    val wrEnExt  = Reg(Bool()) init(False)
+    val wrEnExt2 = Reg(Bool()) init(False)
+    wrEnExt  := wrEnLive
+    wrEnExt2 := wrEnExt
+    // DQ-active window: wren OR wren-delayed-1-or-2-cycles. With the
+    // silicon-semantics OSERDESE3 model (zero-latency first bit, 8 contiguous
+    // DDR edges per 2-cycle wren window: burst [ws, ws+35)), the last data beat
+    // lands ~1.5 refclk cycles after the last wren-high edge. Extending T by
+    // 2 cycles covers it.
+    buf.T := !(wrEnLive | wrEnExt | wrEnExt2)
     pads.dq(pin) := buf.IO
   }
 
@@ -380,21 +384,21 @@ case class UsPhy(cfg: DfiConfig) extends Component {
     val rdBitPos0 = byteLaneIdx * 16 + bitInByte            // first DDR edge (mirror write bitPos)
     val rdBitPos1 = byteLaneIdx * 16 + 8 + bitInByte        // second DDR edge (mirror write bitPos)
 
-    // Distribute Q to each phase's rddata.
-    // Golden ISERDESE3: Q[0] = EARLIEST sample (lowest addr), Q[DW-1] = latest.
-    // (Verified empirically: source p=0->{Q[1],Q[0]} reproduced observed d0/d1,
-    //  which required Q[0]=earliest indexing.)
-    // MC assembles fragment = {phase0_word, phase1_word} with phase0 in the UPPER
-    // 32 bits (RdDataRxd: data[63:32] = input(0)). For the fragment to be the
-    // little-endian byte sequence, phase0 must carry the HIGHER-address bytes:
-    //   phase p: byte 0,1 <- beat 2*(fr-1-p)   = Q[2*(fr-1-p)]
-    //            byte 2,3 <- beat 2*(fr-1-p)+1 = Q[2*(fr-1-p)+1]
-    // (Symmetric inverse of the write path, which expands phase0 word to the
-    //  later beats 2,3 of the burst.)
+    // EXACT INVERSE of the write frame order (write->wire->read composes to
+    // identity). Ground truth from the generated netlist (pin p, fr=2):
+    //   Write frame D[2fr-1:0] = {wr0.e0, wr0.e1, wr1.e0, wr1.e1} (phase 0 at
+    //   MSB). OSERDESE3 emits D[2fr-1] FIRST, so the wire time order
+    //   (earliest->latest) is: w1=wr0.e0, w2=wr0.e1, w3=wr1.e0, w4=wr1.e1,
+    //   i.e. w(2k+1)=wr_k.e0, w(2k+2)=wr_k.e1.
+    //   ISERDESE3 (silicon-semantics model): Q[0]=NEWEST, Q[2fr-1]=OLDEST,
+    //   so Q[j] = w(2fr-j)  =>  Q[3]=w1=wr0.e0, Q[2]=w2=wr0.e1,
+    //   Q[1]=w3=wr1.e0, Q[0]=w4=wr1.e1.
+    //   Inverse: phase p e0-slot <- wr_p.e0 = w(2p+1) = Q[2fr-(2p+1)] = Q[2(fr-1-p)+1]
+    //            phase p e1-slot <- wr_p.e1 = w(2p+2) = Q[2fr-(2p+2)] = Q[2(fr-1-p)]
     for (p <- 0 until frequencyRatio) {
-      val qBase = 2 * (frequencyRatio - 1 - p)
-      dfi.read.rd(p).rddata(rdBitPos0) := iserdes.Q(qBase + 1)   // halfword-swap: mirror write edge order
-      dfi.read.rd(p).rddata(rdBitPos1) := iserdes.Q(qBase)
+      val qPair = 2 * (frequencyRatio - 1 - p)
+      dfi.read.rd(p).rddata(rdBitPos0) := iserdes.Q(qPair + 1)
+      dfi.read.rd(p).rddata(rdBitPos1) := iserdes.Q(qPair)
     }
   }
 

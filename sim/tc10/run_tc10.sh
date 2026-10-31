@@ -10,23 +10,22 @@ UV="$XV/data/verilog/src/unisims"
 SP="$XV/data/secureip"
 WORK="$(cd "$(dirname "$0")" && pwd)"
 TB_FILE="${TB_FILE:-tb_tc10_e2e.v}"  # negative proofs: TB_FILE=tb_tc10_e2e_cut.v
+MODEL_FILE="${MODEL_FILE:-Ddr4SdramModel.v}"  # negative proofs: MODEL_FILE=Ddr4SdramModel_cut.v
+PHY_FILE="${PHY_FILE:-UsPhy.v}"  # negative proofs: PHY_FILE=UsPhy_cut.v
 export PATH="$XV/bin:$PATH"
 cd "$WORK"
 
-echo "===== Bootstrap vendor IP (OSERDESE3/ISERDESE3 golden only) ====="
-cp -f "$UV/OSERDESE3.v" "$WORK/OSERDESE3.v"
-cp -f "$UV/ISERDESE3.v" "$WORK/ISERDESE3.v"
-[ -d "$SP/oserdese3_k2" ] && cp -f "$SP/oserdese3_k2"/*.vp "$WORK/"
-[ -d "$SP/iserdese3" ]    && cp -f "$SP/iserdese3"/*.vp  "$WORK/"
 echo "custom delay models: $(ls custom_unisims_sim.v 2>/dev/null || echo MISSING)"
 
-echo "===== xvlog (custom ODELAYE3/IDELAYE3 SHADOW the golden ones) ====="
-VPFILES=$(ls "$WORK"/*.vp 2>/dev/null | tr '\n' ' ')
+echo "===== xvlog (custom SerDes/delay models replace golden+VIP) ====="
+# Golden OSERDESE3/ISERDESE3 wrappers + their SIP .vp files are intentionally
+# ABSENT: custom_unisims_sim.v provides silicon-semantics behavioral models
+# under the same module names (Plan A: expel the inverted-CLKDIV sim hack).
+VPFILES=$(ls "$WORK"/*.vp 2>/dev/null | grep -vi 'oserdese3\|iserdese3' | tr '\n' ' ')
 xvlog -sv glbl.v custom_modules.v custom_unisims_sim.v \
-      OSERDESE3.v ISERDESE3.v \
       $VPFILES \
-      Ddr4PinModel.v Ddr4SdramModel.v \
-      UsPhy.v DfiController.v \
+      Ddr4PinModel.v $MODEL_FILE \
+      $PHY_FILE DfiController.v \
       $TB_FILE
 
 echo "===== xelab ====="
