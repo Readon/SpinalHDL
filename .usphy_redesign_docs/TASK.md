@@ -269,6 +269,23 @@
     ADR-0015（模型命令语义：Table 17 RD/WR bank + per-(rank,bank) 页状态）。
   - 新增「已知限制」章节（见下）。
 
+- **2026-10-31 · TC11 非确定性根治（审计发现 → 修复）**：
+  - 合规审计中发现 TC11 同源码同种子 5 次记录 2 败（读数据整体错位），
+    且同一编译产物连续复现失败 —— 定位为**自定义 SerDes 行为模型的
+    同拍竞争（coincident-edge race）**：refclk 与 dramClk 边沿两两重合
+    （refclk↑ == dramClk↓），ISERDESE3 的 SAMPLE 块与 PRESENT 块在同
+    一拍触发，先后顺序由 elaboration 决定 → Q 每次编译漂移一个采样。
+  - 修复（sim/tc10+tc11/custom_unisims_sim.v）：ISERDESE3 PRESENT 改为读取
+    shadow 寄存器（每个 CLK↑ 后 1ps 拷贝 win，落在无边沿时隙，锁定
+    q@T = T 之前严格 4 个采样 = 硅语义）；OSERDESE3 PUSH/POP 加 #1 偏移
+    固定 pop-before-push 与边沿后一拍可见性。
+  - **正证**：修复后 3 次全新编译均 TC11_PASS（SEED=42，512W+512R 逐字节
+    往返，PINCHK illegal=0）；TC10 同步模型后 PASS。
+  - **反证**：PHY_FILE=UsPhy_phaseswap.v（64 处读分布 Q 抽头互换）→
+    TC11_FAIL 1024；MODEL_FILE=Ddr4SdramModel_noarm.v（去掉 1 边沿读使能
+    对齐级）→ TC11_FAIL 1024。变异体用完即删。
+  - 回归：DfiControllerTester 28/28。commit 27f6bc8ca。
+
 ## 已知限制（KNOWN LIMITATIONS）
 
 以下为**有意保留的边界**（非欠账；硬件范围已冻结，见 2026-10-31 目标裁定）：
