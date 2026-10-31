@@ -37,3 +37,21 @@
 - 读训练在**上板前必须升级为真实闭环**（引入 SDRAM 行为模型 + 真实 ISERDESE3 采样），
   在此之前其“通过”不具备物理可信度，交付物中标注 `UNVERIFIED_ON_BOARD`。
 - 写 leveling 的真实闭环是本 PHY 相对旧设计的第一处实质性可信增量。
+
+## Amendment Rev.2（2026-10-31）— 读 leveling 升级：stub → 真实闭环（方案 A）
+
+读 **leveling** 已从档 A stub 升级为真实闭环（读 gate / read eye 仍为档 A）：
+- 读路径引入真实可调元件：每 lane 一条 IDELAYE3（`pads.dqs_in_t → IDELAYE3
+  (CNTVALUEIN = rlDelay) → rlSample`），rlDelay 为 dramClk 域 9-bit 计数器
+  （种子 256，观测端口 `rdDelayOut`）。
+- 训练引擎镜像写 leveling：bang-bang 检测器在每个本地 DQS 上升沿采样
+  `rlSample(0)`，16 边沿滑动窗漂移 < 3 taps 连续 8 窗判收敛；`rdlvlResp`
+  由收敛检查**赚取**（绝不自我赋值），违反恒真禁令。
+- 仿真参考源 = TB 振荡器（rdlvlEn 期间接收到 pad 的代理 DRAM 读 DQS；模型
+  不产生读方向 DQS）。均衡点 = 延迟为整数倍 DQS 周期（rdDelay ≡ 0 mod 100
+  taps），实测 TC10/TC11/TC12 收敛于 199（极限环 199↔200）。
+- 模拟边界（如实记录）：训练所得延迟**不参与** DQ 采样时刻（读 ISERDESE3
+  仍以 dramClk 网格采样），DQS-DQ 绝对相位仍是硅片校准属性（ADR-0014 精神）。
+- 证据：三 TB `RLDBG resp=1 delay=199`；反证 `RCUT_P=1`（切断参考源）→
+  `rdlvlResp` 永不赚取 → R2 失败。
+- 仍属档 A stub：读 gate / read eye（`rdlvlGate*`）、DQ 眼图裕量测量。

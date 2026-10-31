@@ -145,6 +145,7 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   val rst_n   = in Bool()
   val dfi    = slave(Dfi(cfg))
   val wlDelayOut = out(UInt(9 bits))   // observability: current ODELAYE3 delay counter (dramClk domain)
+  val rdDelayOut = out(UInt(9 bits))   // observability: current read-leveling IDELAYE3 delay counter (dramClk domain)
 
   // Parameter axes (ADR-0003). All derived from cfg — no extra external knobs.
   val generation     = cfg.sdram.generation
@@ -638,22 +639,93 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   }
 
   // ===========================================================================
-  // Step 7: READ TRAINING — explicit STUB (ADR-0002 tier: interface complete,
-  // feedback injectable, clearly marked UNVERIFIED_ON_BOARD).
+  // Step 7: READ LEVELING — protocol closed loop + real adjustable element
+  // (ADR-0002 tier A upgraded to Plan A: interface + algorithm complete; the
+  // functional coupling of the trained delay to DQ sampling is a MODEL
+  // boundary — the behavioral ISERDESE3 samples on the dramClk grid, not on
+  // the delayed DQS, per ADR-0014's zero-latency-model spirit).
+  //
+  // Structure (mirrors the write-leveling closed loop):
+  //   * Adjustable element: IDELAYE3 per byte-lane on the RECEIVE DQS path
+  //     (pads.dqs_in_t -> IDELAYE3(CNTVALUEIN = rlDelay) -> rlSample).
+  //   * Reference: the free-running dqsToggle T-FF (dramClk grid) — in
+  //     silicon the reference is the DRAM's read DQS; the bench supplies a
+  //     TB-side oscillator on the receive pad during rdlvlEn (documented
+  //     simulation surrogate).
+  //   * Bang-bang detector: samples rlSample(0) at each dqsToggle rising
+  //     edge; HIGH -> delay too big -> CUT, LOW -> too small -> ADD.
+  //     Attractor: delayed edge lands half-period (2500ps) past the
+  //     reference edge, i.e. rlDelay*50ps ~= 2500ps (mod 5000ps).
+  //   * Convergence: counter drift < 3 taps over 16 edges for 8 straight
+  //     windows -> rlDone EARNED -> rdlvlResp asserted (never
+  //     self-assigned constant-true).
+  //   * rdlvlReq stays 0: Plan A needs no training-read exchange (the
+  //     reference is the pad oscillator, not a data eye).
   // ===========================================================================
+  val rlActive = (if (cfg.useRdlvlEn) dfi.rdTraining.rdlvlEn.orR else False)
+
+  // Receive-path delay elements (the quantity read leveling optimizes).
+  val rlIddelays = Seq.fill(byteLanes)(new IDELAYE3())
+  for (l <- 0 until byteLanes) {
+    rlIddelays(l).CLK      := dramClk
+    rlIddelays(l).RST      := rstSynced
+    rlIddelays(l).CE       := True
+    rlIddelays(l).EN_VTC   := False
+    rlIddelays(l).LOAD     := False
+    rlIddelays(l).INC      := False
+    rlIddelays(l).DATAIN   := pads.dqs_in_t(l)   // DQS as it ARRIVES from the DRAM
+    rlIddelays(l).IDATAIN  := False
+    rlIddelays(l).CASC_IN  := False
+    rlIddelays(l).CASC_RETURN := False
+  }
+  val rlSample = Vec.fill(byteLanes)(Bool())
+
+  val rl = cd {
+    // Seed mid-range (256 of 0..511) so the walk can correct either way.
+    val rlDelay = Reg(UInt(9 bits)) init(256)
+    val rlDone  = Reg(Bool()) init(False)
+    val togPrev = Reg(Bool()) init(False)
+    val togRise = !togPrev && dqsToggle
+    val bbHist  = Vec.fill(16)(Reg(UInt(9 bits)) init(256))
+    val bbConv  = Reg(UInt(4 bits)) init(0)
+
+    togPrev := dqsToggle
+    when(!rlActive) {                      // park at mid-range between sessions
+      bbConv  := 0
+      rlDelay := 256
+      rlDone  := False
+    }.elsewhen(!rlDone) {                  // active, not yet converged
+      when(togRise) {
+        for (i <- 15 downto 1) { bbHist(i) := bbHist(i-1) }
+        bbHist(0) := rlDelay
+        val drifted = (bbHist(0) > (bbHist(15) + 3)) || (bbHist(15) > (bbHist(0) + 3))
+        when(drifted) { bbConv := 0 }
+        .otherwise    { bbConv := bbConv + 1 }
+        // Bang-bang (same polarity convention as the WL detector).
+        when(rlSample(0)) { rlDelay := rlDelay - 1 }
+        .otherwise        { rlDelay := rlDelay + 1 }
+        when(bbConv > 7)  { rlDone  := True }
+      }
+    }                                      // rlActive && rlDone: hold
+    new Bundle { val delay = rlDelay; val done = rlDone }
+  }
+  for (l <- 0 until byteLanes) {
+    rlIddelays(l).CNTVALUEIN := rl.delay
+    rlSample(l) := rlIddelays(l).DATAOUT
+  }
+  rdDelayOut := rl.delay
+
   if (cfg.useRdlvlReq) {
-    // Per-bit construction (avoid whole-vs-bit overlap when width==1).
-    val en = (if (cfg.useRdlvlEn) dfi.rdTraining.rdlvlEn.orR else False)
-    for (k <- 0 until dfi.rdTraining.rdlvlReq.getWidth) {
-      dfi.rdTraining.rdlvlReq(k) := (if (k == 0) en else False)
-    }
+    dfi.rdTraining.rdlvlReq := 0   // Plan A: no training-read exchange needed
   }
   if (cfg.usePhyRdlvlCsN) {
     dfi.rdTraining.phyRdlvlCsN := 0
   }
   if (cfg.useRdlvlResp) {
-    // STUB: neutral 0. Per ADR-0002 we do NOT self-assign constant "success".
-    dfi.rdTraining.rdlvlResp := 0
+    // EARNED by the convergence check (mirrors wrlvlResp); never constant.
+    for (k <- 0 until dfi.rdTraining.rdlvlResp.getWidth) {
+      dfi.rdTraining.rdlvlResp(k) := (if (k == 0) rl.done else False)
+    }
   }
   if (cfg.useRdlvlGateReq) {
     dfi.rdTraining.rdlvlGateReq := 0

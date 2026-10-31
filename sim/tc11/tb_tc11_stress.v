@@ -44,6 +44,10 @@ module tb_tc11_stress;
   reg dramClk = 0;
   always #5   refclk  = ~refclk;   // 100 MHz
   always #2.5 dramClk = ~dramClk;  // 200 MHz (= 2 x refclk, fr=2)
+  // Read-leveling reference oscillator: surrogate DRAM read DQS on the
+  // receive pad while rdlvlEn (the model drives no read DQS).
+  reg tb_osr; initial tb_osr = 1'b0;
+  always @(posedge dramClk) tb_osr = ~tb_osr;
   reg rst_n = 0;
 
   // ---- Bmb master (TB side) -------------------------------------------------
@@ -80,7 +84,9 @@ module tb_tc11_stress;
   wire        dfi_rd_0_valid, dfi_rd_1_valid;
   wire [31:0] dfi_rd_0_data, dfi_rd_1_data;
   wire [3:0]  dfi_rd_0_dbIN, dfi_rd_1_dbIN;
-  wire        tr_rdlvlReq, tr_rdlvlEn, tr_rdlvlResp, tr_rdlvlGateReq, tr_rdlvlGateEn;
+  wire        tr_rdlvlReq, tr_rdlvlResp, tr_rdlvlGateReq, tr_rdlvlGateEn;
+  wire        tr_rdlvlEn_mc;   // MC idles this at 0 (training initiation out of MC scope)
+  reg         tr_rdlvlEn = 1'b0; // TB acts as the training initiator (see R2)
   wire [1:0]  tr_phyRdlvlCsN, tr_phyRdlvlGateCsN;
   wire        tr_wrlvlReq, tr_wrlvlStrobe, tr_wrlvlResp;
   wire        tr_wrlvlEn_mc;   // MC idles this at 0 (DFI training initiation out of MC scope)
@@ -105,6 +111,11 @@ module tb_tc11_stress;
   wire [1:0]  p_dqs_in_t;     // cut-muxed feed to the PHY dqs_in_t pads
   wire [1:0]  pads_dqs_t, pads_dqs_c, pads_dm_dbi_n;
   wire [8:0]  wlDelayOut;
+  wire [8:0]  rdDelayOut;
+  reg  [8:0]  rd_converged;
+  // Equilibrium of the RL bang-bang = delay an integer multiple of the 5ns DQS
+  // period = rdDelay ~= 0 (mod 100 taps); +-5 tolerance for the limit cycle.
+  wire [6:0]  rd_mod100 = rd_converged % 7'd100;
 
   assign p_ca      = pads_ca;
   assign p_ba      = pads_ba;
@@ -115,7 +126,8 @@ module tb_tc11_stress;
   // then fail to converge (wrlvlResp never earns). Kept 0 in this canonical
   // file. (xvlog -define turned out unreliable on the full file list.)
   parameter WL_ECHO_CUT_P = 0;
-  assign p_dqs_in_t = WL_ECHO_CUT_P ? 2'b00 : dqs_echo_raw;
+  parameter RCUT_P = 0;
+  assign p_dqs_in_t = RCUT_P ? 2'b00 : (tr_rdlvlEn ? {tb_osr,tb_osr} : (WL_ECHO_CUT_P ? 2'b00 : dqs_echo_raw));
   assign p_dm_dbi_n = pads_dm_dbi_n;
 
   // ---- model observability ----------------------------------------------------
@@ -187,7 +199,7 @@ module tb_tc11_stress;
     .io_dfi_read_rd_1_rddataDbiN(dfi_rd_1_dbIN),
     .io_dfi_rdTraining_rdlvlReq(tr_rdlvlReq),
     .io_dfi_rdTraining_phyRdlvlCsN(tr_phyRdlvlCsN),
-    .io_dfi_rdTraining_rdlvlEn(tr_rdlvlEn),
+    .io_dfi_rdTraining_rdlvlEn(tr_rdlvlEn_mc),
     .io_dfi_rdTraining_rdlvlResp(tr_rdlvlResp),
     .io_dfi_rdTraining_rdlvlGateReq(tr_rdlvlGateReq),
     .io_dfi_rdTraining_phyRdlvlGateCsN(tr_phyRdlvlGateCsN),
@@ -256,6 +268,7 @@ module tb_tc11_stress;
     .dfi_phyRequestedTraining_phylvlReqCsN(tr_phylvlReqCsN),
     .dfi_phyRequestedTraining_phylvlAckCsN(tr_phylvlAckCsN),
     .wlDelayOut(wlDelayOut),
+    .rdDelayOut(rdDelayOut),
     .pads_ck_t(p_ck_t), .pads_ck_c(p_ck_c),
     .pads_cke_0(p_cke_0), .pads_cke_1(p_cke_1),
     .pads_cs_n_0(p_cs_n_0), .pads_cs_n_1(p_cs_n_1),
@@ -576,6 +589,30 @@ module tb_tc11_stress;
     $display("WLDBG t=%0t resp=%b mc_en=%b delay=%0d", $time, tr_wrlvlResp, tr_wrlvlEn_mc, wl_converged);
     check(tr_wrlvlResp === 1'b1, "W2: wrlvlResp never earned (loop did not converge)");
     check(wl_converged >= 9'd345 && wl_converged <= 9'd355, "W2: converged ODELAYE3 delay outside expected band [345..355] taps");
+
+    // ---- READ LEVELING closed loop (PHY-internal, Plan A) -------------------
+    // Surrogate DRAM read DQS = TB oscillator on the receive pad during
+    // rdlvlEn. The PHY bang-bang-converges the read-path IDELAYE3 counter so
+    // the delayed trigger lands on the local DQS grid; rdlvlResp is EARNED by
+    // the convergence check (never self-assigned).
+    begin : rl_phase
+      integer rk;
+      rd_converged = 9'h000;
+      tr_rdlvlEn = 1'b1;
+      for (rk = 0; rk < 2000; rk = rk + 1) begin
+        @(posedge refclk);
+        if (tr_rdlvlResp) begin
+          rd_converged = rdDelayOut;
+          disable rl_phase;
+        end
+      end
+      tr_rdlvlEn = 1'b0;
+    end
+    repeat(8) @(posedge refclk);
+    tr_rdlvlEn = 1'b0;
+    $display("RLDBG t=%0t resp=%b delay=%0d", $time, tr_rdlvlResp, rd_converged);
+    check(tr_rdlvlResp === 1'b1, "R2: rdlvlResp never earned (loop did not converge)");
+    check(rd_mod100 <= 7'd5 || rd_mod100 >= 7'd95, "R2: converged IDELAYE3 delay not an integer DQS period: rdDelay %% 100 taps outside +-5");
 
     // ---- STRESS: 512 WR + 512 RD, random bank/row/col/rank -----------------------
     // Content-addressed: expected read data = f(mk_key(addr)) — no history RAM.

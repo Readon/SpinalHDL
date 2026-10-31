@@ -357,6 +357,24 @@
     PINCHK 基础设施计数全部正常 —— 数据完整性依赖 DM 通路。变异体用完即删。
   - 回归：DfiControllerTester 28/28。
 
+- **2026-10-31 · Step 8c⑨：读 leveling 真实闭环（方案 A，ADR-0002 Rev.2）**：
+  - `UsPhy` Step 7 由显式 stub 升级为真实训练引擎：读路径每 lane 一条
+    IDELAYE3 可调元件（`pads.dqs_in_t → IDELAYE3(CNTVALUEIN=rlDelay) →
+    rlSample`）；bang-bang 检测器（镜像写 leveling：16 边沿滑窗漂移 < 3 taps
+    连续 8 窗）驱动 9-bit rlDelay 计数器（种子 256，dramClk 域）；
+    `rdlvlResp` 由收敛检查赚取（恒真禁令不破）；新增观测端口 `rdDelayOut`。
+  - 仿真参考源 = TB 振荡器（rdlvlEn 期间接管 PHY 接收 DQS pad 的代理 DRAM
+    读 DQS；模型本身不产生读方向 DQS）。TB 侧 `tr_rdlvlEn` 拆双线
+    （PHY 侧 reg 由 TB 发起，MC 侧 wire 观察，同 wrlvl 模式）。
+  - **正证**：TC10/TC11/TC12 均 `RLDBG resp=1 delay=199`（均衡点 = 整数倍
+    DQS 周期：rdDelay ≡ 0 mod 100 taps，±5 容差覆盖极限环），其余全绿。
+  - **反证**：`RCUT_P=1`（sed 变异体切断 RL 参考源）→ `rdlvlResp` 永不
+    赚取 → `FAIL: R2: rdlvlResp never earned` → TC11_FAIL。变异体用完即删。
+  - 模拟边界（如实记录）：训练所得延迟不参与 DQ 采样时刻（读 ISERDESE3 仍
+    以 dramClk 网格采样）；DQS-DQ 绝对相位仍为硅片校准属性。读 gate /
+    read eye 仍为档 A stub。
+  - 回归：DfiControllerTester 28/28。
+
 ## 已知限制（KNOWN LIMITATIONS）
 
 以下为**有意保留的边界**（非欠账；硬件范围已冻结，见 2026-10-31 目标裁定）：
@@ -373,7 +391,7 @@
 5. **§二 残留骨架**（有意不补）：无 MMCM（dramClk 顶层直入，ck_t/ck_c 别名）；
    DQS 底层仍为自由翻转 TFF（翻转速率偏差为硅片校准属性，门控后的 pad 满足
    窗口内活动/窗外驻留契约，见 8c DQS 条目）；DBI/DM 写路径已真接线（8c⑧），
-   模型不做读侧 DBI 重编码；读训练 stub（`rdlvlResp:=0`，ADR-0002 tier A）；
+   模型不做读侧 DBI 重编码；读 leveling 已真实闭环（8c⑨，ADR-0002 Rev.2），读 gate/read eye 仍为 stub（tier A）；
    DFI update/status 未驱动。
 6. **§三 板级属性**（UNVERIFIED_ON_BOARD，行为仿真不可表达）：CA setup/hold、
    MMCM 绝对相位、PVT/VTC、硅片眼图签核。
