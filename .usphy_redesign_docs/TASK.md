@@ -215,6 +215,28 @@
     改名。**裁决：保留删除**。解决后 28/28 + TC10 复验全绿（网表对新 core 重新生成，
     数值与合并前逐项一致）。merge commit 4b06bd38c。
 
+- **2026-10-31 · TC10（Step 8c③：Plan A —— 硅语义 SerDes 模型 + 读路径精确对齐）完成**：
+  - **替换 golden 模型**：`custom_unisims_sim.v` 新增硅语义行为模型 OSERDESE3/ISERDESE3
+    （OSERDESE3：CLKDIV 上升沿载入 D、每个 dramClk 边沿弹出 1 bit、MSB 先发、零输出
+    流水；ISERDESE3：全部 ck 边沿上的 4 拍移位寄存器、CLKDIV 上升沿呈现、Q[0]=最新
+    /Q[3]=最旧，符合 PG050 极性）。run_tc10.sh 移除 golden+VIP bootstrap。
+  - **撤掉仿真 hack**：`oserdes.CLKDIV := sysClk`（原 `!sysClk` 是 golden 模型的 NBA
+    采样 workaround）；IOBUF T 窗口延长 1 周期（wrEnExt2）以覆盖新模型零延迟首发 bit。
+    读分布公式未变（qPair=2*(fr-1-p)），注释重写为生成写帧的严格逆映射
+    （phase 0 位于 D 的 MSB、线上最先发出）。
+  - **读对齐**：Ddr4SdramModel 增加 1 边沿 arm 级 `rd_armed` —— RD 解码边沿锁存、
+    下一边沿开始驱动，使 8-beat 突发恰好贴合两个相邻 ISERDESE3 Q 窗（各 4 个 ck
+    边沿）、与 MC rddataValid 采样窗一致。
+  - **验收**：逐字节精确往返 `frag0=0706050403020100` / `frag1=0f0e0d0c0b0a0908`；
+    INITCHK mrs=7 zqcl=1 illegal=0、WLDBG resp=1 delay=350、W1DBG word 与 8c①/② 一致。
+  - **反证**（两变异体均按预期 FAIL）：
+    (a) `MODEL_FILE=Ddr4SdramModel_cut.v`（删 arm 级立即驱动）→ 4 errors、zz 污染、
+        丢字节 0x01/0x03 → arm 延迟不可或缺；
+    (b) `PHY_FILE=UsPhy_cut.v`（读 Q 索引相位互换，64 行）→ 2 errors、frag 半区互换
+        （`frag0=0302010007060504`）→ 相位映射不可或缺。
+    run_tc10.sh 新增 MODEL_FILE/PHY_FILE 变异旋钮（与 TB_FILE 同机制）。
+  - **零回归**：28/28 DfiControllerTester PASS。
+  - commit 9375c59f3。
 ## 关键约束（红线）
 1. **不发明协议语义**：所有命令编码/MR 值/timing 常数复用 MC 蓝本，不另编。
 2. **不写校准通过**：任何训练逻辑必须有真实数据源（或明确标注 UNVERIFIED_ON_BOARD 的注入端口）。
