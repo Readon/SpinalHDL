@@ -144,14 +144,16 @@ module Ddr4PinModel #(
       end else begin
         // ---- ACT# = 1: decode {RAS,CAS,WE} -------------------------------
         case ({ras_n, cas_n, we_n})
-          3'b101: begin // READ — DRAM latches C[9:0]+A10; BA is NOT sampled here
+          3'b101: begin // READ — C[9:0]+A10, bank on BG/BA (Table 17: RD BG=BG BA=BA)
             c_rd[k] = 1'b1;
             c_col = a[COL_W-1:0];
+            c_bank = {bg, ba};
             c_autopre = a[10]; c_cid = cid; c_rank = k[RW-1:0];
           end
           3'b110: begin // WRITE — same latching as READ
             c_wr[k] = 1'b1;
             c_col = a[COL_W-1:0];
+            c_bank = {bg, ba};
             c_autopre = a[10]; c_cid = cid; c_rank = k[RW-1:0];
           end
           3'b010: begin // PRECHARGE

@@ -94,8 +94,11 @@ module Ddr4SdramModel #(
   // Assumes at most one rank ACTs per ck_t cycle (true in this topology's
   // MC behavior; shared-bus fields would otherwise alias).
   // ==========================================================================
-  reg [15:0] row_state  [0:RANKS-1];
-  reg [3:0]  bank_state [0:RANKS-1];
+  localparam NBANKS = 16;  // 1 BG + 3 BA
+  // Per-(rank,bank) open-row state: DDR4 banks are independent; RD/WR carry
+  // their bank on BG/BA (Table 17), so the row key must come from the
+  // command's own bank, not a single per-rank "last ACT" shadow.
+  reg [15:0] row_state  [0:RANKS*NBANKS-1];
   integer k;
   reg [RW-1:0] wr_rank, rd_rank;
   always @(*) begin
@@ -108,16 +111,12 @@ module Ddr4SdramModel #(
 
   always @(posedge ck_t) begin
     if (!rst_n) begin
-      for (k = 0; k < RANKS; k = k + 1) begin
-        row_state[k]  <= 16'h0;
-        bank_state[k] <= 4'h0;
-      end
+      for (k = 0; k < RANKS*NBANKS; k = k + 1)
+        row_state[k] <= 16'h0;
     end else begin
       for (k = 0; k < RANKS; k = k + 1)
-        if (q_act_pulse[k]) begin
-          row_state[k]  <= last_row;
-          bank_state[k] <= last_bank;
-        end
+        if (q_act_pulse[k])
+          row_state[k*NBANKS + last_bank] <= last_row;
     end
   end
 
@@ -160,7 +159,7 @@ module Ddr4SdramModel #(
       wr_key_last <= {KEY_W{1'b0}}; wr_word_last <= 128'h0;
     end else if (wr_cmd && !collecting && !waiting) begin
       waiting     <= 1'b1;
-      wr_key_last <= {row_state[wr_rank][5:0], last_col[4:0], bank_state[wr_rank], wr_rank[RW-1:0]};
+      wr_key_last <= {row_state[wr_rank*NBANKS + last_bank][5:0], last_col[4:0], last_bank, wr_rank[RW-1:0]};
     end else if (waiting) begin
       // Skip leading zero beats (OSERDESE3 pipeline flush artifact).
       // Start capturing on the first non-zero DQ value.
@@ -208,9 +207,9 @@ module Ddr4SdramModel #(
       // tiles exactly into the two consecutive ISERDESE3 Q windows (4 edges
       // each) that the MC's rddataValid window samples (see run notes).
       rd_armed <= 1'b1;
-      rd_reg   <= mem[{row_state[rd_rank][5:0], last_col[4:0], bank_state[rd_rank], rd_rank[RW-1:0]}];
-      rd_key_last <= {row_state[rd_rank][5:0], last_col[4:0], bank_state[rd_rank], rd_rank[RW-1:0]};
-      rd_pending_err <= !written[{row_state[rd_rank][5:0], last_col[4:0], bank_state[rd_rank], rd_rank[RW-1:0]}];
+      rd_reg   <= mem[{row_state[rd_rank*NBANKS + last_bank][5:0], last_col[4:0], last_bank, rd_rank[RW-1:0]}];
+      rd_key_last <= {row_state[rd_rank*NBANKS + last_bank][5:0], last_col[4:0], last_bank, rd_rank[RW-1:0]};
+      rd_pending_err <= !written[{row_state[rd_rank*NBANKS + last_bank][5:0], last_col[4:0], last_bank, rd_rank[RW-1:0]}];
     end else if (rd_armed && !driving) begin
       rd_armed <= 1'b0;
       driving  <= 1'b1;
