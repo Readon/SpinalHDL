@@ -113,6 +113,8 @@ module tb_tc11_stress;
   wire [15:0]  mem_wr_key_last, mem_rd_key_last;
   wire [255:0] mem_wr_word_last;
   wire         mem_rd_driving, mem_rd_pending_err;
+  wire [15:0]  mem_dqs_blank_cnt;
+  wire         mem_dqs_blank_err;
 
   // ---- model command counters (hierarchical probe into Ddr4PinModel) ---------
   wire [15:0] init_cnt_mrs   = mem.cmd.cnt_mrs;
@@ -285,12 +287,15 @@ module tb_tc11_stress;
     .bg(p_bg), .ba(p_ba), .cid(p_cid),
     .dq(dq),
     .dqs_in(p_dqs_t),
+    .wl_active(tr_wrlvlEn),
     .dqs_echo(dqs_echo_raw),
     .wr_key_last(mem_wr_key_last),
     .rd_key_last(mem_rd_key_last),
     .wr_word_last(mem_wr_word_last),
     .rd_driving(mem_rd_driving),
-    .rd_pending_err(mem_rd_pending_err)
+    .rd_pending_err(mem_rd_pending_err),
+    .dqs_blank_cnt(mem_dqs_blank_cnt),
+    .dqs_blank_err(mem_dqs_blank_err)
   );
 
   // ===========================================================================
@@ -508,6 +513,9 @@ module tb_tc11_stress;
       end
       tr_wrlvlEn = 1'b0;
     end
+    // Hold WL enable for 8 refclk cycles after the response so the model's
+    // wl_active exemption covers the PHY's last DQS edge at window close.
+    repeat(8) @(posedge refclk);
     tr_wrlvlEn = 1'b0;
     $display("WLDBG t=%0t resp=%b mc_en=%b delay=%0d", $time, tr_wrlvlResp, tr_wrlvlEn_mc, wl_converged);
     check(tr_wrlvlResp === 1'b1, "W2: wrlvlResp never earned (loop did not converge)");
@@ -521,6 +529,7 @@ module tb_tc11_stress;
     repeat(1500) @(posedge refclk);  // 15us: init done
     $display("TC11_SEED %0d", SEED);
     rng = SEED;
+
     begin : stress
       integer txn, wr_left, rd_left, g;
       reg op_wr;
@@ -572,12 +581,17 @@ module tb_tc11_stress;
     check(init_cnt_rd >= 512, "PIN: <512 read commands reached the model");
     check(init_cnt_ref > 0, "PIN: no refresh issued during stress window");
 
+    if (mem_dqs_blank_err !== 1'b0)
+      $display("DQSBLANK cnt=%0d", mem_dqs_blank_cnt);
+    check(mem_dqs_blank_err === 1'b0, "DQS: blanking violation (DQS toggled outside write-burst envelope / WL span)");
+
     if (errors == 0)
       $display("TC11_PASS: e2e stress (512W+512R Bmb -> MC -> DFI -> PHY -> model), exact roundtrip + pin legality");
     else
       $display("TC11_FAIL: %0d errors", errors);
     $finish;
   end
+
 
 
 

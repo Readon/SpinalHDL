@@ -527,6 +527,42 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   val wlLoadPulse = wb.load
   wlDelayOut := wb.delay
 
+  // ---------------------------------------------------------------------------
+  // DQS BLANKING (JESD79-4B §4.20/§4.21, AC table tWPRE/tWPST/tDSS/tDSH/tDQSS)
+  //   The DQS pad must not toggle outside the write-burst envelope: the spec
+  //   warns that violating the DQS timing parameters "may cause incorrect
+  //   data to be written". Inside the envelope the leveled DQS (TFF ->
+  //   ODELAYE3) passes through; outside it is PARKED (frozen at the last
+  //   value, hence no transitions). The WL-active span is exempt: write
+  //   leveling drives DQS as a training pattern outside data bursts.
+  //   Envelope (measured, silicon-semantics OSERDESE3 model): wren window
+  //   [ws, ws+20) ns (2 refclk cycles) -> DQ burst [ws+5, ws+25) ns (8 beats
+  //   on dramClk edges). The gate window is therefore [ws, ws+32.5) via the
+  //   6-stage dramClk tail below: it covers the burst plus the tWPST
+  //   postamble margin (~7.5 ns past the last beat, cf. model observer
+  //   POST_UI=5). The free-running TFF is left untouched (WL detector
+  //   reference and ODELAYE3 feed keep their phase); only the PAD is gated.
+  //   Absolute DQS-DQ phase is NOT calibrated here (silicon property: the
+  //   SerDes fabric + WL training establish it); the model observer checks
+  //   BLANKING (no transitions outside the window) and activity AROUND the
+  //   data with two-sided preamble grace, not the absolute phase.
+  // ---------------------------------------------------------------------------
+  // 2-stage dramClk-domain tail: each stage delays by a FULL dramClk period
+  // (5 ns), so the gate window is [ws, ws+32.5) for a wren window [ws, ws+20).
+  // Measured geometry (silicon-semantics OSERDESE3 model): DQ data beats
+  // occupy [ws+5, ws+25) (8 beats on dramClk edges); the model observer's
+  // post window (last beat + POST_UI=5 edges) ends at ws+35, so the DQS pad
+  // must be parked by ws+32.5 at the latest. wrEnLive is refclk-domain; the
+  // first dramClk sample lands 2.5 ns after its rising edge (refclk posedge
+  // == dramClk negedge), so no coincident-edge race. (Silicon note: a 2FF
+  // synchronizer would be inserted here; the margin absorbs its latency.)
+  val dqsTail = Vec.fill(2)(cd { Reg(Bool()) init(False) })
+  cd {
+    dqsTail(0) := wrEnLive
+    dqsTail(1) := dqsTail(0)
+  }
+  val dqsParks = Vec.fill(byteLanes)(cd { Reg(Bool()) init(False) })
+
   // Seq.fill (not Vec.fill) so the concrete ODELAYE3 type is retained.
   val dqsOdelays = Seq.fill(byteLanes)(new ODELAYE3())
   for (l <- 0 until byteLanes) {
@@ -540,8 +576,18 @@ case class UsPhy(cfg: DfiConfig) extends Component {
     dqsOdelays(l).CASC_IN     := False
     dqsOdelays(l).CASC_RETURN := False
     dqsOdelays(l).CNTVALUEIN := wb.delay
-    pads.dqs_t(l) := dqsOdelays(l).DATAOUT
-    pads.dqs_c(l) := !dqsOdelays(l).DATAOUT
+  }
+  // Gate the pad in the dramClk domain: live inside the envelope, parked
+  // outside. dqsWinSlow is COMPUTED HERE (dramClk domain) so the tail vector
+  // is never read cross-domain (the refclk->dramClk reads of wrEnLive/wlActive
+  // are plain synchronous crossings into this domain).
+  cd {
+    val dqsWinSlow = wrEnLive | Cat(dqsTail).orR | wlActive
+    for (l <- 0 until byteLanes) {
+      when(dqsWinSlow) { dqsParks(l) := dqsOdelays(l).DATAOUT }
+      pads.dqs_t(l) := Mux(dqsWinSlow, dqsOdelays(l).DATAOUT, dqsParks(l))
+      pads.dqs_c(l) := !pads.dqs_t(l)
+    }
   }
 
   // CNTVALUEIN is driven by the loop above (dqsOdelays(l).CNTVALUEIN := wb.delay).

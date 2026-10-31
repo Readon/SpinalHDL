@@ -121,6 +121,8 @@ module tb_tc10_e2e;
   wire [15:0]  mem_wr_key_last, mem_rd_key_last;
   wire [255:0] mem_wr_word_last;
   wire         mem_rd_driving, mem_rd_pending_err;
+  wire [15:0]  mem_dqs_blank_cnt;
+  wire         mem_dqs_blank_err;
 
   // ---- model command counters (hierarchical probe into Ddr4PinModel) ---------
   wire [15:0] init_cnt_mrs   = mem.cmd.cnt_mrs;
@@ -293,12 +295,15 @@ module tb_tc10_e2e;
     .bg(p_bg), .ba(p_ba), .cid(p_cid),
     .dq(dq),
     .dqs_in(p_dqs_t),
+    .wl_active(tr_wrlvlEn),
     .dqs_echo(dqs_echo_raw),
     .wr_key_last(mem_wr_key_last),
     .rd_key_last(mem_rd_key_last),
     .wr_word_last(mem_wr_word_last),
     .rd_driving(mem_rd_driving),
-    .rd_pending_err(mem_rd_pending_err)
+    .rd_pending_err(mem_rd_pending_err),
+    .dqs_blank_cnt(mem_dqs_blank_cnt),
+    .dqs_blank_err(mem_dqs_blank_err)
   );
 
   // ===========================================================================
@@ -390,6 +395,9 @@ module tb_tc10_e2e;
       end
       tr_wrlvlEn = 1'b0;
     end
+    // Hold WL enable for 8 refclk cycles after the response so the model's
+    // wl_active exemption covers the PHY's last DQS edge at window close.
+    repeat(8) @(posedge refclk);
     tr_wrlvlEn = 1'b0;
     $display("WLDBG t=%0t resp=%b mc_en=%b delay=%0d", $time, tr_wrlvlResp, tr_wrlvlEn_mc, wl_converged);
     check(tr_wrlvlResp === 1'b1, "W2: wrlvlResp never earned (loop did not converge)");
@@ -490,6 +498,10 @@ module tb_tc10_e2e;
         end
       end
     end
+
+    if (mem_dqs_blank_err !== 1'b0)
+      $display("DQSBLANK cnt=%0d", mem_dqs_blank_cnt);
+    check(mem_dqs_blank_err === 1'b0, "DQS: blanking violation (DQS toggled outside write-burst envelope / WL span)");
 
     if (errors == 0)
       $display("TC10_PASS: e2e forward+read path (Bmb WR/RD -> MC -> DFI -> PHY -> model)");

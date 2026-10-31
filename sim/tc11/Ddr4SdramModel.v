@@ -49,13 +49,16 @@ module Ddr4SdramModel #(
   // ---- data ----------------------------------------------------------------
   inout  wire [15:0]           dq,
   input  wire [1:0]            dqs_in,     // PHY outgoing DQS (write leveling)
+  input  wire                  wl_active,  // WL training span (DQS legitimately toggles here)
   output wire [1:0]            dqs_echo,   // returned DQS (dqs_in_t pin)
   // ---- observability --------------------------------------------------------
   output reg  [KEY_W-1:0]      wr_key_last,
   output reg  [KEY_W-1:0]      rd_key_last,
   output reg  [127:0]          wr_word_last,  // last absorbed write burst (BL8 x16 = 128b)
   output wire                  rd_driving,
-  output reg                   rd_pending_err // read from unwritten location
+  output reg                   rd_pending_err, // read from unwritten location
+  output reg  [15:0]           dqs_blank_cnt,  // DQS blanking violation count (saturating)
+  output reg                   dqs_blank_err   // sticky: any DQS blanking violation
 );
 
   localparam RW = ($clog2(RANKS)>0) ? $clog2(RANKS) : 1;
@@ -178,6 +181,123 @@ module Ddr4SdramModel #(
       end else begin
         wr_reg   <= {dq, wr_reg[127:16]};
         wr_edges <= wr_edges + 4'd1;
+      end
+    end
+  end
+
+  // ==========================================================================
+  // DQS BLANKING OBSERVER (JESD79-4B: tWPRE/tWPST/tDSS/tDSH/tDQSS)
+  //   The PHY DQS pad (dqs_in) must not toggle outside the write-burst
+  //   envelope [firstBeat - PRE_UI, lastBeat + POST_UI], except during WL
+  //   training (wl_active). Also checked: preamble PRESENCE (a DQS
+  //   transition within PRE_UI before the first beat) and postamble
+  //   PRESENCE (a transition within POST_UI after the last beat).
+  //   UI = one ck_t edge. Margins are TOLERANT (PRE_UI=5 = 2.5 tCK >>
+  //   tWPRE 0.9 tCK; POST_UI=5 = 2.5 tCK >> tWPST 0.33 tCK): the spec
+  //   limits are floors, longer preambles are legal (cf. 2tCK mode).
+  //   The preamble is checked TWO-SIDED (a transition within PRE_UI before
+  //   OR POST_UI after the first beat): the PHY's ODELAYE3 delay line
+  //   (WL-trained ~350 taps = 17.5 ns) can make the first output
+  //   transition emerge shortly after the window opens, and the absolute
+  //   DQS-DQ phase is a silicon-calibration property, not a
+  //   PHY-datapath obligation.
+  // ==========================================================================
+  localparam PRE_UI  = 5;
+  localparam POST_UI = 5;
+  reg        dqs_prev;
+  reg [3:0]  dqs_age;    // UIs since last DQS transition (saturates at 15)
+  reg        ooe_pending; // ooe DQS transition episode awaiting a justifying beat
+  reg [3:0]  ooe_wait;    // edges since the episode started
+  reg [3:0]  post_cnt;   // UIs left in the postample window
+  reg        post_seen;  // a transition occurred inside the postamble window
+  reg [3:0]  pend_post;  // post-first-beat grace for late DQS activity
+
+  // SETTLED DQS SAMPLE: the PHY DQS pad can transition EXACTLY on a ck_t edge
+  // (the WL attractor lands the ODELAYE3 delay at a half-odd multiple of tCK,
+  // putting DQS edges on the sampler's own grid), so a same-timestep edge
+  // comparison of dqs_in[0] is scheduler-dependent. Sampling 1ps AFTER each
+  // edge reads the value stable over the preceding half-period: transitions
+  // are detected one ck_t edge LATE but deterministically, and the one-edge
+  // latency fits the PRE_UI/POST_UI grace windows. (Silicon: the DRAM's DQS
+  // receiver samples on its own internal grid; this is a model-robustness
+  // device, not a timing claim.)
+  reg dqs_obs;
+  initial dqs_obs = 1'b0;
+  always @(posedge ck_t or negedge ck_t) begin
+    #1 dqs_obs = dqs_in[0];
+  end
+
+  wire first_beat_now = waiting && dq_defined && (dq !== 16'h0000);
+  wire in_legal_now   = collecting || (post_cnt > 0) || wl_active;
+  wire dqs_chg        = (dqs_obs !== dqs_prev);
+
+
+
+  always @(posedge ck_t or negedge ck_t) begin
+    if (!rst_n) begin
+      dqs_prev <= 1'b0; dqs_age <= 4'd0;
+      ooe_pending <= 1'b0; ooe_wait <= 4'd0;
+      pend_post <= 4'd0;
+      post_cnt <= 4'd0; post_seen <= 1'b0;
+      dqs_blank_cnt <= 16'd0; dqs_blank_err <= 1'b0;
+    end else begin
+      if (dqs_chg) begin        dqs_prev <= dqs_obs;
+        dqs_age  <= 4'd0;
+        if (post_cnt > 0)  post_seen <= 1'b1;
+        if (pend_post > 0) pend_post <= 4'd0;   // activity arrived within grace
+      end else begin
+        dqs_age <= (dqs_age == 4'd15) ? 4'd15 : dqs_age + 4'd1;
+      end
+      // Preamble: the awaited beat arrived -> pending transition was legal.
+      // Preamble (two-sided): a DQS transition within PRE_UI before the first
+      // beat, OR within POST_UI after it (late-emerging delay-line fill), is
+      // legal; the absolute DQS-DQ phase is a silicon-calibration property.
+      if (first_beat_now) begin
+        pend_post <= (dqs_age > PRE_UI[3:0] && !dqs_chg) ? POST_UI[3:0] : 4'd0;
+      end else if (pend_post > 0 && !dqs_chg) begin
+        // Late-preamble grace counting down; expires -> violation.
+        if (pend_post == 4'd1) begin
+          dqs_blank_cnt <= dqs_blank_cnt + 16'd1;
+          dqs_blank_err <= 1'b1;
+          $display("DQSDBG t=%0t REASON=preamble_late_absent wl=%b coll=%b", $time, wl_active, collecting);
+        end
+        pend_post <= pend_post - 4'd1;
+      end
+      // Out-of-envelope activity: a DQS transition outside the legal
+      // envelope starts an episode; a following write beat justifies it,
+      // sustained activity beyond PRE_UI UIs violates (one count per
+      // episode). Episode-based (vs the old per-transition countdown) so a
+      // continuous out-of-envelope stream cannot stall the check.
+      if (dqs_chg && !in_legal_now) begin
+        ooe_pending <= 1'b1;
+      end else if (ooe_pending) begin
+        ooe_wait <= (ooe_wait == 4'd15) ? 4'd15 : ooe_wait + 4'd1;
+        if (ooe_wait >= PRE_UI[3:0]) begin
+          dqs_blank_cnt <= dqs_blank_cnt + 16'd1;
+          dqs_blank_err <= 1'b1;
+          ooe_pending <= 1'b0;
+          ooe_wait    <= 4'd0;
+          $display("DQSDBG t=%0t REASON=out_of_envelope wl=%b coll=%b", $time, wl_active, collecting);
+        end
+      end else begin
+        ooe_wait <= 4'd0;
+      end
+      if (ooe_pending && first_beat_now) ooe_pending <= 1'b0; // beat justifies
+      // Postamble window bookkeeping.
+      if (collecting && wr_edges == BL_BEATS - 1) begin
+        post_cnt  <= POST_UI[3:0];
+        post_seen <= 1'b0;
+      end else if (post_cnt > 0) begin
+        if (post_cnt == 4'd1) begin
+          if (!post_seen) begin
+            dqs_blank_cnt <= dqs_blank_cnt + 16'd1;
+            dqs_blank_err <= 1'b1;
+            $display("DQSDBG t=%0t REASON=postamble_absent", $time);
+          end
+          post_cnt <= 4'd0;
+        end else begin
+          post_cnt <= post_cnt - 4'd1;
+        end
       end
     end
   end

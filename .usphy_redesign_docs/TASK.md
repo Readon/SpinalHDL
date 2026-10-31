@@ -286,6 +286,25 @@
     对齐级）→ TC11_FAIL 1024。变异体用完即删。
   - 回归：DfiControllerTester 28/28。commit 27f6bc8ca。
 
+- **2026-10-31 · DQS 写空窗门控（审计第 1 项落地，tWPRE/tWPST/tDQSS）**：
+  - UsPhy：DQS pad 仅在写包络内（wrEnLive ∪ 2 级 dramClk 拖尾 ≈ [ws, ws+32.5)）
+    直通 ODELAYE3 输出，窗口外锁存最后值（park）——消除自由翻转 TFF 在
+    非写时段产生的非法 DQS 活动（JESD79-4B §4.20/4.21：违反 tWPRE/tWPST/
+    tDQSS 可能写入错数据）。门控逻辑全在 dramClk 域（避免跨域组合读被
+    CrossClockChecker 判违规）。
+  - 模型侧 DQS 观察器（sim/tc10+tc11/Ddr4SdramModel.v）：合法窗口 =
+    采集期 ∪ 后沿窗口（POST_UI=5）∪ WL 活跃期；三类违例
+    preamble_late_absent / out_of_envelope / postamble_absent 计数上报。
+    两个模型鲁棒性修正：① DQS 采样加 1ps 沉降（WL 吸引子把 ODELAYE3
+    延迟钉在 3.5×tCK，DQS 边沿恰落 ck_t 采样网上，同拍比较依赖调度序）；
+    ② 包络外活动改为**episode 语义**（转移开启 episode、随后写拍使其
+    合法化、持续超过 PRE_UI 记一次违例）——旧的逐转移倒计时在连续转移流
+    下会被重武装卡死（负证实测卡死），且与非阻塞赋值竞态纠缠。
+  - **正证**：TC10_PASS / TC11_PASS（DQSBLANK cnt=0，其余指标不变）。
+  - **反证**：PHY_FILE=UsPhy_dqswinopen.v（强制门控窗口常开，DQS 永久
+    自由翻转）→ TC11_FAIL，DQSBLANK cnt=5060（out_of_envelope）。
+    变异体用完即删。
+
 ## 已知限制（KNOWN LIMITATIONS）
 
 以下为**有意保留的边界**（非欠账；硬件范围已冻结，见 2026-10-31 目标裁定）：
