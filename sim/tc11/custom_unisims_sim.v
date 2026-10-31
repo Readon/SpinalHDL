@@ -112,26 +112,33 @@ module OSERDESE3 #(
   integer a;
 
   // PUSH: capture D on CLKDIV posedge (MSB -> lowest FIFO slot first).
+  // The #1 offset lands the write 1ps AFTER the edge, so the same-timestep
+  // POP (active region) always observes the pre-push FIFO state: pop-before-
+  // push semantics pinned, no elaboration-dependent ordering.
   always @(posedge CLKDIV or posedge RST) begin
     if (RST) begin
       wptr = 5'd0;
     end else begin
-      a = wptr[3:0];
-      mem[a]         = D[0];
-      mem[(a+1)&15]  = D[1];
-      mem[(a+2)&15]  = D[2];
-      mem[(a+3)&15]  = D[3];
-      wptr = wptr + 5'd4;
+      #1 begin
+        a = wptr[3:0];
+        mem[a]         = D[0];
+        mem[(a+1)&15]  = D[1];
+        mem[(a+2)&15]  = D[2];
+        mem[(a+3)&15]  = D[3];
+        wptr = wptr + 5'd4;
+      end
     end
   end
 
-  // POP: one bit per CLK edge (both polarities).
+  // POP: one bit per CLK edge (both polarities). oq_q is assigned #1 after the
+  // edge so same-edge observers (the SDRAM model's write absorber) always see
+  // the pre-pop value — deterministic one-edge-later visibility on the pad.
   always @(posedge CLK or negedge CLK or posedge RST) begin
     if (RST) begin
       rptr = 5'd0;
       oq_q = 1'b0;
     end else if (wptr != rptr) begin
-      oq_q = mem[rptr[3:0]];
+      #1 oq_q = mem[rptr[3:0]];
       rptr = rptr + 5'd1;
     end
   end
@@ -165,7 +172,8 @@ module ISERDESE3 #(
   input  wire        RST,
   output wire [3:0]  Q
 );
-  reg [3:0] win;   // win[3] = newest sample
+  reg [3:0] win;   // win[0] = newest sample
+  reg [3:0] win_sh; // race-free snapshot of win (see PRESENT note)
   reg [3:0] q_q;
 
   // SAMPLE: shift D into the 4-sample window on every CLK edge.
@@ -174,10 +182,23 @@ module ISERDESE3 #(
     else     win = {win[2:0], D};
   end
 
-  // PRESENT: freeze the window on CLKDIV posedge.
+  // SHADOW: copy win 1ps after each CLK posedge (the CLK edge immediately
+  // before the next CLKDIV posedge). The #1 offset means the copy lands in a
+  // timestep where no clock edge occurs, so PRESENT (CLKDIV posedge, which
+  // coincides with a CLK negedge) always reads a stable snapshot: the 4
+  // samples STRICTLY before the PRESENT edge. Without this indirection the
+  // SAMPLE and PRESENT blocks share a timestep and their relative order is
+  // elaboration-dependent, shifting Q by one sample per build.
+  initial win_sh = 4'b0;
+  always @(posedge CLK) begin
+    #1 win_sh = win;
+  end
+
+  // PRESENT: freeze the window on CLKDIV posedge. q@T = the 4 samples STRICTLY
+  // BEFORE T (identical to silicon ISERDESE3 Q semantics).
   always @(posedge CLKDIV or posedge RST) begin
     if (RST) q_q = 4'b0;
-    else     q_q = {win[0], win[1], win[2], win[3]};  // Q[0]=newest .. Q[3]=oldest
+    else     q_q = {win_sh[0], win_sh[1], win_sh[2], win_sh[3]};  // Q[0]=newest .. Q[3]=oldest
   end
 
   assign Q = q_q;
