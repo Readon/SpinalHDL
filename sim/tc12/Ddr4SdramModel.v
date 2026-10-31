@@ -55,6 +55,8 @@ module Ddr4SdramModel #(
   input  wire [LANES-1:0]      dqs_in,     // PHY outgoing DQS (write leveling)
   input  wire                  wl_active,  // WL training span (DQS legitimately toggles here)
   output wire [LANES-1:0]      dqs_echo,   // returned DQS (dqs_in_t pin)
+  input  wire [LANES-1:0]      dm_wr,      // PHY outgoing DM/DBI_n (lockstep with DQ)
+  output wire [LANES-1:0]      dm_rd,      // DRAM-returned DM during reads (v1: all-1 = no inversion)
   // ---- observability --------------------------------------------------------
   output reg  [KEY_W-1:0]      wr_key_last,
   output reg  [KEY_W-1:0]      rd_key_last,
@@ -158,6 +160,15 @@ module Ddr4SdramModel #(
 
   wire wr_cmd     = |q_wr_pulse;
   wire dq_defined = (dq !== {DATAW{1'bz}});
+  // DBI/DM (JESD79-4B §4.11): PHY drives DM in lockstep with DQ. bit=1 -> byte
+  // passes as-is (or DM enabled, non-DBI mode); bit=0 -> byte inverted on the
+  // wire; undo on absorb. Burst-alignment checks above/below stay on RAW dq.
+  wire [DATAW-1:0] dq_eff;
+  genvar gdmi;
+  generate for (gdmi = 0; gdmi < LANES; gdmi++) begin : dm_inv
+    assign dq_eff[gdmi*8 +: 8] = dm_wr[gdmi] ? dq[gdmi*8 +: 8] : ~dq[gdmi*8 +: 8];
+  end endgenerate
+  assign dm_rd = {LANES{1'b1}};  // v1 model: no read-side DBI (DBI_n=1 = not inverted)
 
   always @(posedge ck_t or negedge ck_t) begin
     if (!rst_n) begin
@@ -174,16 +185,16 @@ module Ddr4SdramModel #(
         collecting <= 1'b1;
         waiting    <= 1'b0;
         wr_edges   <= 4'd1;
-        wr_reg     <= {dq, {(WORDW-DATAW){1'b0}}};
+        wr_reg     <= {dq_eff, {(WORDW-DATAW){1'b0}}};
       end
     end else if (collecting) begin
       if (wr_edges == BL_BEATS - 1) begin
-        mem[wr_key_last] <= {dq, wr_reg[WORDW-1:DATAW]};
-        wr_word_last     <= {dq, wr_reg[WORDW-1:DATAW]};
+        mem[wr_key_last] <= {dq_eff, wr_reg[WORDW-1:DATAW]};
+        wr_word_last     <= {dq_eff, wr_reg[WORDW-1:DATAW]};
         collecting <= 1'b0;
         written[wr_key_last] <= 1'b1;
       end else begin
-        wr_reg   <= {dq, wr_reg[WORDW-1:DATAW]};
+        wr_reg   <= {dq_eff, wr_reg[WORDW-1:DATAW]};
         wr_edges <= wr_edges + 4'd1;
       end
     end

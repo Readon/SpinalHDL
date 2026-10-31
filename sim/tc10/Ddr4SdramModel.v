@@ -51,6 +51,8 @@ module Ddr4SdramModel #(
   input  wire [1:0]            dqs_in,     // PHY outgoing DQS (write leveling)
   input  wire                  wl_active,  // WL training span (DQS legitimately toggles here)
   output wire [1:0]            dqs_echo,   // returned DQS (dqs_in_t pin)
+  input  wire [1:0]            dm_wr,      // PHY outgoing DM/DBI_n (lockstep with DQ)
+  output wire [1:0]            dm_rd,      // DRAM-returned DM during reads (v1: all-1 = no inversion)
   // ---- observability --------------------------------------------------------
   output reg  [KEY_W-1:0]      wr_key_last,
   output reg  [KEY_W-1:0]      rd_key_last,
@@ -154,6 +156,13 @@ module Ddr4SdramModel #(
 
   wire wr_cmd     = |q_wr_pulse;
   wire dq_defined = (dq !== 16'hzzzzzzzzzzzzzzzz);
+  // DBI/DM (JESD79-4B §4.11): PHY drives DM in lockstep with DQ. bit=1 -> byte
+  // passes as-is (or DM enabled, non-DBI mode); bit=0 -> byte inverted on the
+  // wire; undo on absorb. Burst-alignment checks above/below stay on RAW dq.
+  wire [15:0] dq_eff;
+  assign dq_eff[7:0]  = dm_wr[0] ? dq[7:0]  : ~dq[7:0];
+  assign dq_eff[15:8] = dm_wr[1] ? dq[15:8] : ~dq[15:8];
+  assign dm_rd = 2'b11;  // v1 model: no read-side DBI (DBI_n=1 = not inverted)
 
   always @(posedge ck_t or negedge ck_t) begin
     if (!rst_n) begin
@@ -170,16 +179,16 @@ module Ddr4SdramModel #(
         collecting <= 1'b1;
         waiting    <= 1'b0;
         wr_edges   <= 4'd1;
-        wr_reg     <= {dq, 112'h0};
+        wr_reg     <= {dq_eff, 112'h0};
       end
     end else if (collecting) begin
       if (wr_edges == BL_BEATS - 1) begin
-        mem[wr_key_last] <= {dq, wr_reg[127:16]};
-        wr_word_last     <= {dq, wr_reg[127:16]};
+        mem[wr_key_last] <= {dq_eff, wr_reg[127:16]};
+        wr_word_last     <= {dq_eff, wr_reg[127:16]};
         collecting <= 1'b0;
         written[wr_key_last] <= 1'b1;
       end else begin
-        wr_reg   <= {dq, wr_reg[127:16]};
+        wr_reg   <= {dq_eff, wr_reg[127:16]};
         wr_edges <= wr_edges + 4'd1;
       end
     end

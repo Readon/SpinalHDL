@@ -123,13 +123,10 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   require(cfg.frequencyRatio >= 2,
     s"UsPhy v1 requires frequencyRatio >= 2 (got ${cfg.frequencyRatio}); " +
     s"fr=1 would require OSERDES2 which is not supported.")
-  // Conformance audit (2026-10-31): UsPhy v1 ties pads.dm_dbi_n low and discards
-  // rddataDbiN, so a DBI-enabled config (mr5 A10/A11) would silently corrupt data.
-  // Fail loudly at elaboration instead (until the DBI wire-through lands).
-  require(!cfg.useWrDbi && !cfg.useRdDbi,
-    "UsPhy v1 does not implement DBI/DM: pads.dm_dbi_n is tied low and " +
-    "rddataDbiN is discarded, so enabling DBI (mr5 A10/A11) would silently " +
-    "corrupt data. Keep DBI disabled or await the DBI wire-through extension.")
+  // DBI/DM (JESD79-4B §4.11) is WIRED THROUGH (2026-10-31, conformance audit item 3):
+  //   write: the DM pin carries the per-lane DBI_n bit (useWrDbi) or the byte-mask
+  //          (non-DBI), serialized in lockstep with DQ via a dedicated OSERDESE3.
+  //   read:  rddataDbiN comes from pads.dm_dbi_in (DRAM-driven DM during reads).
   // L2 (ADR-0013 rev.2): the command path honours ALL DFI phases — the
   // dramPhase alternation in Step 3 delivers phase i to DRAM cycle i of each
   // DFI pair (DFI 6.0.1 §2.1: "The PHY must be able to accept a command on
@@ -191,6 +188,7 @@ case class UsPhy(cfg: DfiConfig) extends Component {
     val dqs_c    = out(Vec(Bool(), byteLanes))
     val dqs_in_t = in(Vec(Bool(), byteLanes))   // DQS RETURNED from DRAM (write-leveling echo)
     val dm_dbi_n = out(Vec(Bool(), byteLanes))
+    val dm_dbi_in = in(Vec(Bool(), byteLanes))  // DM RETURNED from DRAM during reads (DBI_n)
   }
 
   // ===========================================================================
@@ -309,6 +307,12 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   val wrEnLive = dfi.write.wr.map(_.wrdataEn).reduce(_||_)
   val wrEnFall = ClockDomain(!sysClk, rstSynced) { Reg(Bool()) init(False) }
   wrEnFall := wrEnLive
+  // Extended DQ-active window (pin-independent: pure RegNext chain of wrEnLive).
+  // Shared by the DQ IOBUFs and the DM/DBI serializers below.
+  val wrEnExt  = Reg(Bool()) init(False)
+  val wrEnExt2 = Reg(Bool()) init(False)
+  wrEnExt  := wrEnLive
+  wrEnExt2 := wrEnExt
 
   for (pin <- 0 until physDqWidth) {
     val oserdes = new OSERDESE3(serdesDw)
@@ -347,10 +351,6 @@ case class UsPhy(cfg: DfiConfig) extends Component {
     // Serialize to the DQ pin via IOBUF (tri-state controlled by write-enable).
     val buf = new USPhy_IOBUF()
     buf.I := oserdes.OQ
-    val wrEnExt  = Reg(Bool()) init(False)
-    val wrEnExt2 = Reg(Bool()) init(False)
-    wrEnExt  := wrEnLive
-    wrEnExt2 := wrEnExt
     // DQ-active window: wren OR wren-delayed-1-or-2-cycles. With the
     // silicon-semantics OSERDESE3 model (zero-latency first bit, 8 contiguous
     // DDR edges per 2-cycle wren window: burst [ws, ws+35)), the last data beat
@@ -409,8 +409,39 @@ case class UsPhy(cfg: DfiConfig) extends Component {
     }
   }
 
-  // DQS / DM / DBI — placeholder (real DQS generation and DM logic in Steps 6-7).
-  pads.dm_dbi_n.foreach(_ := False)
+  // ===========================================================================
+  // DM / DBI serialization (JESD79-4B §4.11) — LOCKSTEP WITH DQ BY CONSTRUCTION.
+  // ===========================================================================
+  // The DRAM samples DQ and DM together: the DM pin must present the DBI_n bit
+  // (DBI mode) or byte-mask (non-DBI) of the byte currently on the DQ wire.
+  // Each lane gets a DEDICATED OSERDESE3 fed with the 2*fr DM slots in the same
+  // order as the DQ frame ([p0.ui0, p0.ui1, p1.ui0, p1.ui1] ...) and driven with
+  // the SAME CLK/CLKDIV/RST/window as that lane's DQ OSERDESE3, so the silicon-
+  // semantics FIFO model pops DM slot k exactly when DQ beat k reaches the pad.
+  // Per-phase byte j layout (matches wrdata bit positions): j=0..lane-1 -> ui0,
+  // j=lane.. -> ui1; hence lane l's ui0/ui1 bits are src(l) / src(l+byteLanes).
+  // Outside the DQ-active window the pad parks at 1 (DM inactive / DBI_n=1 =
+  // not inverted) — the model only samples DM inside collected beats.
+  val dmSrc = (0 until frequencyRatio).map(p =>
+    if (cfg.useWrDbi) dfi.write.wr(p).wrdataDbiN else dfi.write.wr(p).wrdataMask)
+  for (l <- 0 until byteLanes) {
+    val dmOs = new OSERDESE3(serdesDw)
+    dmOs.CLK    := dramClk
+    dmOs.CLKDIV := sysClk
+    dmOs.RST    := rstSynced
+    // Mirror the DQ D-gather order EXACTLY. Phase-word layout is GROUPED BY
+    // LANE: lane l occupies bits [16l+15:16l] (low 8 = ui0 = byte 2l, high 8
+    // = ui1 = byte 2l+1) — the DQ netlist gathers {wr_0[0], wr_0[8], wr_1[0],
+    // wr_1[8]} proving lane0-ui0, lane0-ui1, lane1-ui0, lane1-ui1 wire order.
+    // DM must follow: per lane Cat(ui0_db, ui1_db), ui0 at MSB (emitted first).
+    val dmPairs = (0 until frequencyRatio).reverse.map(p =>
+      Cat(dmSrc(p)(2 * l), dmSrc(p)(2 * l + 1)))
+    val dmFrame = Cat(dmPairs)
+    for (i <- 0 until dmFrame.getWidth) {
+      dmOs.D(i) := Mux(wrEnLive, dmFrame(i), True)
+    }
+    pads.dm_dbi_n(l) := Mux(wrEnLive | wrEnExt | wrEnExt2, dmOs.OQ, True)
+  }
 
   // ===========================================================================
   // Step 6: WRITE LEVELING — real closed loop (ADR-0002 tier: must be REAL)
@@ -642,6 +673,13 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   for (p <- 0 until frequencyRatio) {
     val rdenHist = History(dfi.read.rden(p), tPhyRdlatVal + 1)
     dfi.read.rd(p).rddataValid := rdenHist(tPhyRdlatVal)
-    dfi.read.rd(p).rddataDbiN  := 0  // DBI encoder (future)
+    // DBI_n read-back (JESD79-4B §4.11): the DRAM drives DM during reads; the
+    // MC decodes (DfiAlignment) only when useRdDbi (mr5 A12) — otherwise the
+    // value is ignored, so wiring it unconditionally is safe.
+    if (cfg.useRddataDbiN) {
+      // Field is dbiWidth = dataRate*byteLanes bits (one DBI_n per UI per lane);
+      // the flat model drives one DM value per lane, replicated across UIs.
+      for (j <- 0 until (cfg.dataWidth / 8)) dfi.read.rd(p).rddataDbiN(j) := pads.dm_dbi_in(j % byteLanes)
+    }
   }
 }

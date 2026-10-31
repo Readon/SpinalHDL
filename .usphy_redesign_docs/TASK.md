@@ -331,6 +331,31 @@
     TC12_FAIL 1088；MODEL_FILE=Ddr4SdramModel_nostore.v（写存储禁用）→
     TC12_FAIL 1088。变异体用完即删。
   - 回归：DfiControllerTester 28/28。
+- **2026-10-31 · Step 8c⑧：DBI/DM 真接线（合规审计项 1 收尾，替代 require 守卫）**：
+  - `UsPhy` 移除 `require(!useWrDbi && !useRdDbi)` 硬拒，改为真实实现：
+    写侧每 lane 一条 DM OSERDESE3 串行器（与 DQ 同帧序：相位字按 lane 分组，
+    lane l 占 bits[16l+15:16l]，低字节=ui0=字节 2l，高字节=ui1=字节 2l+1；
+    DM 汇聚 `Cat(dmSrc(p)(2l), dmSrc(p)(2l+1))` 与 DQ 逐位对齐），仅在
+    写窗口 `wrEnLive|wrEnExt|wrEnExt2` 内驱动 `pads.dm_dbi_n`，窗外恒 1；
+    读侧 `rddataDbiN` 由 `pads.dm_dbi_in` 按 lane 复制填充（MC 仅在
+    useRdDbi 时消费）。`dmSrc` = useWrDbi ? MC 编码的 wrdataDbiN : 掩码。
+  - 行为模型（tc10/tc11/tc12 三份 Ddr4SdramModel）新增 `dm_wr`/`dm_rd`
+    端口：吸收侧按 DM 位对 DQ 半字去反相后再入存（`dq_eff`），读出侧
+    `dm_rd` 恒 1（模型不做读侧 DBI 重编码）。
+  - 三个 TB 接线：PHY `.pads_dm_dbi_in_L` ← 模型 `.dm_rd`，模型
+    `.dm_wr` ← PHY `pads_dm_dbi_n_L`；`run_tc11.sh` 增加 `DBI=1` 开关
+    （自动切 UsPhy_dbi.v/DfiController_dbi.v 并用内嵌 python 生成带
+    wrdataDbiN 桥线的 tb_tc11_dbi.v）。
+  - 生成器支持 mr5 参数（UsPhyGen/E2eMcGen 首参）；E2eSmokeGen 的
+    DBI 反证翻转为正证 `SMOKE_positive_dbielaborates_OK`。
+  - **正证**：`DBI=1 ./run_tc11.sh`（mr5=0x1800 启用写/读 DBI）TC11_PASS
+    —— MC 编码器产出的 DBI 位经 PHY DM 串行器到模型去反相，512W+512R
+    随机 + 32 定向用例逐字节精确往返；默认配置（无 DBI）TC10/TC11/TC12
+    全绿不受影响（DM=掩码全 1 时通路中性）。
+  - **反证**：PHY_FILE=UsPhy_dbi_bad.v（两条 DM 输出恒 1，等价断开 DM）
+    → TC11_FAIL 1076（读回为未去反相的 DBI 字节），而 INITCHK/WLDBG/
+    PINCHK 基础设施计数全部正常 —— 数据完整性依赖 DM 通路。变异体用完即删。
+  - 回归：DfiControllerTester 28/28。
 
 ## 已知限制（KNOWN LIMITATIONS）
 
@@ -346,8 +371,10 @@
 4. **TC11 排除非对齐读**（ADR-0015）：模型 32B 单元粒度 vs MC 16B 突发步进；
    非对齐双突发读是 MC 能力，由 28/28 SpinalSim 覆盖。
 5. **§二 残留骨架**（有意不补）：无 MMCM（dramClk 顶层直入，ck_t/ck_c 别名）；
-   DQS 写选通为自由翻转 TFF（无 tDQSS 空白）；无 DBI/DM；读训练 stub
-   （`rdlvlResp:=0`，ADR-0002 tier A）；DFI update/status 未驱动。
+   DQS 底层仍为自由翻转 TFF（翻转速率偏差为硅片校准属性，门控后的 pad 满足
+   窗口内活动/窗外驻留契约，见 8c DQS 条目）；DBI/DM 写路径已真接线（8c⑧），
+   模型不做读侧 DBI 重编码；读训练 stub（`rdlvlResp:=0`，ADR-0002 tier A）；
+   DFI update/status 未驱动。
 6. **§三 板级属性**（UNVERIFIED_ON_BOARD，行为仿真不可表达）：CA setup/hold、
    MMCM 绝对相位、PVT/VTC、硅片眼图签核。
 7. **模型键截断**：row[5:0]/col[4:0] 环绕（64×32 单元/rank/bank），TB 地址

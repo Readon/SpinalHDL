@@ -101,6 +101,7 @@ module tb_tc11_stress;
   wire        p_odt_0, p_odt_1, p_reset_n, p_par;
   wire [1:0]  p_dqs_t, p_dqs_c, p_dm_dbi_n;
   wire [1:0]  dqs_echo_raw;   // model output (returned DQS)
+  wire [1:0]  mem_dm_out;     // model DM during reads -> PHY dm_dbi_in
   wire [1:0]  p_dqs_in_t;     // cut-muxed feed to the PHY dqs_in_t pads
   wire [1:0]  pads_dqs_t, pads_dqs_c, pads_dm_dbi_n;
   wire [8:0]  wlDelayOut;
@@ -279,7 +280,8 @@ module tb_tc11_stress;
     .pads_dqs_t_0(pads_dqs_t[0]), .pads_dqs_t_1(pads_dqs_t[1]),
     .pads_dqs_c_0(pads_dqs_c[0]), .pads_dqs_c_1(pads_dqs_c[1]),
     .pads_dqs_in_t_0(p_dqs_in_t[0]), .pads_dqs_in_t_1(p_dqs_in_t[1]),
-    .pads_dm_dbi_n_0(pads_dm_dbi_n[0]), .pads_dm_dbi_n_1(pads_dm_dbi_n[1])
+    .pads_dm_dbi_n_0(pads_dm_dbi_n[0]), .pads_dm_dbi_n_1(pads_dm_dbi_n[1]),
+    .pads_dm_dbi_in_0(mem_dm_out[0]), .pads_dm_dbi_in_1(mem_dm_out[1])
   );
 
   // ===========================================================================
@@ -297,6 +299,8 @@ module tb_tc11_stress;
     .dqs_in(p_dqs_t),
     .wl_active(tr_wrlvlEn),
     .dqs_echo(dqs_echo_raw),
+    .dm_wr(pads_dm_dbi_n),
+    .dm_rd(mem_dm_out),
     .wr_key_last(mem_wr_key_last),
     .rd_key_last(mem_rd_key_last),
     .wr_word_last(mem_wr_word_last),

@@ -121,17 +121,12 @@ object E2eSmokeGen {
       val fast = mkSdram(16, ddrMHZ = 800)
       if (fast.tWR < 12) throw new RuntimeException(s"SMOKE_TWRFLOOR_FAIL: tWR=${fast.tWR} < 12 cycles at ddrMHZ=800 (spec min 15ns)")
       println(s"SMOKE_twrfloor_ok (tWR@800MHz=${fast.tWR} cycles)")
-      // Conformance-audit negative proof (item 1): the DBI/DM guard must reject a
-      // DBI-enabled config at elaboration (UsPhy ties dm_dbi_n low + discards
-      // rddataDbiN, so accepting it would silently corrupt data).
-      var dbiRejected = false
-      try {
-        SpinalVerilog(SpinalConfig(targetDirectory = base.getAbsolutePath, mode = Verilog))(UsPhy(mkCfg(16, 2, mr5 = 0x1800, useRddataDbiN = true)))
-      } catch {
-        case e: Throwable => dbiRejected = Option(e.getMessage).exists(_.contains("DBI")) || e.toString.toUpperCase.contains("DBI")
-      }
-      if (!dbiRejected) throw new RuntimeException("SMOKE_DBIGUARD_FAIL: DBI-enabled elaboration unexpectedly succeeded (guard gone?)")
-      println("SMOKE_negative_dbirejected_OK")
+      // Conformance-audit item 3 (DBI/DM wire-through, 2026-10-31): a DBI-enabled
+      // config (mr5 A10+A11) must ELABORATE — the old loud-failure guard is retired
+      // because UsPhy now serializes the DM/DBI pin in lockstep with DQ and reads
+      // rddataDbiN back from the DRAM-returned DM pad.
+      SpinalVerilog(SpinalConfig(targetDirectory = base.getAbsolutePath, mode = Verilog))(UsPhy(mkCfg(16, 2, mr5 = 0x1800, useRddataDbiN = true)))
+      println("SMOKE_positive_dbielaborates_OK")
       println("SMOKE_ALL_OK")
     } finally {
       rmTree(base)
