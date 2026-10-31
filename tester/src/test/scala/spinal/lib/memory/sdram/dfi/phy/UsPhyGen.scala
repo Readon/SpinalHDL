@@ -26,7 +26,7 @@ object UsPhyGen {
       tPhyRdlat = 1, tPhyRdCsGap = 3, tPhyRdCslat = 0, tPhyWrCsLat = 0,
       tWrlvlResp = 16
     )
-    val signalConfig = new DDR4SignalConfig(DfiFunctionConfig(useTrainingSignals = true), false) {}
+    val signalConfig = new DDR4SignalConfig(DfiFunctionConfig(useTrainingSignals = true, useStatusSignals = true), false) {}
     val cfg = DfiConfig(
       chipSelectNumber = 2, dataSlice = 1,
       signalConfig = signalConfig, timeConfig = timeConfig,

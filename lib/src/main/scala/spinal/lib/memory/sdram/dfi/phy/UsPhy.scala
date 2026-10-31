@@ -147,6 +147,14 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   val wlDelayOut = out(UInt(9 bits))   // observability: current ODELAYE3 delay counter (dramClk domain)
   val rdDelayOut = out(UInt(9 bits))   // observability: current read-leveling IDELAYE3 delay counter (dramClk domain)
 
+  // DFI 6.0.1 management plane (status channel), minimal v1 (ADR-0016): this PHY has no
+  // internal initialization state (no MMCM lock wait, no internal training), so
+  // dfi_init_complete is asserted as soon as the bundle exists; dfi_alert_n stays high
+  // (no error source). dfi_init_start is accepted but has NO internal action - there is
+  // nothing to initialize.
+  if (cfg.useInitStart) dfi.status.initComplete := True
+  if (cfg.useAlertN) dfi.status.alertN.setAll()
+
   // Parameter axes (ADR-0003). All derived from cfg — no extra external knobs.
   val generation     = cfg.sdram.generation
   val frequencyRatio = cfg.frequencyRatio

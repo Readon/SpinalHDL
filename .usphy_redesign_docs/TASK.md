@@ -390,6 +390,28 @@
     多 seed 矩阵消除单 seed 侥幸。
   - 回归：DfiControllerTester 28/28（本步无 lib 变更，复测确认）。
     变异体用完即删（`UsPhy_phaseswap.v` / `tb_tc12_seed*.v` 不入仓）。
+- **2026-10-31 · Step 8c⑪：DFI 管理平面 v1（init/start/complete，ADR-0016）**：
+  - 范围（用户裁定「最小版」）：`useStatusSignals` 三生成器开启；MC 侧
+    `initStart` 单周期脉冲 + `freqRatio` 常量 + 其余状态输入清零；PHY 侧
+    `initComplete` 常高 + `alertN` 去断言；PHY 不响应 `initStart`（无频率
+    切换场景，重锚定风险大于收益）。端口经 `Dfi` bundle 扩展，无新增顶层
+    独立端口（ADR-0012 维持）。
+  - 证据（本次全部新鲜实测）：
+    - TC10/TC11/TC12 各增 `INITCHK2` 七字段检查，三套全绿：
+      `INITCHK2 initComplete=1 initStartSeen=1 freqRatio=10 alertN=11
+      parityIn=00 dbDis=0000(4b,x16)/00000000(8b,x32) clkDis=00`。
+    - 反证：netlist 突变 `assign dfi_status_initComplete = 1'b0`（突变体
+      `UsPhy_negmgmt.v`，用完即删）→ `FAIL: MGMT: initComplete not
+      asserted`，恰 1 条错误无级联；删除后 `TC11_PASS` 恢复。
+  - 回归：DfiControllerTester 28/28；E2eSmokeGen `SMOKE_ALL_OK`
+    （含 fr1 拒绝 / tWR floor / DBI elaboration 三项常驻反证）。
+  - 环境备注：本机 Vivado 2023.1 `xvlog` 编译进名为 `work` 的逻辑库时会
+    活锁（100% CPU、0 字节日志，4/4 复现），其他库名 <1s（3/3）；三个 run
+    脚本统一改用 `-work xwork` + `xelab -L xwork` + 顶层限定
+    `xwork.tb_*`（已在脚本内注释）。
+  - 推迟项（非欠账，ADR-0016）：频率变更协议（MMCM）、`update` 接口
+    （MC 侧上游未实现）、`phymngd`（不在 DFI 6.0.1 bundle）、奇偶检测、
+    `dramClkDisable` 实际门控语义。
 
 ## 已知限制（KNOWN LIMITATIONS）
 
@@ -408,7 +430,7 @@
    DQS 底层仍为自由翻转 TFF（翻转速率偏差为硅片校准属性，门控后的 pad 满足
    窗口内活动/窗外驻留契约，见 8c DQS 条目）；DBI/DM 写路径已真接线（8c⑧），
    模型不做读侧 DBI 重编码；读 leveling 已真实闭环（8c⑨，ADR-0002 Rev.2），读 gate/read eye 仍为 stub（tier A）；
-   DFI update/status 未驱动。
+   DFI status 通道 v1 已接线（8c⑪，ADR-0016），`update` 接口与频率变更协议推迟（ADR-0016）。
 6. **§三 板级属性**（UNVERIFIED_ON_BOARD，行为仿真不可表达）：CA setup/hold、
    MMCM 绝对相位、PVT/VTC、硅片眼图签核。
 7. **模型键截断**：row[5:0]/col[4:0] 环绕（64×32 单元/rank/bank），TB 地址

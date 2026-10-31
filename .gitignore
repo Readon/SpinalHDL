@@ -92,3 +92,7 @@ sim/simulation_plugins/*
 !.mill-version
 !.scalafmt.conf
 !.travis.yml
+
+# Vivado simulator CWD leftovers (xvlog/xelab persistence)
+xvlog.pb
+xelab.pb

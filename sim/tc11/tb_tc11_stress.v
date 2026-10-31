@@ -95,6 +95,13 @@ module tb_tc11_stress;
   wire [3:0]  tr_lvlPattern;
   wire        tr_lvlPeriodic;
   wire [1:0]  tr_phylvlReqCsN, tr_phylvlAckCsN;
+  // DFI management plane (status channel) - ADR-0016 v1
+  wire        dfi_status_initStart, dfi_status_initComplete;
+  wire [1:0]  dfi_status_freqRatio, dfi_status_alertN, dfi_status_parityIn;
+  wire [3:0]  dfi_status_dataByteDisable;
+  wire [1:0]  dfi_status_dramClkDisable;
+  reg         init_start_seen = 1'b0;
+  always @(posedge refclk) if (dfi_status_initStart) init_start_seen = 1'b1;
 
   // ---- PHY pads <-> model ----------------------------------------------------
   wire [15:0] dq;
@@ -212,7 +219,14 @@ module tb_tc11_stress;
     .io_dfi_levelingTraining_lvlPattern(tr_lvlPattern),
     .io_dfi_levelingTraining_lvlPeriodic(tr_lvlPeriodic),
     .io_dfi_phyRequestedTraining_phylvlReqCsN(tr_phylvlReqCsN),
-    .io_dfi_phyRequestedTraining_phylvlAckCsN(tr_phylvlAckCsN)
+    .io_dfi_phyRequestedTraining_phylvlAckCsN(tr_phylvlAckCsN),
+    .io_dfi_status_initStart(dfi_status_initStart),
+    .io_dfi_status_initComplete(dfi_status_initComplete),
+    .io_dfi_status_freqRatio(dfi_status_freqRatio),
+    .io_dfi_status_alertN(dfi_status_alertN),
+    .io_dfi_status_parityIn(dfi_status_parityIn),
+    .io_dfi_status_dataByteDisable(dfi_status_dataByteDisable),
+    .io_dfi_status_dramClkDisable(dfi_status_dramClkDisable)
   );
 
   // ===========================================================================
@@ -294,7 +308,14 @@ module tb_tc11_stress;
     .pads_dqs_c_0(pads_dqs_c[0]), .pads_dqs_c_1(pads_dqs_c[1]),
     .pads_dqs_in_t_0(p_dqs_in_t[0]), .pads_dqs_in_t_1(p_dqs_in_t[1]),
     .pads_dm_dbi_n_0(pads_dm_dbi_n[0]), .pads_dm_dbi_n_1(pads_dm_dbi_n[1]),
-    .pads_dm_dbi_in_0(mem_dm_out[0]), .pads_dm_dbi_in_1(mem_dm_out[1])
+    .pads_dm_dbi_in_0(mem_dm_out[0]), .pads_dm_dbi_in_1(mem_dm_out[1]),
+    .dfi_status_initStart(dfi_status_initStart),
+    .dfi_status_initComplete(dfi_status_initComplete),
+    .dfi_status_freqRatio(dfi_status_freqRatio),
+    .dfi_status_alertN(dfi_status_alertN),
+    .dfi_status_parityIn(dfi_status_parityIn),
+    .dfi_status_dataByteDisable(dfi_status_dataByteDisable),
+    .dfi_status_dramClkDisable(dfi_status_dramClkDisable)
   );
 
   // ===========================================================================
@@ -726,6 +747,19 @@ module tb_tc11_stress;
     if (mem_dqs_blank_err !== 1'b0)
       $display("DQSBLANK cnt=%0d", mem_dqs_blank_cnt);
     check(mem_dqs_blank_err === 1'b0, "DQS: blanking violation (DQS toggled outside write-burst envelope / WL span)");
+
+    // ---- DFI MANAGEMENT PLANE (ADR-0016 v1) ----------------------------------
+    $display("INITCHK2 initComplete=%b initStartSeen=%b freqRatio=%b alertN=%b parityIn=%b dbDis=%b clkDis=%b",
+             dfi_status_initComplete, init_start_seen, dfi_status_freqRatio,
+             dfi_status_alertN, dfi_status_parityIn,
+             dfi_status_dataByteDisable, dfi_status_dramClkDisable);
+    check(dfi_status_initComplete === 1'b1, "MGMT: initComplete not asserted");
+    check(init_start_seen === 1'b1, "MGMT: initStart pulse never observed");
+    check(dfi_status_freqRatio === 2'b10, "MGMT: freqRatio != 2");
+    check(dfi_status_alertN === 2'b11, "MGMT: alertN not high");
+    check(dfi_status_parityIn === 2'b00, "MGMT: parityIn not idle-0");
+    check(dfi_status_dataByteDisable === 4'b0000, "MGMT: dataByteDisable not idle-0");
+    check(dfi_status_dramClkDisable === 2'b00, "MGMT: dramClkDisable not idle-0");
 
     if (errors == 0)
       $display("TC11_PASS: e2e stress (512W+512R Bmb -> MC -> DFI -> PHY -> model), exact roundtrip + pin legality");

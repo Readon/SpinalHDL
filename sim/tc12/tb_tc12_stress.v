@@ -85,6 +85,17 @@ module tb_tc12_stress;
   wire        tr_lvlPeriodic;
   wire [1:0]  tr_phylvlReqCsN, tr_phylvlAckCsN;
 
+  // ---- DFI management plane (feature 4) ------------------------------------
+  wire       st_initStart;
+  wire [1:0] st_freqRatio;
+  wire       st_initComplete;
+  wire [1:0] st_alertN;
+  wire [1:0] st_parityIn;
+  wire [7:0] st_dataByteDisable;
+  wire [1:0] st_dramClkDisable;
+  reg init_start_seen = 1'b0;
+  always @(posedge refclk) if (st_initStart) init_start_seen = 1'b1;
+
   // ---- PHY pads <-> model ----------------------------------------------------
   wire [31:0] dq;
   wire        p_ck_t, p_ck_c, p_cke_0, p_cke_1, p_cs_n_0, p_cs_n_1;
@@ -199,7 +210,14 @@ module tb_tc12_stress;
     .io_dfi_levelingTraining_lvlPattern(tr_lvlPattern),
     .io_dfi_levelingTraining_lvlPeriodic(tr_lvlPeriodic),
     .io_dfi_phyRequestedTraining_phylvlReqCsN(tr_phylvlReqCsN),
-    .io_dfi_phyRequestedTraining_phylvlAckCsN(tr_phylvlAckCsN)
+    .io_dfi_phyRequestedTraining_phylvlAckCsN(tr_phylvlAckCsN),
+    .io_dfi_status_initStart(st_initStart),
+    .io_dfi_status_freqRatio(st_freqRatio),
+    .io_dfi_status_initComplete(st_initComplete),
+    .io_dfi_status_alertN(st_alertN),
+    .io_dfi_status_parityIn(st_parityIn),
+    .io_dfi_status_dataByteDisable(st_dataByteDisable),
+    .io_dfi_status_dramClkDisable(st_dramClkDisable)
   );
 
   // ===========================================================================
@@ -256,6 +274,13 @@ module tb_tc12_stress;
     .dfi_phyRequestedTraining_phylvlAckCsN(tr_phylvlAckCsN),
     .wlDelayOut(wlDelayOut),
     .rdDelayOut(rdDelayOut),
+    .dfi_status_initComplete(st_initComplete),
+    .dfi_status_alertN(st_alertN),
+    .dfi_status_initStart(st_initStart),
+    .dfi_status_freqRatio(st_freqRatio),
+    .dfi_status_parityIn(st_parityIn),
+    .dfi_status_dataByteDisable(st_dataByteDisable),
+    .dfi_status_dramClkDisable(st_dramClkDisable),
     .pads_ck_t(p_ck_t), .pads_ck_c(p_ck_c),
     .pads_cke_0(p_cke_0), .pads_cke_1(p_cke_1),
     .pads_cs_n_0(p_cs_n_0), .pads_cs_n_1(p_cs_n_1),
@@ -664,6 +689,17 @@ module tb_tc12_stress;
     if (mem_dqs_blank_err !== 1'b0)
       $display("DQSBLANK cnt=%0d", mem_dqs_blank_cnt);
     check(mem_dqs_blank_err === 1'b0, "DQS: blanking violation (DQS toggled outside write-burst envelope / WL span)");
+
+    // ---- DFI management plane (feature 4) ----------------------------------
+    $display("INITCHK2 initComplete=%b initStartSeen=%b freqRatio=%b alertN=%b parityIn=%b dbDis=%b clkDis=%b",
+             st_initComplete, init_start_seen, st_freqRatio, st_alertN, st_parityIn, st_dataByteDisable, st_dramClkDisable);
+    check(st_initComplete === 1'b1, "MGMT: initComplete not asserted");
+    check(init_start_seen === 1'b1, "MGMT: initStart pulse not observed");
+    check(st_freqRatio === 2'b10, "MGMT: freqRatio != 2");
+    check(st_alertN === 2'b11, "MGMT: alertN not deasserted");
+    check(st_parityIn === 2'b00, "MGMT: parityIn not 0");
+    check(st_dataByteDisable === 8'b0, "MGMT: dataByteDisable not 0");
+    check(st_dramClkDisable === 2'b00, "MGMT: dramClkDisable not 0");
 
     if (errors == 0)
       $display("TC12_PASS: x32 e2e stress (512W+512R Bmb -> MC -> DFI -> PHY -> model), exact roundtrip + pin legality");

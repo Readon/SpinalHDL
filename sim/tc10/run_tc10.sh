@@ -22,14 +22,17 @@ echo "===== xvlog (custom SerDes/delay models replace golden+VIP) ====="
 # ABSENT: custom_unisims_sim.v provides silicon-semantics behavioral models
 # under the same module names (Plan A: expel the inverted-CLKDIV sim hack).
 VPFILES=$(ls "$WORK"/*.vp 2>/dev/null | grep -vi 'oserdese3\|iserdese3' | tr '\n' ' ')
-xvlog -sv glbl.v custom_modules.v custom_unisims_sim.v \
+# -work xwork: explicit NON-default library name. Vivado 2023.1 xvlog on this host
+# livelocks (100% CPU, 0-byte log) when the work dir is literally named 'work'
+# (4/4 spin) but completes in <1s with any other name (3/3). xelab must match.
+xvlog -sv -work xwork glbl.v custom_modules.v custom_unisims_sim.v \
       $VPFILES \
       Ddr4PinModel.v $MODEL_FILE \
       $PHY_FILE DfiController.v \
       $TB_FILE
 
 echo "===== xelab ====="
-xelab tb_tc10_e2e -s tb_tc10_e2e -d . --debug typical
+xelab xwork.tb_tc10_e2e -s tb_tc10_e2e -d . -L xwork --debug typical
 
 echo "===== xsim ====="
 timeout 300 xsim tb_tc10_e2e -R 2>&1 | tee xsim_tc10.log
