@@ -9,8 +9,9 @@
 #   TB_FILE=...      swap the testbench          (default tb_tc11_stress.v)
 #   MODEL_FILE=...   swap the SDRAM model        (default Ddr4SdramModel.v)
 #   PHY_FILE=...     swap the PHY netlist        (default UsPhy.v)
-#   SEED is a Verilog parameter of the TB (default 42); pass a mutant TB for
-#   a different seed, or edit the parameter in a copied TB.
+#   SEED=<n>         stress seed (default 42). Non-default seeds build a sed
+#                    mutant tb_tc11_seed<n>.v (same module name) — the xvlog
+#                    -define route turned out unreliable on the full file list.
 # ============================================================================
 set -e
 XV=${XILINX_VIVADO:-/tools/Xilinx/Vivado/2023.1}
@@ -18,6 +19,12 @@ WORK="$(cd "$(dirname "$0")" && pwd)"
 TB_FILE="${TB_FILE:-tb_tc11_stress.v}"
 MODEL_FILE="${MODEL_FILE:-Ddr4SdramModel.v}"
 PHY_FILE="${PHY_FILE:-UsPhy.v}"
+SEED="${SEED:-42}"
+if [ "$SEED" != "42" ] && [ "${TB_FILE:-tb_tc11_stress.v}" = "tb_tc11_stress.v" ]; then
+  sed "s/^  parameter SEED = 42;$/  parameter SEED = ${SEED};/" tb_tc11_stress.v > "tb_tc11_seed${SEED}.v"
+  TB_FILE="tb_tc11_seed${SEED}.v"
+  echo "SEED=${SEED} -> mutant TB ${TB_FILE}"
+fi
 export PATH="$XV/bin:$PATH"
 cd "$WORK"
 

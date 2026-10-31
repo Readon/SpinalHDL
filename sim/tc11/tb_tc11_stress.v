@@ -17,6 +17,14 @@
 //     cell stay scoreboard-consistent (no write-history RAM needed).
 //   * Reads only from a 64-entry ring of recently written addresses.
 //   * ~10% chance of a 1-8 cycle idle gap between transactions.
+//   * Directed phase BEFORE the random stress:
+//       (a) 8 overwrite pairs: write salt-A -> read -> overwrite salt-B ->
+//           read (proves a second write fully replaces the first);
+//       (b) 16 corner cells: {rank 0/1} x {bank 0/15} x {row 0/63} x
+//           {colBytes 0/48} written with salt-C and read back exactly
+//           (key-space extremes + dual-rank CS separation on shared DQ).
+//     Directed addresses are NOT pushed to the ring, so the random phase's
+//     salt-0 expectation stays consistent.
 // Checks:
 //   * TC10 preamble: init passthrough (INITCHK) + WL closed loop [345..355].
 //   * Every read: 2 fragments, EXACT vs f(key), context echo == 2'b01.
@@ -470,6 +478,50 @@ module tb_tc11_stress;
     end
   endtask
 
+  // ---- salted payload variants (directed phase) ------------------------------
+  // Same content addressing plus a XOR salt, so the SAME cell can hold
+  // distinguishable contents across overwrite/corner phases.
+  function [7:0] paybyte_s(input [15:0] k, input [7:0] i, input [7:0] salt);
+    paybyte_s = k[7:0] ^ k[15:8] ^ i ^ salt;
+  endfunction
+
+  function [63:0] payfrag_s(input [15:0] k, input [3:0] base, input [7:0] salt);
+    integer kk;
+    begin
+      for (kk = 0; kk < 8; kk = kk + 1)
+        payfrag_s[kk*8 +: 8] = paybyte_s(k, base + kk[3:0], salt);
+    end
+  endfunction
+
+  // 16-byte content-addressed write burst with explicit salt.
+  task bmb_wr_burst_s(input [ADDR_W-1:0] addr, input [7:0] salt);
+    integer i;
+    begin
+      for (i = 0; i < 2; i = i + 1) begin
+        bmb_cmd_valid   = 1'b1;
+        bmb_cmd_opcode  = 1'b1;
+        bmb_cmd_address = addr;
+        bmb_cmd_length  = 10'd1;
+        bmb_cmd_data    = (i == 0) ? payfrag_s(mk_key(addr), 4'd0, salt)
+                                   : payfrag_s(mk_key(addr), 4'd8, salt);
+        bmb_cmd_mask    = 8'hFF;
+        bmb_cmd_context = 2'b00;
+        bmb_cmd_last    = (i == 1);
+        @(posedge refclk);
+        while (!bmb_cmd_ready) @(posedge refclk);
+        if (i == 1) tb_wr_acc = tb_wr_acc + 1;
+        #1;
+        if (i == 0) begin
+          bmb_cmd_valid = 1'b0;
+          @(posedge refclk);
+          bmb_cmd_valid = 1'b1;
+        end
+      end
+      bmb_cmd_valid = 1'b0;
+      bmb_cmd_last  = 1'b0;
+    end
+  endtask
+
   // ===========================================================================
   // Main stimulus
   // ===========================================================================
@@ -529,6 +581,55 @@ module tb_tc11_stress;
     repeat(1500) @(posedge refclk);  // 15us: init done
     $display("TC11_SEED %0d", SEED);
     rng = SEED;
+
+    // ---- DIRECTED: overwrite pairs + corner matrix ----------------------------
+    // (a) 8 overwrite pairs spread over rank/bank; (b) 16 corner cells.
+    // Serialized self-contained sequences: write -> read -> exact compare.
+    begin : directed
+      integer di, cj;
+      reg [28:0] da;
+      reg [12:0] drow;
+      reg [10:0] dcol;
+      reg [3:0]  dbank;
+      reg        drank;
+      reg [63:0] df0, df1;
+      integer    dn;
+      reg [1:0]  dctx;
+      for (di = 0; di < 8; di = di + 1) begin
+        da = {di[0], 13'(di), 4'(di * 2), 11'd0};
+        bmb_wr_burst_s(da, 8'hA5);
+        bmb_rd_burst(da, 2'b01);
+        collect_rsp(df0, df1, dn, dctx);
+        $display("DIROVW t=%0t ovw=%0d addr=%07h salt=A5 rn=%0d f0=%016h ex0=%016h",
+                 $time, di, da, dn, df0, payfrag_s(mk_key(da), 4'd0, 8'hA5));
+        check(dn == 2, "DIR-OVW: expected 2 response fragments (salt A)");
+        check(df0 === payfrag_s(mk_key(da), 4'd0, 8'hA5), "DIR-OVW: frag0 salt-A mismatch");
+        check(df1 === payfrag_s(mk_key(da), 4'd8, 8'hA5), "DIR-OVW: frag1 salt-A mismatch");
+        bmb_wr_burst_s(da, 8'h5A);
+        bmb_rd_burst(da, 2'b01);
+        collect_rsp(df0, df1, dn, dctx);
+        $display("DIROVW t=%0t ovw=%0d addr=%07h salt=5A rn=%0d f0=%016h ex0=%016h",
+                 $time, di, da, dn, df0, payfrag_s(mk_key(da), 4'd0, 8'h5A));
+        check(dn == 2, "DIR-OVW: expected 2 response fragments (salt B)");
+        check(df0 === payfrag_s(mk_key(da), 4'd0, 8'h5A), "DIR-OVW: frag0 salt-B mismatch (overwrite failed?)");
+        check(df1 === payfrag_s(mk_key(da), 4'd8, 8'h5A), "DIR-OVW: frag1 salt-B mismatch (overwrite failed?)");
+      end
+      for (cj = 0; cj < 16; cj = cj + 1) begin
+        drank = cj[0];
+        dbank = cj[1] ? 4'd15 : 4'd0;
+        drow  = cj[2] ? 13'd63 : 13'd0;
+        dcol  = cj[3] ? 11'd48 : 11'd0;
+        da = {drank, drow, dbank, dcol};
+        bmb_wr_burst_s(da, 8'hC3);
+        bmb_rd_burst(da, 2'b01);
+        collect_rsp(df0, df1, dn, dctx);
+        $display("DIRCOR t=%0t cor=%0d addr=%07h key=%04h rn=%0d f0=%016h ex0=%016h",
+                 $time, cj, da, mk_key(da), dn, df0, payfrag_s(mk_key(da), 4'd0, 8'hC3));
+        check(dn == 2, "DIR-COR: expected 2 response fragments");
+        check(df0 === payfrag_s(mk_key(da), 4'd0, 8'hC3), "DIR-COR: frag0 mismatch (corner cell)");
+        check(df1 === payfrag_s(mk_key(da), 4'd8, 8'hC3), "DIR-COR: frag1 mismatch (corner cell)");
+      end
+    end
 
     begin : stress
       integer txn, wr_left, rd_left, g;
@@ -591,7 +692,6 @@ module tb_tc11_stress;
       $display("TC11_FAIL: %0d errors", errors);
     $finish;
   end
-
 
 
 
