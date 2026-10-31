@@ -123,6 +123,13 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   require(cfg.frequencyRatio >= 2,
     s"UsPhy v1 requires frequencyRatio >= 2 (got ${cfg.frequencyRatio}); " +
     s"fr=1 would require OSERDES2 which is not supported.")
+  // Conformance audit (2026-10-31): UsPhy v1 ties pads.dm_dbi_n low and discards
+  // rddataDbiN, so a DBI-enabled config (mr5 A10/A11) would silently corrupt data.
+  // Fail loudly at elaboration instead (until the DBI wire-through lands).
+  require(!cfg.useWrDbi && !cfg.useRdDbi,
+    "UsPhy v1 does not implement DBI/DM: pads.dm_dbi_n is tied low and " +
+    "rddataDbiN is discarded, so enabling DBI (mr5 A10/A11) would silently " +
+    "corrupt data. Keep DBI disabled or await the DBI wire-through extension.")
   // L2 (ADR-0013 rev.2): the command path honours ALL DFI phases — the
   // dramPhase alternation in Step 3 delivers phase i to DRAM cycle i of each
   // DFI pair (DFI 6.0.1 §2.1: "The PHY must be able to accept a command on

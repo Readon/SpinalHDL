@@ -22,7 +22,7 @@ import java.nio.file.Files
   * elaboration-level smoke only.
   */
 object E2eSmokeGen {
-  private def mkSdram(dataWidth: Int): SdramConfig = {
+  private def mkSdram(dataWidth: Int, ddrMHZ: Int = 200): SdramConfig = {
     val sdramtime = SdramTiming(
       generation = 3, RFC = 260, RAS = 38, RP = 15, RCD = 15,
       WTR = 8, WTP = 0, RTP = 8, RRD = 6, REF = 64000, FAW = 35
@@ -31,13 +31,13 @@ object E2eSmokeGen {
       SdramGeneration.DDR4,
       bgWidth = 1, cidWidth = 1, bankWidth = 4,
       columnWidth = 10, rowWidth = 13,
-      dataWidth = dataWidth, ddrMHZ = 200, ddrWrLat = 4, ddrRdLat = 4,
+      dataWidth = dataWidth, ddrMHZ = ddrMHZ, ddrWrLat = 4, ddrRdLat = 4,
       sdramtime = sdramtime
     )
   }
 
-  private def mkCfg(dataWidth: Int, nranks: Int): DfiConfig = {
-    val sdram = mkSdram(dataWidth)
+  private def mkCfg(dataWidth: Int, nranks: Int, ddrMHZ: Int = 200, mr5: Int = 0, useRddataDbiN: Boolean = false): DfiConfig = {
+    val sdram = mkSdram(dataWidth, ddrMHZ)
     val timeConfig = DfiTimeConfig(
       frequencyRatio = 2, cmdPhase = 0,
       // tPhyWrData = 0: e2e-verified value (see E2eMcGen) — UsPhy implements
@@ -47,11 +47,13 @@ object E2eSmokeGen {
       tPhyRdlat = 1, tPhyRdCsGap = 3, tPhyRdCslat = 0, tPhyWrCsLat = 0,
       tWrlvlResp = 16
     )
-    val signalConfig = new DDR4SignalConfig(DfiFunctionConfig(useTrainingSignals = true), false) {}
+    val signalConfig = if (useRddataDbiN) new DDR4SignalConfig(DfiFunctionConfig(useTrainingSignals = true), false) {
+      override val useRddataDbiN = true
+    } else new DDR4SignalConfig(DfiFunctionConfig(useTrainingSignals = true), false) {}
     DfiConfig(
       chipSelectNumber = nranks, dataSlice = 1,
       signalConfig = signalConfig, timeConfig = timeConfig,
-      sdram = sdram, ddr4ModeRegs = Ddr4ModeRegs(),
+      sdram = sdram, ddr4ModeRegs = Ddr4ModeRegs(mr5 = mr5),
       initSteps = None, bootTraining = false
     )
   }
@@ -112,6 +114,24 @@ object E2eSmokeGen {
       }
       if (!negativeOk) throw new RuntimeException("SMOKE_NEGATIVE_FAIL: fr=1 elaboration unexpectedly succeeded (boundary require gone?)")
       println("SMOKE_negative_fr1_rejected_OK")
+      // Conformance-audit negative proof (item 2): tWR must scale with speed.
+      // At ddrMHZ=800 (DDR4-3200, 1.25ns nominal cycle) the JESD79-4B AC minimum
+      // (15ns) demands >= 12 cycles; the old hardcoded 6-cycle constant violated
+      // this and would be caught here.
+      val fast = mkSdram(16, ddrMHZ = 800)
+      if (fast.tWR < 12) throw new RuntimeException(s"SMOKE_TWRFLOOR_FAIL: tWR=${fast.tWR} < 12 cycles at ddrMHZ=800 (spec min 15ns)")
+      println(s"SMOKE_twrfloor_ok (tWR@800MHz=${fast.tWR} cycles)")
+      // Conformance-audit negative proof (item 1): the DBI/DM guard must reject a
+      // DBI-enabled config at elaboration (UsPhy ties dm_dbi_n low + discards
+      // rddataDbiN, so accepting it would silently corrupt data).
+      var dbiRejected = false
+      try {
+        SpinalVerilog(SpinalConfig(targetDirectory = base.getAbsolutePath, mode = Verilog))(UsPhy(mkCfg(16, 2, mr5 = 0x1800, useRddataDbiN = true)))
+      } catch {
+        case e: Throwable => dbiRejected = Option(e.getMessage).exists(_.contains("DBI")) || e.toString.toUpperCase.contains("DBI")
+      }
+      if (!dbiRejected) throw new RuntimeException("SMOKE_DBIGUARD_FAIL: DBI-enabled elaboration unexpectedly succeeded (guard gone?)")
+      println("SMOKE_negative_dbirejected_OK")
       println("SMOKE_ALL_OK")
     } finally {
       rmTree(base)
