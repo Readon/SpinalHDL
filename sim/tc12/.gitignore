@@ -1,0 +1,9 @@
+*
+!.gitignore
+!run_tc12.sh
+!tb_tc12_stress.v
+!Ddr4SdramModel.v
+!Ddr4PinModel.v
+!custom_unisims_sim.v
+!custom_modules.v
+!glbl.v

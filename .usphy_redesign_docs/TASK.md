@@ -317,6 +317,21 @@
   - **反证**：MODEL_FILE=Ddr4SdramModel_nostore.v（写存储禁用）→
     TC11_FAIL 1088 错（定向覆写/角单元 + 随机读全部失配）。变异体用完即删。
 
+- **2026-10-31 · Step 8c⑦：TC12 x32 端到端压力测试（数据宽度维度闭环）**：
+  - 新增 `tester/.../dfi/phy/Tc12X32Gen.scala`：dataWidth=32/fr=2/nranks=2
+    的 MC+PHY 网表生成（BMB word=128b=16B，1 DRAM burst (BL8 x32) = 32B
+    = 2 BMB 字；写 length=1 / 读 length=31）。
+  - `sim/tc12/`：TC11 流量契约在 32 位 DQ 上的移植——512W+512R 随机压测
+    + 32 条定向用例（覆写对 + 角单元矩阵），内容寻址载荷逐字节精确比对；
+    Ddr4SdramModel 参数化 `DATAW`（16/32，LANES=DATAW/8，词宽 DATAW*8），
+    命令解码几何不变，仅 DQ 词宽缩放。
+  - **正证**：SEED=42/7/1234 三次全新编译均 TC12_PASS（PINCHK wr=rd=544，
+    illegal=0，ref=24，DQSBLANK=0，WL delay=350）。
+  - **反证**：PHY_FILE=UsPhy_phaseswap.v（128 处读分布 Q 抽头互换）→
+    TC12_FAIL 1088；MODEL_FILE=Ddr4SdramModel_nostore.v（写存储禁用）→
+    TC12_FAIL 1088。变异体用完即删。
+  - 回归：DfiControllerTester 28/28。
+
 ## 已知限制（KNOWN LIMITATIONS）
 
 以下为**有意保留的边界**（非欠账；硬件范围已冻结，见 2026-10-31 目标裁定）：
