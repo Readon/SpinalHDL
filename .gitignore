@@ -93,3 +93,6 @@ sim/simulation_plugins/*
 !.scalafmt.conf
 !.travis.yml
 docs/I2C Bus Specification and User Manual (UM10204).pdf
+
+# Generated Verilog artifacts
+lib/*.v
