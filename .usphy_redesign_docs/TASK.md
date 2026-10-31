@@ -375,6 +375,22 @@
     read eye 仍为档 A stub。
   - 回归：DfiControllerTester 28/28。
 
+- **2026-10-31 · Step 8c⑩：覆盖度加码（多 seed 矩阵 + x32/x16 反证固化）**：
+  - 证据矩阵（本次全部新鲜实测；TC12 SEED 旋钮与 32 条定向用例自
+    d125066e4 已就位，无需新增代码）：
+    - TC12（x32）多 seed：SEED=42/7/1234 均 `TC12_PASS`
+      （512W+512R 随机 + 32 定向，逐字节精确往返 + 引脚合法性）。
+    - TC12 x32 phaseswap 反证：对 `UsPhy.v` 全部 128 行读分布
+      （32 lane × 2 bit × 2 相位）做相邻 tap 互换 Q[3]↔Q[2]、Q[1]↔Q[0]
+      （python 正则替换含 `_rddata[` 的行），`PHY_FILE=UsPhy_phaseswap.v`
+      构建突变体 → `TC12_FAIL: 1088 errors`。读路径严格依赖 tap 排序。
+    - 顺带复测 TC11（x16）同类反证：同配方 64 行互换 →
+      `TC11_FAIL: 1088 errors`；移除突变体后 `TC11_PASS` 恢复。
+  - 结论：读路径 tap 排序的 e2e 覆盖在 x16/x32 两个宽度上均由反证固化；
+    多 seed 矩阵消除单 seed 侥幸。
+  - 回归：DfiControllerTester 28/28（本步无 lib 变更，复测确认）。
+    变异体用完即删（`UsPhy_phaseswap.v` / `tb_tc12_seed*.v` 不入仓）。
+
 ## 已知限制（KNOWN LIMITATIONS）
 
 以下为**有意保留的边界**（非欠账；硬件范围已冻结，见 2026-10-31 目标裁定）：
