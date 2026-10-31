@@ -81,3 +81,15 @@ command
 sim/yolo/rtl/__simulation_def.v
 sim/simulation_plugins/*
 !sim/simulation_plugins/.gitignore
+
+# Whitelist for the dot file
+.*
+!.gitattributes
+!.github
+!.gitignore
+!.gitmodules
+!.jvmopts
+!.mill-version
+!.scalafmt.conf
+!.travis.yml
+docs/I2C Bus Specification and User Manual (UM10204).pdf
