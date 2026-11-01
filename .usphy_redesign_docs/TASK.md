@@ -412,6 +412,34 @@
   - 推迟项（非欠账，ADR-0016）：频率变更协议（MMCM）、`update` 接口
     （MC 侧上游未实现）、`phymngd`（不在 DFI 6.0.1 bundle）、奇偶检测、
     `dramClkDisable` 实际门控语义。
+- **2026-11-01 · Step 8c⑫：全通路 BMB 压力测试 TC13（多源乱序 + 背压饱和 + 带掩码写）**：
+  - 动机：既有 e2e TB（TC10/11/12）只驱动单源、满掩码 BMB；MC 之上
+    BMB 层的乱序应答、背压、子字写均无 e2e 覆盖。经 grill 会话裁定四进二弃：
+    纳入 ①多源+乱序 rsp ②背压饱和 ③带掩码写 e2e（前置模型升级 8c⑧ 后续）
+    ④回归底线；放弃 exclusive/inv/sync（BmbParameter 默认关闭且 MC 不消费，
+    未实例化）与 error-rsp 定向用例（MC 从不产出 ERROR）。
+  - 布局：新建 `sim/tc13/`（不动 seed 敏感的 TC11）；x16/fr=2/2-rank；复用
+    TC11 的 PHY netlist；MC netlist 以 `E2eMcGen 0 1`（新增 sourceWidth 参数，
+    缺省 0 保持兼容）生成 sourceWidth=1 变体。单一 TB 顺序三阶段，沿用
+    TC11 前言（init + WL + RL + INITCHK/INITCHK2），单一 PASS 门 + 分相计数。
+  - 内容：P1 多源：2 source 共享地址空间强制交织，128 轮 ×（wr×2 → 收写
+    rsp → rd×2 → 收读 rsp），上下文三重记分牌（末写字节精确比对 /
+    rsp 上下文与发起端一致 / 计数守恒 248W+496R+192W+384R）；P2 背压：
+    64 轮中每第 5 轮先停 rsp 侧 100 拍再持续灌 cmd，看门狗 + 1:1 无丢失/
+    重复；P3 带掩码写：8 地址 × 6 类掩码（半拍/散点/单字节），启用字节=
+    新值、禁用字节=旧值逐字节比对（依赖 8c⑧ 模型 DM 双语义升级）。
+  - 关键纪律（首跑教训）：同址 RAW 责任在请求方 —— 写完必须收到写 rsp
+    才能发同址读（BMB 消费者契约，与 28/28 BmbMasterAgent 纪律一致）；
+    MC 不为同址 RAW 兜底排序。另：rsp 记账必须在消费侧计数（主块是唯一
+    消费者，构造上精确）；观察型 always 块在 xsim 会漏采亚沿握手。
+  - 证据（本次全部新鲜实测）：正向 `TC13_PASS`（种子 42/7/1234 三绿，
+    PINCHK wr=rd=440 illegal=0，RSCNT 四类计数全守恒，INITCHK2 干净）；
+    反证 N1：PHY netlist `pads_dm_dbi_n` 恒 1 突变（`UsPhy_negdm.v`，用完
+    即删）→ 恰 P3 64 条字节失配（P1/P2 不受扰，定位精准）；反证 N2：MC
+    netlist 顶层 rsp source/context 回显切断（`DfiController_negecho.v`）
+    → P1 大面积失配（RSPECHO + 分类失效）；两突变删除后 `TC13_PASS` 恢复。
+  - 回归：DfiControllerTester 28/28；TC10/11/12 未触碰（CUT 1 模型升级后
+    各自复测过绿，见上一条目链）。
 
 ## 已知限制（KNOWN LIMITATIONS）
 
@@ -435,6 +463,10 @@
    MMCM 绝对相位、PVT/VTC、硅片眼图签核。
 7. **模型键截断**：row[5:0]/col[4:0] 环绕（64×32 单元/rank/bank），TB 地址
    契约限定在该空间内。
+8. **BMB 同址 RAW 责任在请求方**（8c⑫ 实证）：DfiController 不保证同地址
+   写后读的返回序保护；请求方须收齐写 rsp 后再发同址读。TC13 按此纪律
+   组织激励；P2 背压窗口取保守值（100 refclk 拍 ≪ rsp 缓冲寿命），长于
+   缓冲寿命的反压属滥用（触发 MC 侧 `rsp isStall` assert）。
 
 ## 关键约束（红线）
 1. **不发明协议语义**：所有命令编码/MR 值/timing 常数复用 MC 蓝本，不另编。

@@ -32,14 +32,31 @@
 - **byte lane (octet)** — DDR4 数据通路的原子单位 = 8 DQ + 1 DQS 差分对 + 1 DM/DBI。
   x16 = 2 个 byte lane，x32 = 4 个 byte lane。写 leveling 按 byte lane 独立（JESD79-4B
   L2701：“both byte lanes should be leveled independently … separate feedback mechanism
-  for each byte lane”）。注意：**“subchannel” 不是 JEDEC 术语**（全文 0 次出现），勿用。
+  for each byte lane”；L11929 “for each DQS_t/DQS_c pair in case of x16”）。
+  注意：**“subchannel” 不是 JEDEC 术语**（全文 0 次出现），勿用。
 - **CS_n（per-rank）** — 片选按 **rank** 计，是命令编码的一部分（JESD79-4B L713：“CS_n
   provides for external Rank selection … CS_n is considered part of the command code”）。
   x32 ballout 仅有 CS_n（+ CS1_n 留给 3DS 叠 die）。DFI 侧 `csN = Bits(chipSelectNumber ×
   frequencyRatio)`（DFI.scala:13）印证：按 chip(rank) 计宽、按 phase 细分，**与 dataWidth 无关**。
 - **64-bit ≠ 单器件** — DDR4 器件只有 x4/x8/x16/x32，**无 x64**。系统级 64-bit 接口 =
   2 个物理 x32 channel（2 套 CA/CK/CS/ODT 命令总线），是拓扑翻倍，不是 dataWidth 旋钮。
-
-- **byte lane (octet)** — DDR4 数据通路原子单位 = 8 DQ + 1 DQS 差分对 + 1 DM/DBI。x16 = 2 个 byte lane，x32 = 4 个 byte lane。写 leveling 按 byte lane 独立（JESD79-4B L2701 “both byte lanes should be leveled independently … a separate feedback mechanism for each byte lane”；L11929 “for each DQS_t/DQS_c pair in case of x16”）。⚠️ **“subchannel” 不是 JEDEC 术语**（全文 0 次出现），勿用。
-- **CS_n（per-rank）** — 片选按 **rank** 计，是命令编码的一部分（JESD79-4B L713 “CS_n provides for external Rank selection … CS_n is considered part of the command code”）。x32 ballout 仅有 CS_n（+CS1_n 留给 3DS 叠 die）。DFI 侧 `csN = Bits(chipSelectNumber × frequencyRatio)`（DFI.scala:13）：按 chip(rank) 计宽、按 phase 细分，**与数据宽度/byte lane 无关**。
 - **单 DFI 出口 / 单物理 channel** — MC 的 DfiController 只暴露一个 `io.dfi = master(Dfi(cfg))`。MakeTask “both channels” 指 ctrlmsg(DDR4) vs legacy-wrlvl(DDR2/3) 两条**训练传输通道**，非物理 channel。
+
+## 全通路测试词汇（8c⑫，2026-11-01）
+
+- **全通路测试 (full-path test)** — 激励自最上层接口（BMB）注入、穿越 MC→DFI→PHY→
+  引脚→行为模型的全链路，断言落在两端可见的物理字节与协议事件上（区别于仅 MC 级
+  的 28/28 或仅 DFI 级的 TC10/11/12）。TC13 为第一个全通路压力 TB。
+- **source（BMB 源）** — BMB 事务的发起者编号（`BmbCmd.source`，宽度 `bmbp.sourceWidth`）。
+  MC 支持多源并发并允许**乱序应答**（同一源的连续事务可被后发事务的 rsp 超车）；
+  请求方靠 `context` 字段自行配对。TC13 用 2 源共享地址空间强制交织。
+- **背压饱和 (backpressure saturation)** — 故意长时间拉低 `bmb_rsp.ready` 验证 MC 的
+  rsp 排队能力与最终排空（无死锁、无丢失/重复、吞吐>0）。TC13 取保守窗口
+  （100 refclk 拍 ≪ rsp 缓冲寿命）；长于缓冲寿命属滥用（触发 MC 侧 isStall assert）。
+- **带掩码写 (masked write)** — `BmbCmd.mask` 部分置位的写：仅启用字节落存储，禁用字节
+  保留旧值。端到端语义链：BMB mask → MC `wrdataMask` → PHY DM 脚（非 DBI 模式下
+  DM = 写字节使能，JEDEC 正确用法）→ 模型按字节选择吸收。
+- **DM 双语义** — DDR4 DM/DBI 引脚的双重角色：DBI 模式下为数据反码指示（逻辑 1 =
+  正常极性），非 DBI 模式下为写字节使能。UsPhy（`UsPhy.scala:435` 附近）与
+  Ddr4SdramModel（`USE_WRDBI` 参数）均以同一开关选择语义；全掩码/DBI 恒 1 时两种
+  语义退化为同一行为（向后兼容依据）。
