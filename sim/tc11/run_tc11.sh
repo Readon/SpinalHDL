@@ -51,6 +51,9 @@ subs = [
    "    .dfi_write_wr_0_wrdata(dfi_wr_0_data),\n    .dfi_write_wr_0_wrdataDbiN(dfi_wr_0_dbi),"),
   ("    .dfi_write_wr_1_wrdata(dfi_wr_1_data),",
    "    .dfi_write_wr_1_wrdata(dfi_wr_1_data),\n    .dfi_write_wr_1_wrdataDbiN(dfi_wr_1_dbi),"),
+  # DBI mode: model must interpret DM as DBI_n, not byte-enable.
+  ("  Ddr4SdramModel #(.ECHO_DELAY_PS(2500)) mem (",
+   "  Ddr4SdramModel #(.ECHO_DELAY_PS(2500), .USE_WRDBI(1)) mem ("),
 ]
 for old, new in subs:
     assert s.count(old) == 1, old[:50]

@@ -34,6 +34,8 @@ module Ddr4SdramModel #(
   parameter KEY_W          = 16,   // {row[5:0], col[4:0], bank[3:0], rank[1:0]}
   parameter ECHO_DELAY_PS  = 0,    // analog DQS echo delay in ps (granularity-preserving for WL)
   parameter TCL_DELAY_EDGES  = 2,   // tCL emulation (reserved; bursts arm 1 edge after decode)
+  parameter USE_WRDBI        = 1'b0,// 1: DM pad = DBI_n (1=pass, 0=inverted on wire)
+                                    // 0: DM pad = write byte-enable (1=accept byte, 0=keep old value)
   parameter LANES          = DATAW/8,
   parameter WORDW          = DATAW*8
 )(
@@ -157,23 +159,43 @@ module Ddr4SdramModel #(
   reg        collecting;
   reg [3:0]  wr_edges;
   reg [WORDW-1:0] wr_reg;
+  reg [WORDW-1:0] mask_reg;
 
   wire wr_cmd     = |q_wr_pulse;
   wire dq_defined = (dq !== {DATAW{1'bz}});
   // DBI/DM (JESD79-4B §4.11): PHY drives DM in lockstep with DQ. bit=1 -> byte
   // passes as-is (or DM enabled, non-DBI mode); bit=0 -> byte inverted on the
   // wire; undo on absorb. Burst-alignment checks above/below stay on RAW dq.
-  wire [DATAW-1:0] dq_eff;
+  // DM dual semantics (USE_WRDBI):
+  //   =1: DM = DBI_n (1=pass, 0=byte inverted on the wire; undone on absorb)
+  //   =0: DM = write byte-enable (1=accept this byte, 0=reject -> old memory
+  //       byte is kept, per JESD79-4B masked-write semantics)
+  wire [DATAW-1:0] beat_cap;
+  wire [DATAW-1:0] beat_mask;
   genvar gdmi;
-  generate for (gdmi = 0; gdmi < LANES; gdmi++) begin : dm_inv
-    assign dq_eff[gdmi*8 +: 8] = dm_wr[gdmi] ? dq[gdmi*8 +: 8] : ~dq[gdmi*8 +: 8];
+  generate for (gdmi = 0; gdmi < LANES; gdmi++) begin : dm_sem
+    assign beat_cap[gdmi*8 +: 8]  = USE_WRDBI ? (dm_wr[gdmi] ? dq[gdmi*8 +: 8] : ~dq[gdmi*8 +: 8])
+                                             : dq[gdmi*8 +: 8];
+    assign beat_mask[gdmi*8 +: 8] = USE_WRDBI ? {8{1'b1}} : {8{dm_wr[gdmi]}};
   end endgenerate
   assign dm_rd = {LANES{1'b1}};  // v1 model: no read-side DBI (DBI_n=1 = not inverted)
+
+  // Masked-write merge: disabled bytes keep the OLD memory value.
+  //   USE_WRDBI=1 or full mask => wr_mword all-ones => pure pass-through
+  //   (behaviour identical to the pre-upgrade model).
+  wire [WORDW-1:0] wr_word  = {beat_cap, wr_reg[WORDW-1:DATAW]};
+  wire [WORDW-1:0] wr_mword = {beat_mask, mask_reg[WORDW-1:DATAW]};
+  reg  [WORDW-1:0] wr_merged;
+  integer gm;
+  always @(*) begin
+    for (gm = 0; gm < WORDW/8; gm = gm + 1)
+      wr_merged[gm*8 +: 8] = wr_mword[gm*8 +: 8] ? wr_word[gm*8 +: 8] : mem[wr_key_last][gm*8 +: 8];
+  end
 
   always @(posedge ck_t or negedge ck_t) begin
     if (!rst_n) begin
       waiting <= 1'b0; collecting <= 1'b0;
-      wr_edges <= 4'd0; wr_reg <= {WORDW{1'b0}};
+      wr_edges <= 4'd0; wr_reg <= {WORDW{1'b0}}; mask_reg <= {WORDW{1'b1}};
       wr_key_last <= {KEY_W{1'b0}}; wr_word_last <= {WORDW{1'b0}};
     end else if (wr_cmd && !collecting && !waiting) begin
       waiting     <= 1'b1;
@@ -185,16 +207,18 @@ module Ddr4SdramModel #(
         collecting <= 1'b1;
         waiting    <= 1'b0;
         wr_edges   <= 4'd1;
-        wr_reg     <= {dq_eff, {(WORDW-DATAW){1'b0}}};
+        wr_reg     <= {beat_cap, {(WORDW-DATAW){1'b0}}};
+        mask_reg   <= {beat_mask, {(WORDW-DATAW){1'b1}}};
       end
     end else if (collecting) begin
       if (wr_edges == BL_BEATS - 1) begin
-        mem[wr_key_last] <= {dq_eff, wr_reg[WORDW-1:DATAW]};
-        wr_word_last     <= {dq_eff, wr_reg[WORDW-1:DATAW]};
+        mem[wr_key_last] <= wr_merged;
+        wr_word_last     <= wr_word;
         collecting <= 1'b0;
         written[wr_key_last] <= 1'b1;
       end else begin
-        wr_reg   <= {dq_eff, wr_reg[WORDW-1:DATAW]};
+        wr_reg   <= {beat_cap, wr_reg[WORDW-1:DATAW]};
+        mask_reg <= {beat_mask, mask_reg[WORDW-1:DATAW]};
         wr_edges <= wr_edges + 4'd1;
       end
     end

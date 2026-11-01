@@ -1,21 +1,25 @@
 // ============================================================================
-// Ddr4SdramModel — command-driven behavioral SDRAM (x16, 2 ranks)
+// Ddr4SdramModel — command-driven behavioral SDRAM (x16/x32, 2 ranks)
 //
 // Extends Ddr4PinModel (command decode, TC8-validated) with a DATA PATH:
 //   * WRITE: on a decoded WR command, WAIT for DQ to become defined (the PHY
 //     drives DQ tPhyWrLat DFI cycles after the WR command), then absorb
-//     BL_BEATS=8 DDR beats (8 ck_t edges, both edges) = 128 bits = one BL8 x16
-//     burst, store in mem[]. (This codebase's DDR4 is BL8, SdramConfig.scala.)
+//     BL_BEATS=8 DDR beats (8 ck_t edges, both edges) = DATAW*8 bits = one
+//     BL8 burst, store in mem[]. (This codebase's DDR4 is BL8, SdramConfig.scala.)
 //   * READ:  on a decoded RD command, drive BL_BEATS=8 DDR beats from mem[]
 //     starting on the edge AFTER the command decode (tCL ~ half-cycle
 //     approximation; deterministic for TB alignment).
 //   * DQS ECHO: dqs_in (PHY outgoing DQS during write leveling) is echoed
-//     back on dqs_echo (the dqs_in_t pin) after ECHO_DELAY_EDGES ck_t edges
+//     back on dqs_echo (the dqs_in_t pin) after ECHO_DELAY_PS analog delay
 //     (tc1/tc4 mechanism).
 //
 // Storage key (16 bits): {row[5:0], col[4:0], bank[3:0], rank[1:0]}
 //   col field = latched WR/RD column[4:0]. Row wraps modulo 64 — self-test/
 //   e2e pick distinct rows, no collision.
+//
+// Widths: DATAW=16 (x16) or 32 (x32); LANES=DATAW/8 DQS lanes; word=DATAW*8.
+// Command/command-decode geometry is identical (shared CA bus); only the DQ
+// word width scales.
 //
 // Bidirectional DQ: model drives only during a read burst (dq = z otherwise);
 // the PHY drives during write bursts (and tri-states otherwise — IOBUF.T).
@@ -23,15 +27,17 @@
 // ============================================================================
 `timescale 1ns/1ps
 module Ddr4SdramModel #(
+  parameter DATAW          = 16,   // DQ width: 16 (x16) or 32 (x32)
   parameter RANKS          = 2,
-  parameter BL_BEATS       = 8,    // BL8 x16: 8 beats = 8 ck_t edges
+  parameter BL_BEATS       = 8,    // BL8: 8 beats = 8 ck_t edges
   parameter MEM_ENTRIES    = 65536,
   parameter KEY_W          = 16,   // {row[5:0], col[4:0], bank[3:0], rank[1:0]}
-  parameter ECHO_DELAY_PS    = 0,   // analog DQS echo delay in ps (granularity-preserving for WL)
-  parameter TCL_DELAY_EDGES  = 2    // tCL emulation: delay before driving DQ on read;
-                                     // MUST land the first beat's drive interval on a
-                                     // refclk POSEDGE (bursts align to refclk cycles,
-                                     // one 4-beat Q window per PRESENT edge).
+  parameter ECHO_DELAY_PS  = 0,    // analog DQS echo delay in ps (granularity-preserving for WL)
+  parameter TCL_DELAY_EDGES  = 2,   // tCL emulation (reserved; bursts arm 1 edge after decode)
+  parameter USE_WRDBI        = 1'b0,// 1: DM pad = DBI_n (1=pass, 0=inverted on wire)
+                                    // 0: DM pad = write byte-enable (1=accept byte, 0=keep old value)
+  parameter LANES          = DATAW/8,
+  parameter WORDW          = DATAW*8
 )(
   // ---- command pins (mirrors Ddr4PinModel) --------------------------------
   input  wire                  ck_t,
@@ -47,16 +53,16 @@ module Ddr4SdramModel #(
   input  wire [2:0]            ba,
   input  wire                  cid,
   // ---- data ----------------------------------------------------------------
-  inout  wire [15:0]           dq,
-  input  wire [1:0]            dqs_in,     // PHY outgoing DQS (write leveling)
+  inout  wire [DATAW-1:0]      dq,
+  input  wire [LANES-1:0]      dqs_in,     // PHY outgoing DQS (write leveling)
   input  wire                  wl_active,  // WL training span (DQS legitimately toggles here)
-  output wire [1:0]            dqs_echo,   // returned DQS (dqs_in_t pin)
-  input  wire [1:0]            dm_wr,      // PHY outgoing DM/DBI_n (lockstep with DQ)
-  output wire [1:0]            dm_rd,      // DRAM-returned DM during reads (v1: all-1 = no inversion)
+  output wire [LANES-1:0]      dqs_echo,   // returned DQS (dqs_in_t pin)
+  input  wire [LANES-1:0]      dm_wr,      // PHY outgoing DM/DBI_n (lockstep with DQ)
+  output wire [LANES-1:0]      dm_rd,      // DRAM-returned DM during reads (v1: all-1 = no inversion)
   // ---- observability --------------------------------------------------------
   output reg  [KEY_W-1:0]      wr_key_last,
   output reg  [KEY_W-1:0]      rd_key_last,
-  output reg  [127:0]          wr_word_last,  // last absorbed write burst (BL8 x16 = 128b)
+  output reg  [WORDW-1:0]      wr_word_last,  // last absorbed write burst (BL8 xDATAW)
   output wire                  rd_driving,
   output reg                   rd_pending_err, // read from unwritten location
   output reg  [15:0]           dqs_blank_cnt,  // DQS blanking violation count (saturating)
@@ -93,7 +99,7 @@ module Ddr4SdramModel #(
   );
 
   // ==========================================================================
-  // Per-rank ROW/BANK STATE (latched on ACT; WR/RD only carry COLUMN)
+  // Per-rank ROW/BANK STATE (latched on ACT; WR/RD carry COLUMN + BANK)
   // NOTE: last_* fields come from Ddr4PinModel's single layer-2 always block,
   // so readers always see a CONSISTENT snapshot (all-pre or all-post edge).
   // Assumes at most one rank ACTs per ck_t cycle (true in this topology's
@@ -101,8 +107,8 @@ module Ddr4SdramModel #(
   // ==========================================================================
   localparam NBANKS = 16;  // 1 BG + 3 BA
   // Per-(rank,bank) open-row state: DDR4 banks are independent; RD/WR carry
-  // their bank on BG/BA (Table 17), so the row key must come from the
-  // command's own bank, not a single per-rank "last ACT" shadow.
+  // their bank on BG/BA (JESD79-4B Table 17), so the row key must come from
+  // the command's own bank, not a single per-rank "last ACT" shadow.
   reg [15:0] row_state  [0:RANKS*NBANKS-1];
   integer k;
   reg [RW-1:0] wr_rank, rd_rank;
@@ -128,67 +134,91 @@ module Ddr4SdramModel #(
   // ==========================================================================
   // Storage
   // ==========================================================================
-  reg [127:0] mem [0:MEM_ENTRIES-1];
+  reg [WORDW-1:0] mem [0:MEM_ENTRIES-1];
   reg         written [0:MEM_ENTRIES-1];
   integer mi;
   initial begin
     for (mi = 0; mi < MEM_ENTRIES; mi = mi + 1) begin
-      mem[mi] = 128'h0;
+      mem[mi] = {WORDW{1'b0}};
       written[mi] = 1'b0;
     end
   end
 
   // ==========================================================================
   // WRITE burst absorber
-  //   BL8 x16: 8 beats, one per ck_t edge (pos or neg). The PHY drives DQ
+  //   BL8 xDATAW: 8 beats, one per ck_t edge (pos or neg). The PHY drives DQ
   //   tPhyWrLat DFI cycles AFTER the WR command, so on the WR pulse we enter
   //   a WAIT state and capture beat0 on the first edge where DQ is defined
   //   (non-Z); then collect BL_BEATS beats.
-  //   Accumulator invariant: newest beat at top slot [127:112]; each shift
-  //   {dq, wr_reg[127:16]} slides old content DOWN one slot (slot 0 falls off).
-  //   Start parks beat0 at TOP ({dq, 112'h0}); completion word =
-  //   {dq, wr_reg[127:16]} => {b7, b6, ..., b0}.
+  //   Accumulator invariant: newest beat at top slot [WORDW-1:WORDW-DATAW];
+  //   each shift {dq, wr_reg[WORDW-1:DATAW]} slides old content DOWN one slot
+  //   (slot 0 falls off). Start parks beat0 at TOP ({dq, zeros}); completion
+  //   word = {dq, wr_reg[WORDW-1:DATAW]} => {b7, b6, ..., b0}.
   // ==========================================================================
   reg        waiting;
   reg        collecting;
   reg [3:0]  wr_edges;
-  reg [127:0] wr_reg;
+  reg [WORDW-1:0] wr_reg;
+  reg [WORDW-1:0] mask_reg;
 
   wire wr_cmd     = |q_wr_pulse;
-  wire dq_defined = (dq !== 16'hzzzzzzzzzzzzzzzz);
+  wire dq_defined = (dq !== {DATAW{1'bz}});
   // DBI/DM (JESD79-4B §4.11): PHY drives DM in lockstep with DQ. bit=1 -> byte
   // passes as-is (or DM enabled, non-DBI mode); bit=0 -> byte inverted on the
   // wire; undo on absorb. Burst-alignment checks above/below stay on RAW dq.
-  wire [15:0] dq_eff;
-  assign dq_eff[7:0]  = dm_wr[0] ? dq[7:0]  : ~dq[7:0];
-  assign dq_eff[15:8] = dm_wr[1] ? dq[15:8] : ~dq[15:8];
-  assign dm_rd = 2'b11;  // v1 model: no read-side DBI (DBI_n=1 = not inverted)
+  // DM dual semantics (USE_WRDBI):
+  //   =1: DM = DBI_n (1=pass, 0=byte inverted on the wire; undone on absorb)
+  //   =0: DM = write byte-enable (1=accept this byte, 0=reject -> old memory
+  //       byte is kept, per JESD79-4B masked-write semantics)
+  wire [DATAW-1:0] beat_cap;
+  wire [DATAW-1:0] beat_mask;
+  genvar gdmi;
+  generate for (gdmi = 0; gdmi < LANES; gdmi++) begin : dm_sem
+    assign beat_cap[gdmi*8 +: 8]  = USE_WRDBI ? (dm_wr[gdmi] ? dq[gdmi*8 +: 8] : ~dq[gdmi*8 +: 8])
+                                             : dq[gdmi*8 +: 8];
+    assign beat_mask[gdmi*8 +: 8] = USE_WRDBI ? {8{1'b1}} : {8{dm_wr[gdmi]}};
+  end endgenerate
+  assign dm_rd = {LANES{1'b1}};  // v1 model: no read-side DBI (DBI_n=1 = not inverted)
+
+  // Masked-write merge: disabled bytes keep the OLD memory value.
+  //   USE_WRDBI=1 or full mask => wr_mword all-ones => pure pass-through
+  //   (behaviour identical to the pre-upgrade model).
+  wire [WORDW-1:0] wr_word  = {beat_cap, wr_reg[WORDW-1:DATAW]};
+  wire [WORDW-1:0] wr_mword = {beat_mask, mask_reg[WORDW-1:DATAW]};
+  reg  [WORDW-1:0] wr_merged;
+  integer gm;
+  always @(*) begin
+    for (gm = 0; gm < WORDW/8; gm = gm + 1)
+      wr_merged[gm*8 +: 8] = wr_mword[gm*8 +: 8] ? wr_word[gm*8 +: 8] : mem[wr_key_last][gm*8 +: 8];
+  end
 
   always @(posedge ck_t or negedge ck_t) begin
     if (!rst_n) begin
       waiting <= 1'b0; collecting <= 1'b0;
-      wr_edges <= 4'd0; wr_reg <= 128'h0;
-      wr_key_last <= {KEY_W{1'b0}}; wr_word_last <= 128'h0;
+      wr_edges <= 4'd0; wr_reg <= {WORDW{1'b0}}; mask_reg <= {WORDW{1'b1}};
+      wr_key_last <= {KEY_W{1'b0}}; wr_word_last <= {WORDW{1'b0}};
     end else if (wr_cmd && !collecting && !waiting) begin
       waiting     <= 1'b1;
       wr_key_last <= {row_state[wr_rank*NBANKS + last_bank][5:0], last_col[4:0], last_bank, wr_rank[RW-1:0]};
     end else if (waiting) begin
       // Skip leading zero beats (OSERDESE3 pipeline flush artifact).
       // Start capturing on the first non-zero DQ value.
-      if (dq_defined && (dq !== 16'h0000)) begin
+      if (dq_defined && (dq !== {DATAW{1'b0}})) begin
         collecting <= 1'b1;
         waiting    <= 1'b0;
         wr_edges   <= 4'd1;
-        wr_reg     <= {dq_eff, 112'h0};
+        wr_reg     <= {beat_cap, {(WORDW-DATAW){1'b0}}};
+        mask_reg   <= {beat_mask, {(WORDW-DATAW){1'b1}}};
       end
     end else if (collecting) begin
       if (wr_edges == BL_BEATS - 1) begin
-        mem[wr_key_last] <= {dq_eff, wr_reg[127:16]};
-        wr_word_last     <= {dq_eff, wr_reg[127:16]};
+        mem[wr_key_last] <= wr_merged;
+        wr_word_last     <= wr_word;
         collecting <= 1'b0;
         written[wr_key_last] <= 1'b1;
       end else begin
-        wr_reg   <= {dq_eff, wr_reg[127:16]};
+        wr_reg   <= {beat_cap, wr_reg[WORDW-1:DATAW]};
+        mask_reg <= {beat_mask, mask_reg[WORDW-1:DATAW]};
         wr_edges <= wr_edges + 4'd1;
       end
     end
@@ -210,6 +240,10 @@ module Ddr4SdramModel #(
   //   transition emerge shortly after the window opens, and the absolute
   //   DQS-DQ phase is a silicon-calibration property, not a
   //   PHY-datapath obligation.
+  //   OUT-OF-ENVELOPE check is episode-based: a DQS transition outside the
+  //   envelope starts an episode; a following write beat justifies it;
+  //   sustained activity beyond PRE_UI UIs violates ONCE per episode (a
+  //   continuous out-of-envelope stream cannot stall the check).
   // ==========================================================================
   localparam PRE_UI  = 5;
   localparam POST_UI = 5;
@@ -217,7 +251,7 @@ module Ddr4SdramModel #(
   reg [3:0]  dqs_age;    // UIs since last DQS transition (saturates at 15)
   reg        ooe_pending; // ooe DQS transition episode awaiting a justifying beat
   reg [3:0]  ooe_wait;    // edges since the episode started
-  reg [3:0]  post_cnt;   // UIs left in the postample window
+  reg [3:0]  post_cnt;   // UIs left in the postamble window
   reg        post_seen;  // a transition occurred inside the postamble window
   reg [3:0]  pend_post;  // post-first-beat grace for late DQS activity
 
@@ -236,7 +270,7 @@ module Ddr4SdramModel #(
     #1 dqs_obs = dqs_in[0];
   end
 
-  wire first_beat_now = waiting && dq_defined && (dq !== 16'h0000);
+  wire first_beat_now = waiting && dq_defined && (dq !== {DATAW{1'b0}});
   wire in_legal_now   = collecting || (post_cnt > 0) || wl_active;
   wire dqs_chg        = (dqs_obs !== dqs_prev);
 
@@ -248,15 +282,13 @@ module Ddr4SdramModel #(
       post_cnt <= 4'd0; post_seen <= 1'b0;
       dqs_blank_cnt <= 16'd0; dqs_blank_err <= 1'b0;
     end else begin
-      if (dqs_chg) begin
-        dqs_prev <= dqs_obs;
+      if (dqs_chg) begin        dqs_prev <= dqs_obs;
         dqs_age  <= 4'd0;
         if (post_cnt > 0)  post_seen <= 1'b1;
         if (pend_post > 0) pend_post <= 4'd0;   // activity arrived within grace
       end else begin
         dqs_age <= (dqs_age == 4'd15) ? 4'd15 : dqs_age + 4'd1;
       end
-      // Preamble: the awaited beat arrived -> pending transition was legal.
       // Preamble (two-sided): a DQS transition within PRE_UI before the first
       // beat, OR within POST_UI after it (late-emerging delay-line fill), is
       // legal; the absolute DQS-DQ phase is a silicon-calibration property.
@@ -271,11 +303,7 @@ module Ddr4SdramModel #(
         end
         pend_post <= pend_post - 4'd1;
       end
-      // Out-of-envelope activity: a DQS transition outside the legal
-      // envelope starts an episode; a following write beat justifies it,
-      // sustained activity beyond PRE_UI UIs violates (one count per
-      // episode). Episode-based (vs the old per-transition countdown) so a
-      // continuous out-of-envelope stream cannot stall the check.
+      // Out-of-envelope activity (episode-based, see header).
       if (dqs_chg && !in_legal_now) begin
         ooe_pending <= 1'b1;
       end else if (ooe_pending) begin
@@ -300,6 +328,7 @@ module Ddr4SdramModel #(
           if (!post_seen) begin
             dqs_blank_cnt <= dqs_blank_cnt + 16'd1;
             dqs_blank_err <= 1'b1;
+            $display("DQSDBG t=%0t REASON=postamble_absent", $time);
           end
           post_cnt <= 4'd0;
         end else begin
@@ -320,13 +349,13 @@ module Ddr4SdramModel #(
   reg        rd_armed;   // 1-edge arm stage: aligns burst start to the Q window
   reg [4:0]  rd_edges;   // 5 bits: counts up to BL_BEATS (8) inclusive
   reg [4:0]  rd_cl;      // tCL countdown
-  reg [127:0] rd_reg;
+  reg [WORDW-1:0] rd_reg;
 
   wire rd_cmd = |q_rd_pulse;
 
   always @(posedge ck_t or negedge ck_t) begin
     if (!rst_n) begin
-      driving <= 1'b0; rd_armed <= 1'b0; rd_edges <= 5'd0; rd_cl <= 5'd0; rd_reg <= 128'h0;
+      driving <= 1'b0; rd_armed <= 1'b0; rd_edges <= 5'd0; rd_cl <= 5'd0; rd_reg <= {WORDW{1'b0}};
       rd_key_last <= {KEY_W{1'b0}}; rd_pending_err <= 1'b0;
     end else if (rd_cmd && !driving && !rd_armed && rd_cl == 0) begin
       // ARMS on the decode edge: latch the word, drive ONE edge later. The
@@ -352,14 +381,14 @@ module Ddr4SdramModel #(
       if (rd_edges == BL_BEATS) begin
         driving <= 1'b0;
       end else begin
-        rd_reg   <= rd_reg >> 16;
+        rd_reg   <= rd_reg >> DATAW;
         rd_edges <= rd_edges + 5'd1;
       end
     end
   end
 
   assign rd_driving = driving;
-  assign dq = driving ? rd_reg[15:0] : 16'bz;
+  assign dq = driving ? rd_reg[DATAW-1:0] : {DATAW{1'bz}};
 
   // ==========================================================================
   // DQS echo (write-leveling feedback)
@@ -371,7 +400,7 @@ module Ddr4SdramModel #(
       assign dqs_echo = dqs_in;
     end else begin : g_echo_analog
       genvar ek;
-      for (ek = 0; ek < 2; ek = ek + 1) begin : g_lane
+      for (ek = 0; ek < LANES; ek = ek + 1) begin : g_lane
         reg q;
         // File timescale is 1ns/1ps: convert the ps parameter to a REAL ns delay
         // (a bare #(ECHO_DELAY_PS) would be parsed in ns -> 1000x too slow).
