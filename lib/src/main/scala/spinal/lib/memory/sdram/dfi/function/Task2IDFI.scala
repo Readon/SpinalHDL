@@ -187,6 +187,12 @@ case class CmdTxd(taskConfig: TaskConfig, dfiConfig: DfiConfig) extends Componen
     }
   } else {
     // ---- Legacy path: byte-for-byte the pre-DDR4 behavior ----
+    // Encoding note (R6): the command constants above are POSITIONAL -- assignFromBits lays the
+    // Bits across DfiCmd's fields in declaration order, so each literal is only valid for the
+    // current enabled field set (a new/removed DfiCmd field silently rebinds every literal).
+    // That coupling is guarded behaviorally, not structurally: SdramCmdLegacyTruthTableSpec
+    // (pin-level golden) plus the DDR2/DDR3 e2e co-sim vs the Micron models. Do not insert or
+    // reorder DfiCmd fields without refreshing those guards.
     when(active) {
       cmdphase(dfiConfig.timeConfig.cmdPhase).valid.set()
       cmdphase(dfiConfig.timeConfig.cmdPhase).payload.assignFromBits(ACTIVE)

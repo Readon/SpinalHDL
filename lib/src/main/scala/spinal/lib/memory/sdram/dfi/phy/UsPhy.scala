@@ -160,8 +160,8 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   val dramClk = in Bool()  // DRAM clock (= refclk * frequencyRatio; production: from internal MMCM)
   val rst_n   = in Bool()
   val dfi    = slave(Dfi(cfg))
-  val wlDelayOut = out(UInt(9 bits))   // observability: current ODELAYE3 delay counter (dramClk domain)
-  val rdDelayOut = out(UInt(9 bits))   // observability: current read-leveling IDELAYE3 delay counter (dramClk domain)
+  val wlDelayOut = out(UInt(9 bits))   // observability: current ODELAYE3 delay counter — dramClk-domain port by contract; consumers MUST sample in dramClk (no CDC)
+  val rdDelayOut = out(UInt(9 bits))   // observability: current read-leveling IDELAYE3 delay counter — dramClk-domain port by contract; consumers MUST sample in dramClk (no CDC)
 
   // DFI 5.2 management plane (status channel), minimal v1 (ADR-0016): this PHY has no
   // internal initialization state (no MMCM lock wait, no internal training), so
@@ -175,7 +175,7 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   // outputs: an undriven DFI output is a combinatorial hole (SpinalHDL NO DRIVER ON), and the
   // interface is declared for the whole family. Idle levels per DFI 5.2: a PHY that never
   // acknowledges an update keeps dfi_ctrlupd_ack low (sec. 4.9.1), never requests periodic
-  // leveling (sec. 4.10.4.5), never acknowledges a low-power request (sec. 3.6 / sec. 4.13),
+  // leveling (sec. 4.9.2 PHY-Initiated Update), never acknowledges a low-power request (sec. 3.6 / sec. 4.13),
   // and reports no error (sec. 3.7 dfi_error / dfi_error_info). The MC side must not drive the
   // matching requests; the MC's own tie-offs are recorded in DfiNetlistLint's ledger.
   if (cfg.useCtrlupdAck) dfi.update.ctrlupdAck := False
@@ -639,6 +639,11 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   val wlDelay = wb.delay
   val wlDone  = wb.done
   val wlLoadPulse = wb.load
+  // DEBUG ONLY: dramClk-domain observability port (contract per the io declaration above):
+  // wb.delay is a dramClk-domain quantity and is exposed as-is — NO clock crossing, so
+  // there is nothing to synchronize. A consumer sampling this port in another domain is
+  // violating the port contract (board debug/ILA must probe dramClk). Do not feed
+  // production logic from wlDelayOut.
   wlDelayOut := wb.delay
 
   // ---------------------------------------------------------------------------
@@ -716,17 +721,13 @@ case class UsPhy(cfg: DfiConfig) extends Component {
   if (cfg.useWrlvlReq) { dfi.wrTraining.wrlvlReq := 0 }
   if (cfg.usePhylvlAckCsN) { dfi.phyRequestedTraining.phylvlAckCsN := 0 }
   if (cfg.useWrlvlResp) {
-    // DFI 5.2 §4.10.2: PHY-driven DFI signals must be LAUNCHED FROM THE RISING
-    // EDGE OF THE DFI CLOCK. wlDone lives in the dramClk domain, so it is
-    // registered here (sysClk domain) before driving the port; the extra cycle
-    // (10 ns) is absorbed by the MC-side tWrlvlResp watchdog (160 ns).
-    // NB: tag the register NODE itself (not the result of init(), which is the
-    // underlying non-reg data) so SpinalVerilogBoot's auto-sanitizer recognizes
-    // this as a sanctioned crossing and does not insert its own 2FF sync.
-    val wlDoneDfi = sysDom { Reg(Bool()) }
-    wlDoneDfi.addTag(crossClockDomain) // sanctioned synchronizer input (DFI 5.2 sec 4.10.2; ADR-0020)
-    wlDoneDfi.init(False)
-    wlDoneDfi := wlDone
+    // DFI 5.2 §2.0 Architecture: DFI signals must be driven directly by registers
+    // referenced to a rising edge of the DFI clock. wlDone lives in the dramClk domain, so it enters
+    // the sysClk domain through a 2-FF BufferCC (ADR-0020 decision 2/3;
+    // BufferCC emits a self-contained module with async_reg attributes on both
+    // stages). The 2-cycle latency (20 ns) is absorbed by the MC-side
+    // tWrlvlResp watchdog (160 ns).
+    val wlDoneDfi = sysDom { BufferCC(wlDone, False) }
     // Per-bit construction (avoids whole-vs-bit assignment overlap when width==1).
     for (k <- 0 until cfg.writeLevelingResponseWidth) {
       dfi.wrTraining.wrlvlResp(k) := (if (k == cfg.writeLevelingResponseWidth - 1) wlDoneDfi else False)
@@ -833,6 +834,9 @@ case class UsPhy(cfg: DfiConfig) extends Component {
     rlIddelays(l).LOAD       := rl.load
     rlSample(l) := rlIddelays(l).DATAOUT
   }
+  // DEBUG ONLY: dramClk-domain observability port (contract per the io declaration above):
+  // rl.delay is a dramClk-domain quantity and is exposed as-is — NO clock crossing. Do not
+  // feed production logic from rdDelayOut.
   rdDelayOut := rl.delay
 
   if (cfg.useRdlvlReq) {
@@ -842,16 +846,11 @@ case class UsPhy(cfg: DfiConfig) extends Component {
     dfi.rdTraining.phyRdlvlCsN := 0
   }
   if (cfg.useRdlvlResp) {
-    // Registered in the DFI (sysClk) domain before driving the port: DFI 5.2
+    // Synchronized into the DFI (sysClk) domain before driving the port: DFI 5.2
     // §4.10.2 requires PHY-driven DFI signals to launch from the DFI clock's
-    // rising edge (rl.done lives in the dramClk domain). Mirrors wlDoneDfi.
-    // NB: tag the register NODE itself (not the result of init(), which is the
-    // underlying non-reg data) so SpinalVerilogBoot's auto-sanitizer recognizes
-    // this as a sanctioned crossing and does not insert its own 2FF sync.
-    val rlDoneDfi = sysDom { Reg(Bool()) }
-    rlDoneDfi.addTag(crossClockDomain) // sanctioned synchronizer input (DFI 5.2 sec 4.10.2; ADR-0020)
-    rlDoneDfi.init(False)
-    rlDoneDfi := rl.done
+    // rising edge (rl.done lives in the dramClk domain). 2-FF BufferCC, mirrors
+    // wlDoneDfi (ADR-0020); sanctioned crossing.
+    val rlDoneDfi = sysDom { BufferCC(rl.done, False) }
     // EARNED by the convergence check (mirrors wrlvlResp); never constant.
     for (k <- 0 until dfi.rdTraining.rdlvlResp.getWidth) {
       dfi.rdTraining.rdlvlResp(k) := (if (k == 0) rlDoneDfi else False)

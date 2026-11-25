@@ -28,10 +28,10 @@ import scala.collection.mutable
   * Enforced (key AC timing; DDR4 from JESD79-4B sec. 4.19, parameter tables p.169-176;
   * DDR3/DDR2 from JESD79-3/79-2 cross-checked against the in-repo Micron model .vh params):
   *   minima  tRAS, tRP, tRCD, tRFC, tRRD_S/tRRD_L, tFAW (gated on generation.FAW),
-  *           tWTR_S/tWTR_L, tRTP, tCCD_S/tCCD_L, tRTW,
+  *           tWTR_S/tWTR_L, tRTP, tCCD_S/tCCD_L, tRTW, tWR,
   *           tMRD (8/4/2 nCK for DDR4/DDR3/DDR2),
   *           tMOD (max(24nCK,15ns) DDR4; max(12nCK,15ns) DDR3; none for DDR2), tZQoper
-  *   maxima  tRAS <= tRASmax (9 x tREFI DDR4; 3.75 x tREFI DDR3/DDR2), and the tREFI window
+  *   maxima  tRAS <= tRASmax (9 x tREFI DDR4/DDR3; 3.75 x tREFI DDR2), and the tREFI window
   *           itself (a refresh must be issued inside every tREFI; tREFI mirrors
   *           SdramConfig.tREF including the per-row /rowSize division)
   * Not enforced: tXP/tXAR/tSR/tPD/tCKE (no CKE or low-power path exists in the controller yet),
