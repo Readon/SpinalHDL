@@ -89,6 +89,22 @@ case class DfiStatusInterface(config: DfiConfig) extends Bundle with IMasterSlav
   }
 }
 
+/** Legacy (pre-DFI 5.2) training signal family, covering the five bundles that follow:
+  * DfiReadTrainingInterface (rdlvl_*), DfiWriteTrainingInterface (wrlvl_*),
+  * DfiCATrainingInterface (calvl_*), DfiLevelingTrainingInterface (lvlPattern/lvlPeriodic),
+  * DfiPhyRequestedTrainingInterface (phylvlReqCsN/phylvlAckCsN).
+  *
+  * (a) None of these signals exist in DFI 5.2: in the extracted DFI 5.2 text, rdlvl/wrlvl/
+  *     calvl/lvl_pattern/lvl_periodic/phylvl occur only in the DFI 2.0/2.1 revision history.
+  *     The Dfi bundle is a superset interface kept for legacy-PHY (pre-5.2) compatibility.
+  * (b) The DFI 5.2-conformant training path is the ctrlmsg channel — Table 51 "Controller
+  *     Message Codes" / Table 52 "Data Signal Codes" (§4.18.2, DfiCtrlMsgInterface) — plus the
+  *     PHY independent training boot sequence (§4.2, dfiboot_state/dfi_init_complete); the DUT
+  *     implements and tests both (BootTrainer, DfiControllerTester).
+  * (c) Retention per ADR-0018 (spec authority by generation): DDR2/DDR3 have no in-repo spec
+  *     and DFI 5.2 covers them only at the boundary, so this family carries no DFI 5.2
+  *     conformance claim; it stays as a DfiConfig-gated (use* flags) optional superset.
+  */
 case class DfiReadTrainingInterface(config: DfiConfig) extends Bundle with IMasterSlave {
   val rdlvlReq = config.useRdlvlReq generate Bits(config.readLevelingPhyIFWidth bits)
   val phyRdlvlCsN = config.usePhyRdlvlCsN generate Bits(config.chipSelectNumber * config.readTrainingPhyIFWidth bits)
