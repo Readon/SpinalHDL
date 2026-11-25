@@ -15,9 +15,9 @@ class SdramInitPresetSpec extends SpinalAnyFunSuite {
   test("defaultFor(DDR3) = litedram-verified MRS MR2/MR3/MR1/MR0(DLL reset) + ZQCL") {
     val steps = SdramInitStep.defaultFor(SdramGeneration.DDR3, Ddr4ModeRegs())
     assert(steps == List(
-      SdramInitStep(SdramInitStep.MRS, 2, 0x200, 8), // CWL=5, RTT_WR=60 Ohm
-      SdramInitStep(SdramInitStep.MRS, 3, 0x000, 8), // DLL enabled
-      SdramInitStep(SdramInitStep.MRS, 1, 0x006, 8), // RON=34 Ohm, RTT_NOM=60 Ohm
+      SdramInitStep(SdramInitStep.MRS, 2, 0x200, 8), // CWL=5 (A5:A3=000, valid tCK>=2.5ns), RTT_WR=60 Ohm ({A10,A9}=01)
+      SdramInitStep(SdramInitStep.MRS, 3, 0x000, 8), // MPR register (all RFU=0); DLL enable is MR1 A0=0
+      SdramInitStep(SdramInitStep.MRS, 1, 0x006, 8), // ODT driver=34 Ohm ({A5,A1}=01), RTT_NOM=60 Ohm ({A9,A6,A2}=001), DLL enabled (A0=0)
       SdramInitStep(SdramInitStep.MRS, 0, 0x310, 8), // BL8, CL5, WR5, DLL reset
       SdramInitStep(SdramInitStep.ZQ, 0, 0, 512)
     ))

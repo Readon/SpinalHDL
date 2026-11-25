@@ -56,15 +56,22 @@ class DfiTimingWatchdog(cfg: DfiConfig, verbose: Boolean = sys.env.get("DFI_TIMI
   val tWTRmc = mcOfDram(sdram.tWTR)
   val tWTR_Smc = mcOfDram(sdram.tWTR_S)
   val tRTPmc = mcOfDram(sdram.tRTP)
-  val tCCD_Lmc = mcOfDram(sdram.generation.tCCD_L)
+  val tCCD_Lmc = mcOfDram(sdram.tCCD_L) // bin-aware: SdramConfig.tCCD_L follows the JESD79-4B AC table per operating frequency
   val tCCD_Smc = mcOfDram(sdram.generation.tCCD_S)
   val tRTWmc = mcOfDram(sdram.tRTW)
+  // tWR (WR->PRE same-bank write recovery): SdramConfig.tWR is DRAM cycles (timeCycle at
+  // cycleTime_ns), 15 ns fallback when WTP=0 -- the fallback's basis is the weakest link, so
+  // it gets an explicit watchdog floor (B1).
+  val tWRmc = mcOfDram(sdram.tWR)
   // Generation-aware MRS/refresh limits. Per-generation values:
   //   DDR4 (JESD79-4B): tMRD = 8 nCK;                tMOD = max(24 nCK, 15 ns); tRAS(max) = 9 x tREFI
-  //   DDR3 (JESD79-3):  tMRD = 4 nCK;                tMOD = max(12 nCK, 15 ns); tRAS(max) = 3.75 x tREFI
+  //   DDR3 (JESD79-3F): tMRD = 4 nCK;                tMOD = max(12 nCK, 15 ns); tRAS(max) = 9 x tREFI
   //   DDR2 (JESD79-2):  tMRD = 2 nCK;                no tMOD parameter;          tRAS(max) = 3.75 x tREFI
   // DDR3/DDR2 nCK floors cross-checked against the in-repo Micron behavioural models'
   // parameters (2048Mb_ddr3_parameters.vh: TMRD=4; ddr2_parameters.vh: TMRD=2).
+  // DDR3 tRAS(max) = 9 x tREFI: JESD79-3F Tables 62-64 (tRAS max column, all speed bins);
+  // the in-repo model's TRFC_MAX = 9 x 7.8 us corroborates. Loosening a maximum can only
+  // reduce false failures.
   val tMRDmc = sdram.generation match {
     case SdramGeneration.DDR4 => mcOfDram(8)
     case SdramGeneration.DDR3 | SdramGeneration.MYDDR => mcOfDram(4)
@@ -76,17 +83,55 @@ class DfiTimingWatchdog(cfg: DfiConfig, verbose: Boolean = sys.env.get("DFI_TIMI
     case SdramGeneration.DDR3 | SdramGeneration.MYDDR => math.max(mcOfDram(12), mcOfNs(15.0))
     case _ => 0L // DDR2/SDRAM: no tMOD -> the MRS->PRE check deactivates (gap < 0 is never true)
   }
-  val tZQCLmc = mcOfDram(512) // tZQoper = 512 nCK (tZQinit = 1024 nCK covers the init ZQ)
+  // tZQoper (ZQCL->command / ZQCL->ZQCL spacing):
+  //   DDR4 (JESD79-4B AC table):  tZQoper = 512 nCK (tZQinit = 1024 nCK covers the init ZQCL)
+  //   DDR3 (JESD79-3F Table 68):  tZQoper = max(256 nCK, 320 ns); tZQinit = max(512 nCK, 640 ns)
+  //   (the old flat 512 nCK floor is the JESD79-4B value: 2x too strict for DDR3)
+  //   DDR2/SDRAM: no ZQCL step in the preset; keep the conservative 512 nCK floor
+  val tZQCLmc = sdram.generation match {
+    case SdramGeneration.DDR3 | SdramGeneration.MYDDR => math.max(mcOfDram(256), mcOfNs(320.0))
+    case _ => mcOfDram(512)
+  }
   // tREFI: mirror SdramConfig.tREF EXACTLY -- `REF` is the TOTAL time for all rows
   // (e.g. 64000 us over 8192 rows ~= 7.8 us/row), so the per-row interval is
   // REF*1000/rowSize ns (then /REF_RATE). The old expression forgot /rowSize, overstating
   // tREFI by 2^rowWidth and silently disabling the tREFI-window and tRAS-max checks.
+  // tREFImc is the CEIL-quantized tREFI in MC cycles (ceil ns->MC): the scheduler's period
+  // (SdramConfig.tREF = ceil ns->nCK, then TaskTimingConfig.time = ceil nCK->fr). The
+  // tREFI-window check below uses the exact ns-derived bound tREFImax instead.
   val tREFImc = mcOfNs((if (sdram.sdramtime.REF_NS != 0) sdram.sdramtime.REF_NS.toDouble
                         else (sdram.sdramtime.REF * 1000.0) / sdram.rowSize) / sdram.sdramtime.REF_RATE)
-  val tRASmaxmc = math.ceil((if (sdram.generation == SdramGeneration.DDR4) 9.0 else 3.75) * tREFImc).toLong
+  // Exact max allowed REF->REF gap in MC cycles. tREFI is a MAXIMUM interval (data
+  // retention): the DRAM needs a REF at least every tREFI ns. REF commands are MC-edge
+  // aligned (the PHY maps each DFI command onto the DRAM bus with a fixed latency that
+  // cancels between two REFs), so the DRAM-side gap is exactly gap * tMcNs and the bound
+  // is floor(tREFI ns / tMcNs): margin 0, no sampling slack (the old +1 had no basis --
+  // an edge-aligned gap carries no sub-MC uncertainty). The ceil quantization above
+  // requires no watchdog margin either: it only ever makes the SCHEDULER's period tREFImc
+  // exceed this bound by at most 1 MC (only when tREFI ns is not an exact MC multiple),
+  // and the Refresher pre-triggers by margin = RP+RFC+drainSlack (Refresher.scala), so
+  // the observed REF->REF gap is period - margin + drain-wait jitter, i.e. ~margin MC
+  // below the period, with drainSlack absorbing the jitter -- inside the bound.
+  // Computed in exact integer arithmetic (tMcNs = 1000*fr/ddrMHZ ns, all terms positive):
+  //   REF_NS path: floor(REF_NS * ddrMHZ / (1000 * fr * REF_RATE))          [REF_NS in ns]
+  //   legacy path: floor(REF * ddrMHZ / (rowSize * fr * REF_RATE))          [REF in us]
+  val tREFImax: Long = {
+    val t = sdram.sdramtime
+    val (num, den) =
+      if (t.REF_NS != 0) (t.REF_NS.toLong * sdram.ddrMHZ, 1000L * fr * t.REF_RATE)
+      else (t.REF.toLong * sdram.ddrMHZ, sdram.rowSize.toLong * fr * t.REF_RATE)
+    num / den
+  }
+  // tRAS(max) multiplier per generation: DDR4 9 x (JESD79-4B); DDR3/MYDDR 9 x (JESD79-3F
+  // Tables 62-64); DDR2 3.75 x (JESD79-2; no in-repo 79-2 to re-verify).
+  private val tRASmaxFactor: Double = sdram.generation match {
+    case SdramGeneration.DDR4 | SdramGeneration.DDR3 | SdramGeneration.MYDDR => 9.0
+    case _ => 3.75
+  }
+  val tRASmaxmc = math.ceil(tRASmaxFactor * tREFImc).toLong
 
   val summary = f"tRAS=$tRASmc tRP=$tRPmc tRCD=$tRCDmc tRFC=$tRFCmc tFAW=$tFAWmc tRRD=$tRRDmc/$tRRD_Smc " +
-    f"tWTR=$tWTRmc/$tWTR_Smc tRTP=$tRTPmc tCCD=$tCCD_Lmc/$tCCD_Smc tREFI=$tREFImc tMRD=$tMRDmc MC cycles " +
+    f"tWTR=$tWTRmc/$tWTR_Smc tRTP=$tRTPmc tCCD=$tCCD_Lmc/$tCCD_Smc tWR=$tWRmc tREFI=$tREFImax(period $tREFImc) tMRD=$tMRDmc MC cycles " +
     f"(DRAM $tDramNs%.2f ns, MC $tMcNs%.2f ns, fr=$fr)"
 
   private val ranks = cfg.chipSelectNumber
@@ -162,9 +207,11 @@ class DfiTimingWatchdog(cfg: DfiConfig, verbose: Boolean = sys.env.get("DFI_TIMI
         if (lastAct(i) >= 0 && lastPre(i) < lastAct(i)) {
           val held = cycle - lastAct(i)
           if (held < tRASmc) fail(cycle, s"tRAS min (ACT->PRE bank $x)", held, s">= $tRASmc MC cycles")
-          if (held > tRASmaxmc) fail(cycle, s"tRAS max (ACT->PRE bank $x)", held, s"<= $tRASmaxmc MC cycles (${if (sdram.generation == SdramGeneration.DDR4) "9" else "3.75"} x tREFI)")
+          if (held > tRASmaxmc) fail(cycle, s"tRAS max (ACT->PRE bank $x)", held, s"<= $tRASmaxmc MC cycles ($tRASmaxFactor x tREFI)")
           if (lastRead(i) >= 0 && cycle - lastRead(i) < tRTPmc)
             fail(cycle, s"tRTP (RD->PRE bank $x)", cycle - lastRead(i), s">= $tRTPmc MC cycles")
+          if (lastWrite(i) >= 0 && cycle - lastWrite(i) < tWRmc)
+            fail(cycle, s"tWR (WR->PRE bank $x)", cycle - lastWrite(i), s">= $tWRmc MC cycles")
         }
         lastPre(i) = cycle
       }
@@ -202,10 +249,10 @@ class DfiTimingWatchdog(cfg: DfiConfig, verbose: Boolean = sys.env.get("DFI_TIMI
       if (lastRef(rank) >= 0) {
         val gap = cycle - lastRef(rank)
         // tREFI is a window, not a period: a refresh must be issued INSIDE every tREFI, so an
-        // observed gap larger than tREFI (plus one MC cycle of sampling slack) is a
+        // observed gap larger than the exact bound tREFImax (derived above) is a
         // data-retention violation regardless of how the scheduler counts.
-        if (gap > tREFImc + 1)
-          fail(cycle, "tREFI (REF->REF window)", gap, s"<= ${tREFImc + 1} MC cycles (tREFI = $tREFImc)")
+        if (gap > tREFImax)
+          fail(cycle, "tREFI (REF->REF window)", gap, s"<= $tREFImax MC cycles (tREFI period = $tREFImc)")
       }
       val anyOpen = (0 until banks).exists(x => lastAct(idx(rank, x)) >= 0 && lastPre(idx(rank, x)) < lastAct(idx(rank, x)))
       if (anyOpen && lastActAny(rank) >= 0 && cycle - lastActAny(rank) < tRASmc)
