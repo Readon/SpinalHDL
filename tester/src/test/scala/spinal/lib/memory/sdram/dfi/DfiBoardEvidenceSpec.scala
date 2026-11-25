@@ -125,8 +125,8 @@ object DfiBoardEvidenceSpec {
     * (grill Q6: pin the hashes, and record the regeneration in the commit message).
     */
   val pins: Map[String, String] = Map(
-    "DfiController/rtl/DfiController.v" -> "1aac8abd5589038e27ed22583184ec0351b90872d19eb9a8f27b0effaeac92d7",
-    "UsPhy.v" -> "c045465f8b82ee71ef8bf62239675608a22a981bbd78c720649a6294df99fdd1"
+    "DfiController/rtl/DfiController.v" -> "6ce1fd6b0e5c5803a2a67074b241b34a4e87f84411d8e4fc3328afa3d4420527",
+    "UsPhy.v" -> "18f72300cff68673b47e9558e31711edbfd2876abc60521b27bfec88b48a3a49"
   )
 
 
