@@ -51,6 +51,10 @@ case class DfiController(bmbp: BmbParameter, task: TaskParameter, dfiConfig: Dfi
     dfiConfig.addressWidth >= 11,
     s"DfiController requires addressWidth >= 11 (A10 precharge bit); got ${dfiConfig.addressWidth}"
   )
+  // CA parity (JESD79-4B sec. 4.17) covers A13..A0 WHERE THEY EXIST: with addressWidth < 14 the
+  // covered pin set is A{addressWidth-1}..A0, and the DUT's XOR tree and the DfiMemoryAgent
+  // reference model shrink identically (Math.min(14, addressWidth)), so narrower buses are a
+  // supported, tested configuration (DfiController_DDR4_fr2_caparity runs at addressWidth=13).
   // RowColumnBank interleaves burst-adjacent bits (the low transferPerBurst word bits of the column
   // stay low while the next burst-count bits map into the bank field), so consecutive bursts of one
   // station span different banks. MakeTask's station tracks a single bank per task, so this mapping

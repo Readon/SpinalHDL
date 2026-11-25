@@ -74,10 +74,11 @@ object DfiSignalConfig {
 
 /** Signal-capability switches for the DFI bundle.
   *
-  *  `useCrc` is RESERVED: the DFI CRC sideband (dfi_crc_*) is not implemented in this
-  *  controller/PHY pair — no bundle member exists for it and the netlist-ledger spec has
-  *  no entry for it. Passing `useCrc = true` is accepted (for forward compatibility with
-  *  the DFI 5.2 surface) but has NO effect on the generated RTL.
+  *  `useCrc` is RESERVED: passed alone it has NO effect on the generated RTL. The CRC
+  *  sideband materializes only when `useCrcMode` (= useCrc && useAlertN) is true, which adds
+  *  the `IDFI.crc` event vector; even then the CRC payload logic is not implemented in this
+  *  controller/PHY pair and the netlist-ledger spec has no entry for it. Passing
+  *  `useCrc = true` is accepted for forward compatibility with the DFI 5.2 surface.
   */
 class DfiSignalConfig(groupConfig: DfiFunctionConfig = DfiFunctionConfig(), useCrc: Boolean = false) {
   val useBank: Boolean = false
@@ -322,11 +323,21 @@ case class DfiConfig(
   val useWrDbi = sdram.generation.hasDbi && ((ddr4ModeRegs.mr5 >> 11) & 1) == 1
 
   // DDR4 CA parity (JESD79-4B §4.17 / DFI 5.2 §4.12): the MC drives dfi_parity (even parity
-  // over ACT_n, RAS_n/A16, CAS_n/A15, WE_n/A14, A13..A0, BA, BG — NOT CKE/ODT/CS_n) in the same
-  // cycle as the command (tcapar_lat = 0, allowed by the spec). Any non-zero MR5.A2:A0 parity
-  // latency (PL4/5/6) means CA parity is enabled at the DRAM; the PL value itself only affects
-  // DRAM-internal timing and is not modeled on the MC side, so the signal-level useParity
-  // (dfi_parity_in + dfi_alert_n present) gates the feature here.
-  val useCaParity = sdram.generation.hasCaParity && signalConfig.useParity
+  // over ACT_n, RAS_n/A16, CAS_n/A15, WE_n/A14, A13..A0, BA, BG, CID — NOT CKE/ODT/CS_n) in
+  // the same cycle as the command (tparin_lat = 0, legal). The DRAM side is enabled by
+  // MR5.A2:A0 != 0 (C/A Parity Latency Mode, Table 12: 000 = disable, 001 = PL4 @1600-2133,
+  // 010 = PL5 @2400, 011 = PL6, 100 = PL8); the PL value only affects DRAM-internal timing
+  // and is not modeled MC-side. The feature is meaningful only when BOTH sides are on:
+  //  - DRAM enabled + MC not driving parity -> the DRAM sees an idle-0 parity on every
+  //    command and drops the whole bus (hard gate below).
+  //  - MC driving + DRAM disabled -> the feature is dead at the DRAM, so useCaParity is
+  //    false (the flag means "parity active end-to-end"); tests that exercise parity must
+  //    program MR5 (e.g. 0x0001 = PL4).
+  val useCaParity = sdram.generation.hasCaParity && signalConfig.useParity &&
+    ((ddr4ModeRegs.mr5 & 0x7) != 0)
+  if (sdram.generation.hasCaParity)
+    assert((ddr4ModeRegs.mr5 & 0x7) == 0 || useCaParity,
+      s"CA parity: MR5.A2:A0 = ${ddr4ModeRegs.mr5 & 0x7} enables it at the DRAM (JESD79-4B Table 12) " +
+        "but the MC does not drive dfi_parity (signalConfig.useParity is false) — every command would be a parity error and the DRAM would drop the bus")
 
 }

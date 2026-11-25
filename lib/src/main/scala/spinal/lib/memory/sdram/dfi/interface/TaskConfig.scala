@@ -3,7 +3,8 @@ package spinal.lib.memory.sdram.dfi
 import spinal.core._
 import spinal.lib._
 
-case class TaskTimingConfig(dfiConfig: DfiConfig) extends Bundle {
+case class TaskTimingConfig(dfiConfig: DfiConfig) {
+  // Plain config holder: no hardware members, so deliberately NOT a Bundle.
 
   def RAS = time(dfiConfig.sdram.tRAS)
 
@@ -32,8 +33,6 @@ case class TaskTimingConfig(dfiConfig: DfiConfig) extends Bundle {
   def RTW = time(dfiConfig.sdram.tRTW)
 
   def RFC = time(dfiConfig.sdram.tRFC)
-
-  def ODT = 0
 
   def FAW = time(dfiConfig.sdram.tFAW)
 

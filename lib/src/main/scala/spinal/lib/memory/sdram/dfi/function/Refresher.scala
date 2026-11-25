@@ -29,10 +29,10 @@ case class Refresher(taskConfig: TaskConfig, dfiConfig: DfiConfig) extends Compo
   // cycles too late and the observed gap drifts past the JESD79-4B tREFI window (data-retention
   // violation; the DRAM-side watchdog in DfiMemoryAgent measures exactly that gap). Pre-trigger by
   // the service latency so the gap lands on tREFI.
-  when(hit || !timeConfig.autoRefresh) {
+  when(hit) {
     value := timeConfig.REF
   }
 
-  val pending = RegInit(False) clearWhen (io.refresh.ready) setWhen (hit) clearWhen (!timeConfig.autoRefresh)
+  val pending = RegInit(False) clearWhen (io.refresh.ready) setWhen (hit)
   io.refresh.valid := pending
 }
