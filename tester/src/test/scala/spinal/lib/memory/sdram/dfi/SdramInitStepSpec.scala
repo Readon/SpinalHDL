@@ -41,9 +41,9 @@ import spinal.tester.code.SpinalAnyFunSuite
 class SdramInitStepSpec extends SpinalAnyFunSuite {
 
   /**
-    * JESD79-4 sec. 3.3 steps 6-12, decoded from the "provide Low to ..." wording into the
-    * {BG0, BA1, BA0} select value each register needs (Table 11: "BG0, BA1:BA0 MR Select,
-    * 000=MR0 ... 110=MR6"). Task2IDFI.scala:146-157 puts exactly that triple in the bank field,
+    * JESD79-4B sec. 3.3 steps 6-12, decoded from the "provide Low to ..." wording into the
+    * {BG0, BA1, BA0} select value each register needs (Table 16 NOTE 3: "BG0, BA1:BA0 MR Select,
+    * 000=MR0 ... 110=MR6", BG1 RFU). Task2IDFI.scala:146-157 puts exactly that triple in the bank field,
     * so the select value must equal the register number.
     */
   test("the MR select encoding per mode register is the register index") {
@@ -72,8 +72,11 @@ class SdramInitStepSpec extends SpinalAnyFunSuite {
     // file, i.e. the preset is a faithful projection of Ddr4ModeRegs.
     mrs.foreach { s =>
       val presets = { val m = Ddr4ModeRegs(); List(m.mr0, m.mr1, m.mr2, m.mr3, m.mr4, m.mr5, m.mr6) }
-      val expected = presets(s.mrIndex)
-      assert(s.opCode == expected, s"MR${s.mrIndex} OP code 0x${Integer.toHexString(s.opCode)} must come from the mode-register file (0x${Integer.toHexString(expected)})")
+      // Table 13 NOTE 1: the init sequence lifts MR6's tCCD_L field (A12:A10) to the AC floor
+      // (5 nCK at the 400 MT/s default) — it never lowers user-programmed codes.
+      val expected = if (s.mrIndex == 6) presets(6) | 0x400 else presets(s.mrIndex)
+      assert(s.opCode == expected, s"MR${s.mrIndex} OP code 0x${Integer.toHexString(s.opCode)} must come from the mode-register file (0x${Integer.toHexString(expected)})" +
+        (if (s.mrIndex == 6) " — MR6 tCCD_L lifted to the 5 nCK AC floor (JESD79-4B Table 13 NOTE 1)" else ""))
     }
   }
 
@@ -81,10 +84,10 @@ class SdramInitStepSpec extends SpinalAnyFunSuite {
     val preset = SdramInitStep.defaultFor(SdramGeneration.DDR4, Ddr4ModeRegs())
     val mr0 = preset.filter(s => s.kind == SdramInitStep.MRS && s.mrIndex == 0).last
     assert(((mr0.opCode >> 8) & 1) == 1,
-      f"MR0 A8 (DLL Reset) must be set during init (sec. 3.3 step 12 + Table 11); got 0x${Integer.toHexString(mr0.opCode)}")
+      f"MR0 A8 (DLL Reset) must be set during init (sec. 3.3 step 12); got 0x${Integer.toHexString(mr0.opCode)}")
     val clField = ((mr0.opCode >> 6) & 1) << 3 | ((mr0.opCode >> 5) & 1) << 2 | ((mr0.opCode >> 4) & 1) << 1 | ((mr0.opCode >> 2) & 1)
     assert(clField == 0x6, f"MR0 CAS code A6,A5,A4,A2 must be 0110 (CL15, speed-bin table); got 0b${Integer.toBinaryString(clField)}")
-    assert((mr0.opCode & 0x1E000) == 0, f"MR0 RFU bits A17,A13:A10 must be 0 (Table 11 'must be programmed to 0 during MRS'); got 0x${Integer.toHexString(mr0.opCode)}")
+    assert((mr0.opCode & 0x3000) == 0, f"MR0 RFU bits A13,A12 must be 0 (JESD79-4B sec. 3.5 MR0; A17 off-bus in the 16-bit op code); got 0x${Integer.toHexString(mr0.opCode)}")
   }
 
   test("the init spacings are the spec's tMRD / tZQinit, not bare numbers") {
