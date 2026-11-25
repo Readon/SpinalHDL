@@ -46,8 +46,10 @@ class DfiControllerTester extends SpinalAnyFunSuite {
       mr4: Int = 0x0000,
       refreshMinCount: Int = 1,
       idleCycles: Int = 10000,
+      ddrMHZ: Int = 200,
       caParity: Boolean = false,
       injectParityError: Boolean = false,
+      minCidNonzeroCmds: Int = 0,
       initSteps: List[SdramInitStep] = Nil,
       useCtrlMsg: Boolean = false,
       ctrlMsgAckDelayCycles: Int = 0,
@@ -67,7 +69,7 @@ class DfiControllerTester extends SpinalAnyFunSuite {
       // from them), hence the shared val.
       val ddr4ModeRegs = if (generation == SdramGeneration.DDR4) Ddr4ModeRegs(mr4 = mr4, mr5 = mr5) else Ddr4ModeRegs()
       val effectiveInitSteps = if (initSteps.nonEmpty) initSteps
-                               else SdramInitStep.defaultFor(generation, ddr4ModeRegs, fr = frequencyRatio)
+                               else SdramInitStep.defaultFor(generation, ddr4ModeRegs, fr = frequencyRatio, dramMhz = ddrMHZ)
       assert(!useCtrlMsg || generation == SdramGeneration.DDR4, "ctrlmsg training cases are DDR4-only")
       assert(
         !useLegacyWrLvl || generation == SdramGeneration.DDR2 || generation == SdramGeneration.DDR3,
@@ -109,7 +111,7 @@ class DfiControllerTester extends SpinalAnyFunSuite {
             columnWidth = 10,
             rowWidth = rowWidth,
             dataWidth = 16,
-            ddrMHZ = 200,
+            ddrMHZ = ddrMHZ,
             ddrWrLat = 4,
             ddrRdLat = 4,
             sdramtime = sdramtime
@@ -722,8 +724,27 @@ class DfiControllerTester extends SpinalAnyFunSuite {
           if (caParity) {
             println(
               s"[CAPARITY] ${name}: alertLowCount=${dfiMemoryAgent.alertLowCount} " +
-                s"dut.caParityError=${dut.caParityError.toBoolean} corruptArmed=${dfiMemoryAgent.parityCorruptCycle}"
+                s"dut.caParityError=${dut.caParityError.toBoolean} corruptArmed=${dfiMemoryAgent.parityCorruptCycle} " +
+                s"cidNonzeroCmds=${dfiMemoryAgent.cidNonzeroCmds} cidDivergentCmds=${dfiMemoryAgent.cidDivergentCmds}"
             )
+            // 3DS dual-convention guard: when the case promises CID≠0 traffic, non-zero CIDs
+            // must have actually flown on the DFI bus (a DUT regressing to cid=0 would make the
+            // case vacuous), and the two spec conventions (DFI 5.2 Table 4 dfi_parity_in row incl. dfi_cid vs
+            // JESD79-4B §4.17 DRAM pins, no CID) must have visibly diverged on odd-popcount CID
+            // — the agent models both and alerts on the DFI-boundary one only, so a CID≠0
+            // command is never misjudged as a parity error.
+            assert(
+              dfiMemoryAgent.cidNonzeroCmds >= minCidNonzeroCmds,
+              s"${name}: expected >= $minCidNonzeroCmds command phase(s) with CID!=0 on the DFI bus, " +
+                s"got ${dfiMemoryAgent.cidNonzeroCmds} (3DS logical rank not driven on dfi_cid?)"
+            )
+            if (minCidNonzeroCmds > 0) {
+              assert(
+                dfiMemoryAgent.cidDivergentCmds > 0,
+                s"${name}: CID!=0 commands flew but the DFI-boundary and DRAM-pin parity conventions " +
+                  s"never diverged (agent dual-convention modeling collapsed?)"
+              )
+            }
             if (injectParityError) {
               assert(
                 dfiMemoryAgent.alertLowCount > 0,
@@ -910,18 +931,22 @@ class DfiControllerTester extends SpinalAnyFunSuite {
       idleCycles: Int = 10000,
       caParity: Boolean = false,
       injectParityError: Boolean = false,
+      minCidNonzeroCmds: Int = 0,
       useCtrlMsg: Boolean = false,
       ctrlMsgAckDelayCycles: Int = 0,
-      bootTraining: Boolean = false
+      bootTraining: Boolean = false,
+      cidWidth: Int = 1,
+      ddrMHZ: Int = 200
   ): Unit =
     runDfiControllerTest(
       name, SdramGeneration.DDR4, fr, phase, 0, csNum, rowWidth, map,
-      useCsN = csN, bgWidth = 1, cidWidth = 1, bankWidth = 4,
+      useCsN = csN, bgWidth = 1, cidWidth = cidWidth, bankWidth = 4,
       sdramTiming = if (timing != null) timing else ddr4Timing,
       mr5 = mr5, mr4 = mr4, refreshMinCount = refreshMinCount, idleCycles = idleCycles,
-      caParity = caParity, injectParityError = injectParityError,
+      caParity = caParity, injectParityError = injectParityError, minCidNonzeroCmds = minCidNonzeroCmds,
       useCtrlMsg = useCtrlMsg, ctrlMsgAckDelayCycles = ctrlMsgAckDelayCycles,
-      bootTraining = bootTraining
+      bootTraining = bootTraining,
+      ddrMHZ = ddrMHZ
     )
   ddr4("DfiController_DDR4_fr2_RowBankColumn", 2, 0, RowBankColumn)
   ddr4("DfiController_DDR4_fr2_BankRowColumn", 2, 0, BankRowColumn)
@@ -949,6 +974,22 @@ class DfiControllerTester extends SpinalAnyFunSuite {
   // old full-width address term they cancelled and ~50% of ACTs raised a spurious ALERT_n.
   // csNum=1 keeps byteAddressWidth+log2Up(cs)=30 < 31 for the Int address generator at rowWidth=15.
   ddr4("DfiController_DDR4_fr2_caparity_hirow", 2, 0, RowBankColumn, mr5 = 0x0001, caParity = true, csNum = 1, rowWidth = 15)
+  // 3DS (CID≠0) CA parity — the audit's coverage gap: DFI 5.2 Table 4 (dfi_parity_in row)'s parity set INCLUDES
+  // dfi_cid, JESD79-4B §4.17's DRAM-pin set does NOT; the two conventions coincide only at
+  // CID=0, which the single-CID=0 cases above cannot see. The MC drives the logical-rank index
+  // on dfi_cid (DFI 5.2 §4.5.2 / Table 46), so rank-1 commands carry CID=01: the agent must
+  // (a) recompute the DFI-boundary set (with cid) in agreement with the DUT -> zero spurious
+  // ALERT_n (a CID≠0 command is NOT misjudged as a parity error), (b) model the DRAM-pin set
+  // (without cid) and expose that the two expected values diverge on odd-popcount CID
+  // (minCidNonzeroCmds makes the case fail if no CID≠0 command actually flew, i.e. it cannot
+  // pass vacuously), (c) still catch a genuinely injected error on the same 3DS traffic.
+  ddr4("DfiController_DDR4_fr2_caparity_3ds", 2, 0, RowBankColumn, mr5 = 0x0001, caParity = true,
+       cidWidth = 2, minCidNonzeroCmds = 1)
+  // Same 3DS traffic, parity bit flipped as seen at the DRAM on an idle cycle: ALERT_n must
+  // still fire and the DUT must latch caParityError — the alert path stays correct with CID≠0
+  // commands in flight.
+  ddr4("DfiController_DDR4_fr2_caparity_3ds_inject", 2, 0, RowBankColumn, mr5 = 0x0001, caParity = true,
+       cidWidth = 2, minCidNonzeroCmds = 1, injectParityError = true)
   // DFI 5.2 ctrlmsg training channel (Table 37 signals / Table 38 timing), code 0x04 = Write Leveling (Table 51):
   // driven mid-run while BMB traffic is quiesced; the agent acks within tctrlmsg_resp (delay 0),
   // the training-window traffic ban must hold (spawn/refresh paused), trainDone pulses,
@@ -1028,4 +1069,214 @@ class DfiControllerTester extends SpinalAnyFunSuite {
     // (~10-18 cycles, measured) so the counter-proof's early-released backlog lands INSIDE
     // the open window; the PHY answers at delay 32, well inside the watchdog.
     useLegacyWrLvl = true, wrLvlDoneDelayCycles = 32, tWrlvlResp = 64)
+
+  // ============================================================================
+  // Speed-bin coverage (ticket t-0005): T2 at the spec-required DRAM interface clocks.
+  //
+  // Mechanism: the bin is set by ddrMHZ ALONE. SdramConfig.cycleTime_ns = 1000/ddrMHZ
+  // converts every ns timing to DRAM cycles, TaskTimingConfig.time() turns DRAM cycles
+  // into MC cycles ((n+fr-1)/fr), and the DRAM-side watchdog (DfiTimingWatchdog)
+  // converts the same ns fields independently -- so a knob set below the bin's datasheet
+  // floor fails on the observed DFI command stream, not on a config print. Per ADR-0017
+  // every floor below is a hand-transcribed spec constant (JESD79-4B: Table 80/23, AC
+  // table p.189-190, Table 13 NOTE 1; JESD79-3F: Tables 61-63/68, Fig 9/11), never a
+  // DUT-derived value. The T2 sim clock stays at 100 MHz: the DUT is single-clock and
+  // every constraint is cycle-based, so the period only scales VCD time, not behavior.
+  //
+  // Per-bin SdramTiming literals are the bin's own datasheet values:
+  //   DDR4 (JESD79-4B): tRAS by bin (35/34/33/32 ns), tRCD/tRP = 14 ns (>= 13.5 ns,
+  //        Table 80 NOTE 12), tRFC 8Gb 1x = 350 ns (Table 23), tFAW 2K page
+  //        (35/30/30/35 ns; Table 102 has a 2400 column (2666/3200 mostly TBD) with tFAW 2K =
+  //        30 ns, so the 2400 value keeps 35 ns as a margin above that floor).
+  //   DDR3 (JESD79-3F): tRFC 4Gb = 260 ns, tREFI = 7800 ns (Table 61); tRCD/tRP >= 12.5 ns
+  //        (Table 62, 800) / >= 11.25 ns (Table 63, 1066); tRRD/tFAW 1K page (Table 68).
+  // ============================================================================
+
+  /** JESD79-4B tCCD_L AC floors by DRAM CK (Table 13 NOTE 1, AC table p.189): 5 nCK at
+    * 1600/1866, 6 at 2133; Table 102 has a 2400 column (2666/3200 mostly TBD) with tCCD_L =
+    * 6 nCK, so 2400 keeps 6. Hand transcription,
+    * deliberately NOT sourced from SdramGeneration.ddr4TCCD_L_floor (ADR-0017). */
+  val tCCD_L_spec = Map(800 -> 5, 933 -> 5, 1066 -> 6, 1200 -> 6)
+
+  def ddr4BinTiming(mhz: Int): SdramTiming = {
+    val (ras, faw) = mhz match {
+      case 800  => (35, 35)
+      case 933  => (34, 30)
+      case 1066 => (33, 30)
+      case 1200 => (32, 35)
+    }
+    SdramTiming(generation = 4, RFC = 350, RAS = ras, RP = 14, RCD = 14, WTR = 8, WTP = 0,
+      RTP = 8, RRD = 8, REF = 64000, FAW = faw, WTR_S = 4, RRD_S = 3, REF_NS = 7800)
+  }
+
+  // JESD79-3F bin name from the CK frequency: DDR3-800/1066/1333/1600 run at 400/533/667/800
+  // MHz; 1333 uses 667 MHz (not exact 666.67), which is 500 ppm faster than nominal and thus
+  // slightly stricter than nominal for every ceil(ns/tCK) conversion.
+  def ddr3BinName(mhz: Int): String = mhz match {
+    case 400 => "800"; case 533 => "1066"; case 667 => "1333"; case 800 => "1600"
+  }
+
+  def ddr3BinTiming(mhz: Int): SdramTiming = mhz match {
+    case 400 => SdramTiming(generation = 3, RFC = 260, RAS = 38, RP = 13, RCD = 13, WTR = 8, WTP = 0,
+      RTP = 8, RRD = 10, REF = 64000, FAW = 40, REF_NS = 7800)
+    case 533 => SdramTiming(generation = 3, RFC = 260, RAS = 38, RP = 12, RCD = 12, WTR = 8, WTP = 0,
+      RTP = 8, RRD = 10, REF = 64000, FAW = 38, REF_NS = 7800)
+    case 667 => SdramTiming(generation = 3, RFC = 260, RAS = 36, RP = 11, RCD = 11, WTR = 8, WTP = 0,
+      RTP = 8, RRD = 6, REF = 64000, FAW = 30, REF_NS = 7800)
+    case 800 => SdramTiming(generation = 3, RFC = 260, RAS = 35, RP = 10, RCD = 10, WTR = 8, WTP = 0,
+      RTP = 8, RRD = 6, REF = 64000, FAW = 30, REF_NS = 7800)
+  }
+
+  // JESD79-3F per-bin MR0/MR2 (Fig 9 / Fig 11 encodings; WRmin = Roundup(tWR/tCK) with
+  // tWR = 15 ns (Table 68); supported CL/CWL rows: Table 62 at tCK 2.5-3.3 ns, Table 63 at
+  // tCK 1.875-2.5 ns, Table 64 at tCK 1.5<1.875 ns, Table 65 at tCK 1.25<1.5 ns). The stock
+  // DDR3 preset (CL5/CWL5/WR5) does NOT cover the bins: WR5 sits below WRmin at 800 (WRmin 6)
+  // and at the higher bins (8 at 1066, 11 at 1333, 12 at 1600) -- so every bin case carries
+  // explicit init steps:
+  //   800  (tCK 2.5 ns):   MR0 = 0x510 = CL5 (A4) + WR6 (A10) + DLL reset (A8), MR2 = 0x200 = CWL5 + Rtt_WR 60 Ohm
+  //  1066 (tCK 1.875 ns):  MR0 = 0x920 = CL6 (A5) + WR8 (A11) + DLL reset (A8), MR2 = 0x208 = CWL6 + Rtt_WR 60 Ohm
+  //  1333 (tCK 1.499 ns):  MR0 = 0xD30 = CL7 (A5+A4) + WR12 (A11+A10) + DLL reset (A8), MR2 = 0x210 = CWL7 (A4) + Rtt_WR
+  //  1600 (tCK 1.25 ns):   MR0 = 0xD40 = CL8 (A6) + WR12 (A11+A10) + DLL reset (A8), MR2 = 0x218 = CWL8 (A4+A3) + Rtt_WR
+  // MR1 = 0x006 (RON 34 Ohm A1, RTT_NOM 60 Ohm A2) and MR3 = 0x000 (DLL) at all four bins.
+  def ddr3BinInit(mhz: Int): List[SdramInitStep] = {
+    val (mr0, mr2) = mhz match {
+      case 400 => (0x510, 0x200)
+      case 533 => (0x920, 0x208)
+      case 667 => (0xD30, 0x210)
+      case 800 => (0xD40, 0x218)
+    }
+    List(
+      SdramInitStep(SdramInitStep.MRS, 2, mr2, 8),
+      SdramInitStep(SdramInitStep.MRS, 3, 0x000, 8),
+      SdramInitStep(SdramInitStep.MRS, 1, 0x006, 8),
+      SdramInitStep(SdramInitStep.MRS, 0, mr0, 8),
+      SdramInitStep(SdramInitStep.ZQ, 0, 0, 512)
+    )
+  }
+
+  test("DDR4 speed bins: per-bin SdramTiming literals meet the JESD79-4B golden floors") {
+    Seq(800, 933, 1066, 1200).foreach { mhz =>
+      val bin = SdramTimingSpec.binName(mhz)
+      val s = SdramConfig(SdramGeneration.DDR4, bgWidth = 1, cidWidth = 1, bankWidth = 4,
+        columnWidth = 10, rowWidth = 13, dataWidth = 16, ddrMHZ = mhz,
+        ddrWrLat = 4, ddrRdLat = 4, sdramtime = ddr4BinTiming(mhz))
+      val g = SdramTimingSpec.golden(densityGb = 8, rateX = 1, dramMhz = mhz)
+      Seq(
+        "tRAS"  -> (s.tRAS, SdramTimingSpec.cyc(g.tRASns, s.cycleTime_ns)),
+        "tRCD"  -> (s.tRCD, SdramTimingSpec.cyc(g.tRCDns, s.cycleTime_ns)),
+        "tRP"   -> (s.tRP, SdramTimingSpec.cyc(g.tRPns, s.cycleTime_ns)),
+        "tRFC"  -> (s.tRFC, SdramTimingSpec.cyc(g.tRFCns, s.cycleTime_ns)),
+        "tFAW"  -> (s.tFAW, SdramTimingSpec.cyc(g.tFAWns, s.cycleTime_ns)),
+        "tREFI" -> (s.tREF, SdramTimingSpec.cyc(g.tREFIns, s.cycleTime_ns))
+      ).foreach { case (name, (got, exp)) =>
+        assert(got >= exp, s"DDR4 $bin: $name = $got nCK, the golden floor says $exp (${g.nsOf(name)} ns at ${s.cycleTime_ns} ns/tCK)")
+      }
+      Seq(
+        "tRRD"   -> (s.tRRD, g.tRRD_Lnck),
+        "tRTP"   -> (s.tRTP, g.tRTPnck),
+        "tWTR"   -> (s.tWTR, g.tWTR_Lnck),
+        "tCCD_L" -> (s.tCCD_L, tCCD_L_spec(mhz))
+      ).foreach { case (name, (got, exp)) =>
+        assert(got >= exp, s"DDR4 $bin: $name = $got nCK, the AC-table floor says $exp")
+      }
+      // Table 13 NOTE 1: the init sequence must program MR6 with the bin's tCCD_L floor.
+      val mr6 = SdramInitStep.defaultFor(SdramGeneration.DDR4, Ddr4ModeRegs(), fr = 2, dramMhz = mhz)
+        .collectFirst { case SdramInitStep(SdramInitStep.MRS, 6, op, _) => op }
+      assert(mr6.exists(op => ((op >> 10) & 0x7) == tCCD_L_spec(mhz) - 4),
+        s"DDR4 $bin: init MR6 does not program the tCCD_L floor ${tCCD_L_spec(mhz)} nCK")
+    }
+  }
+
+  test("DDR3 speed bins: per-bin timing + init MR literals meet the JESD79-3F floors") {
+    // (mhz, tRCD/tRP floor ns, tRAS floor ns, tRRD 1K-page floor ns, tFAW 1K-page floor ns)
+    // -- Tables 62/63/64/65 (per-bin rows) + Table 46 (nRRD/nFAW by speed bin) + Table 68 (tRTP)
+    Seq(
+      (400, 12.5, 37.5, 10.0, 40.0),
+      (533, 11.25, 37.5, 7.5, 37.5),
+      (667, 10.5, 36.0, 6.0, 30.0),
+      (800, 10.0, 35.0, 6.25, 30.0)
+    ).foreach { case (mhz, tRcdRpNs, tRasNs, tRrdNs, tFawNs) =>
+      val bin = ddr3BinName(mhz)
+      val s = SdramConfig(SdramGeneration.DDR3, bgWidth = 0, cidWidth = 0, bankWidth = 3,
+        columnWidth = 10, rowWidth = 15, dataWidth = 16, ddrMHZ = mhz,
+        ddrWrLat = 4, ddrRdLat = 4, sdramtime = ddr3BinTiming(mhz))
+      val tCK = s.cycleTime_ns
+      assert(s.tRAS >= SdramTimingSpec.cyc(tRasNs, tCK), s"DDR3 $bin: tRAS = ${s.tRAS} nCK < ceil(${tRasNs} ns/tCK) (Tables 62/63/64/65)")
+      assert(s.tRCD >= SdramTimingSpec.cyc(tRcdRpNs, tCK), s"DDR3 $bin: tRCD = ${s.tRCD} nCK < ceil(${tRcdRpNs} ns/tCK)")
+      assert(s.tRP >= SdramTimingSpec.cyc(tRcdRpNs, tCK), s"DDR3 $bin: tRP = ${s.tRP} nCK < ceil(${tRcdRpNs} ns/tCK)")
+      assert(s.tRFC == SdramTimingSpec.cyc(260.0, tCK), s"DDR3 $bin: tRFC = ${s.tRFC} nCK != ceil(260 ns/tCK) (Table 61, 4 Gb)")
+      assert(s.tRRD >= math.max(4, SdramTimingSpec.cyc(tRrdNs, tCK)), s"DDR3 $bin: tRRD = ${s.tRRD} nCK < max(4 nCK, ceil(${tRrdNs} ns/tCK))")
+      assert(s.tFAW >= SdramTimingSpec.cyc(tFawNs, tCK), s"DDR3 $bin: tFAW = ${s.tFAW} nCK < ceil(${tFawNs} ns/tCK) (1K page)")
+      assert(s.tRTP >= math.max(4, SdramTimingSpec.cyc(7.5, tCK)), s"DDR3 $bin: tRTP below max(4 nCK, 7.5 ns) (Table 68)")
+      assert(s.tREF == SdramTimingSpec.cyc(7800.0, tCK), s"DDR3 $bin: tREFI = ${s.tREF} nCK != ceil(7800 ns/tCK) (Table 61)")
+    }
+    // The init MR literals are legal at the bin's tCK (Fig 9 / Fig 11 rows of the bin's
+    // speed-bin table: Table 62/63/64/65; WRmin from Table 68 tWR = 15 ns).
+    val wrValue = Map(0 -> 16, 1 -> 5, 2 -> 6, 3 -> 7, 4 -> 8, 5 -> 10, 6 -> 12, 7 -> 14)
+    val clOf = Map(2 -> 5, 4 -> 6, 6 -> 7, 8 -> 8, 10 -> 9, 12 -> 10)
+    val cwlOf = Map(0 -> 5, 1 -> 6, 2 -> 7, 3 -> 8, 4 -> 9, 5 -> 10, 6 -> 11, 7 -> 12)
+    Seq(
+      // (mhz, tCK ns, supported CL, supported CWL, tCK range of the supported CL/CWL rows)
+      (400, 2.5, Set(5, 6), Set(5), (2.5, 3.3)),
+      (533, 1000.0 / 533.0, Set(5, 6, 7, 8), Set(5, 6), (1.875, 2.5)),
+      (667, 1000.0 / 667.0, Set(5, 6, 7, 8, 9), Set(5, 6, 7), (1.499, 1.875)),
+      (800, 1.25, Set(5, 6, 7, 8, 9, 10), Set(5, 6, 7, 8), (1.25, 1.5))
+    ).foreach { case (mhz, tCK, clSet, cwlSet, tCKRange) =>
+      val bin = ddr3BinName(mhz)
+      val (mr0, mr2) = ddr3BinInit(mhz) match {
+        case List(SdramInitStep(SdramInitStep.MRS, 2, m2, _), _, _, SdramInitStep(SdramInitStep.MRS, 0, m0, _), _) => (m0, m2)
+      }
+      val binTable = mhz match { case 400 => "62"; case 533 => "63"; case 667 => "64"; case _ => "65" }
+      val wr = wrValue((mr0 >> 9) & 0x7)
+      val wrMin = math.ceil(15.0 / tCK).toInt
+      assert(wr >= wrMin, s"DDR3 $bin: MR0 WR=$wr below WRmin = Roundup(15 ns/tCK) = $wrMin at tCK=${tCK} ns (Fig 9, Table 68)")
+      val clCode = ((mr0 >> 6) & 1) * 8 + ((mr0 >> 5) & 1) * 4 + ((mr0 >> 4) & 1) * 2 + ((mr0 >> 2) & 1)
+      val cwlCode = ((mr2 >> 5) & 1) * 4 + ((mr2 >> 4) & 1) * 2 + ((mr2 >> 3) & 1)
+      assert(clSet.contains(clOf(clCode)), s"DDR3 $bin: MR0 CL=${clOf(clCode)} not in the bin's supported CL set $clSet (Fig 9, Table $binTable)")
+      assert(cwlSet.contains(cwlOf(cwlCode)), s"DDR3 $bin: MR2 CWL=${cwlOf(cwlCode)} not in the bin's supported CWL set $cwlSet (Fig 11, Table $binTable)")
+      assert(tCK >= tCKRange._1 && tCK <= tCKRange._2, s"DDR3 $bin: tCK=${tCK} ns outside the supported range (${tCKRange._1}, ${tCKRange._2}]")
+    }
+  }
+
+  // JESD79-4B bins 1600/1866/2133/2400 MT/s at CK 800/933/1066/1200 MHz: one single-rank
+  // + one multi-rank (2 CS) fr=2 case per bin. Each runs the full T2 cross-check (random
+  // BMB master vs the DfiMemoryAgent reference model) with the DRAM-side watchdog asserting
+  // the bin's golden floors on the observed command stream. idleCycles keeps the 10000
+  // default: at the 2400 bin tREFI = 4680 MC cycles, so the window still holds >= 2
+  // refresh intervals (refreshMinCount = 2). The 1866/2133 parts run at 933/1067 MHz;
+  // 933/1066 is slightly slower, making every ceil(ns/tCK) conversion equal to or stricter
+  // than nominal.
+  def ddr4BinCase(mhz: Int, multiRank: Boolean): Unit =
+    ddr4(
+      s"DfiController_DDR4-${SdramTimingSpec.binName(mhz)}_${if (multiRank) "multi" else "single"}",
+      2, 0, RowBankColumn,
+      csNum = if (multiRank) 2 else 1,
+      timing = ddr4BinTiming(mhz),
+      refreshMinCount = 2,
+      ddrMHZ = mhz
+    )
+
+  // JESD79-3F representative subset: DDR3-800 (tCK 2.5 ns, bin 800D), DDR3-1066
+  // (tCK 1.875 ns, bin 1066E), DDR3-1333 (CK 667 MHz, bin 1333F) and DDR3-1600
+  // (tCK 1.25 ns, bin 1600G), each single-rank + multi-rank. 1333/1600 carry their own
+  // per-bin CL/CWL MR codes and golden transcriptions (Tables 64/65) in ddr3BinTiming/
+  // ddr3BinInit above; the DRAM-side watchdog asserts the bin floors (Table 68 by speed bin).
+  def ddr3BinCase(mhz: Int, multiRank: Boolean): Unit =
+    runDfiControllerTest(
+      s"DfiController_DDR3-${ddr3BinName(mhz)}_${if (multiRank) "multi" else "single"}",
+      SdramGeneration.DDR3, 2, 0, 0, if (multiRank) 2 else 1, 15, RowBankColumn,
+      sdramTiming = ddr3BinTiming(mhz),
+      initSteps = ddr3BinInit(mhz),
+      refreshMinCount = 2,
+      ddrMHZ = mhz
+    )
+
+  Seq(800, 933, 1066, 1200).foreach { mhz =>
+    ddr4BinCase(mhz, multiRank = false)
+    ddr4BinCase(mhz, multiRank = true)
+  }
+  Seq(400, 533, 667, 800).foreach { mhz =>
+    ddr3BinCase(mhz, multiRank = false)
+    ddr3BinCase(mhz, multiRank = true)
+  }
 }
