@@ -32,8 +32,9 @@ case class Alignment(config: DfiConfig) extends Component {
   rdAlignment.io.output <> io.output.read
   rdAlignment.io.phaseClear := False
 
-  // DFI 5.2 Table 37: the MC must drive dfi_odt in all phases. Assert ODT for the chip-select
-  // whose data window is active this phase (write or read), park (0) otherwise. Derived from
+  // DFI 5.2 Table 4 (dfi_odt_pN row): "The MC must drive ODT signals in all phases"; §4.10.2
+  // keeps cke/odt out of the "only phases where a command is sent" rule. Assert ODT for the
+  // chip-select whose data window is active this phase (write or read), park (0) otherwise. Derived from
   // the actual DFI-side window signals (wrdata_en / wrdata_cs_n, rddata_valid / rddata_cs_n)
   // so the ODT waveform tracks the real data transfers. odt is phase-major
   // (odt(i*csNum + cs)), matching UsPhy's phaseSel take/drop layout. First-order model: the
