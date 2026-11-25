@@ -10,7 +10,7 @@ import spinal.tester.SpinalAnyFunSuite
   * T1 netlist lint (ADR-0017): machine-check what no simulation in this repo reaches.
   *
   * Every signal in the [[Dfi]] bundle is a protocol obligation with a direction and a
-  * per-generation Required/Optional column (DFI 5.2 Table 54). The functional simulations
+  * per-generation Required/Optional column (DFI 5.2 Table 4, "DFI Signal Requirements"). The functional simulations
   * exercise the command and data groups; the control-channel groups (update, low power,
   * training, PHY-requested leveling, status) have no stimulus at all, so an undriven wire --
   * or a wire quietly tied to a constant that a protocol needs toggled -- is invisible to
@@ -58,9 +58,9 @@ object DfiNetlistLint {
     "io_dfi_rdTraining_rdlvlGateEn" -> Tied("DFI 5.2 sec. 4.10.3: the read-gate training mode of the stub is never entered"),
     "io_dfi_rdTraining_rdlvlGateReq" -> Driven("top-level DFI input, driven by the PHY side outside this netlist. Contract: no read-gate training request is ever asserted (DFI 5.2 sec. 4.10.3)"),
     "io_dfi_wrTraining_wrlvlReq" -> Driven("top-level DFI input, driven by the PHY side outside this netlist. Contract: the implemented write leveling is the legacy dfi_wrlvl_en window (ADR-0002 tier 2), not the DFI 5.2 wrlvl request, so the PHY must never assert it"),
-    "io_dfi_levelingTraining_lvlPattern" -> Tied("DFI 5.2 sec. 4.10.4.4 leveling pattern generator not implemented"),
-    "io_dfi_phyRequestedTraining_phylvlReqCsN" -> Tied("DFI 5.2 sec. 4.10.4.5 PHY-requested periodic leveling is not implemented"),
-    "io_dfi_control_cid" -> Zero("3DS logical ranks are NOT_IMPLEMENTED: DFI 5.2 sec. 4.5.2 / Table 46 map logical ranks onto dfi_cid[2:0]; this MC selects physical ranks with dfi_cs only, so cid must stay constant 0")
+    "io_dfi_levelingTraining_lvlPattern" -> Tied("lvl_pattern is a pre-5.0 legacy training signal; DFI 5.2 has no leveling pattern generator (legacy training family absent from 5.2)"),
+    "io_dfi_phyRequestedTraining_phylvlReqCsN" -> Tied("PHY-requested periodic leveling (dfi_phylvl_req_csN) is a pre-5.0 legacy training signal, absent from DFI 5.2; the 5.2 analog, PHY-initiated update, is sec. 4.9.2"),
+    "io_dfi_control_cid" -> Zero("3DS logical rank (DFI 5.2 sec. 4.5.2 / Table 46: logical ranks map onto dfi_cid[2:0]) is driven as the rank index zero-extended onto dfi_cid; this lint config has chipSelectNumber=1, so the cs index is 0 bits and cid folds to constant 0. Multi-rank CID!=0 drive + CA-parity coverage: DfiControllerTester DfiController_DDR4_fr2_caparity_3ds*")
   )
 
   // ------------------------------------------------------------------ netlist helpers
@@ -313,8 +313,8 @@ object DfiNetlistLint {
   }
   val phyLedger: Seq[(String, Expect)] = Seq(
       "dfi_update_ctrlupdAck" -> Zero("this PHY has no MC-initiated update state machine, so it never acknowledges ctrlupd_req (DFI 5.2 sec. 4.9.1)"),
-      "dfi_update_phyupdReq" -> Zero("no PHY-initiated/periodic leveling request (DFI 5.2 sec. 4.10.4.5)"),
-      "dfi_update_phyupdType" -> Zero("phyupd_type is meaningless while phyupd_req stays low (DFI 5.2 sec. 4.10.4.5)"),
+      "dfi_update_phyupdReq" -> Zero("no PHY-initiated/periodic leveling request (DFI 5.2 sec. 4.9.2 PHY-Initiated Update)"),
+      "dfi_update_phyupdType" -> Zero("phyupd_type is meaningless while phyupd_req stays low (DFI 5.2 sec. 4.9.2 PHY-Initiated Update)"),
       "dfi_lowPowerControl_lpAck" -> Zero("no DFI low-power handshake in this PHY (DFI 5.2 sec. 3.6, sec. 4.13)"),
       "dfi_error_error" -> Zero("no DFI error reporting source in this PHY (DFI 5.2 sec. 3.7)"),
       "dfi_error_errorInfo" -> Zero("no DFI error reporting source in this PHY (DFI 5.2 sec. 3.7)")
@@ -322,7 +322,7 @@ object DfiNetlistLint {
 
   val phyHoles: Seq[(String, Expect)] = Seq("dfi_caTraining" -> Absent("empty CA-training bundle: useCalvl* default to false and no generation overrides them (DFI 5.2 sec. 4.10.3) — NOT_IMPLEMENTED"))
 
-  lazy val phyCaps = SpinalVerilog(UsPhy(lintConfig(fr = 2, signalConfig = allSignalsDdr4, mr5 = 0x1800)))
+  lazy val phyCaps = SpinalVerilog(UsPhy(lintConfig(fr = 2, signalConfig = allSignalsDdr4, mr5 = 0x1801)))
 
 }
 
@@ -330,9 +330,9 @@ class DfiNetlistLintSpec extends SpinalAnyFunSuite {
   import DfiNetlistLint._
 
   private val debug = sys.env.get("DFI_LINT_DEBUG").isDefined
-  private lazy val allCaps = mcBuilt(lintConfig(fr = 2, signalConfig = allSignalsDdr4, mr2 = 0x4, mr5 = 0x1800))
+  private lazy val allCaps = mcBuilt(lintConfig(fr = 2, signalConfig = allSignalsDdr4, mr2 = 0x4, mr5 = 0x1801))
 
-  test("the bundle's DFI surface is physically present in the MC netlist (DFI 5.2 Table 54)") {
+  test("the bundle's DFI surface is physically present in the MC netlist (DFI 5.2 Table 4, DFI Signal Requirements)") {
     val names = allCaps.dfiNames
     assert(names.size > 40, s"bundle-derived DFI leaf list is suspiciously small (${names.size}): ${names.take(8)}")
     val documentedAbsent = ledger.collect { case (n, a: Absent) => n }.toSet
@@ -402,7 +402,7 @@ class DfiNetlistLintSpec extends SpinalAnyFunSuite {
     Seq(2, 4).foreach { fr =>
       // useFreqRatio is `false` in DfiSignalConfig and no generation class overrides it, so the
       // capability has to be switched on explicitly for the port to exist at all.
-      val b = mcBuilt(lintConfig(fr, signalConfig = new DDR4SignalConfig(DfiFunctionConfig(useStatusSignals = true), false) { override val useFreqRatio = true }))
+      val b = mcBuilt(lintConfig(fr, signalConfig = new DDR4SignalConfig(DfiFunctionConfig(useStatusSignals = true), false) { override val useFreqRatio = true }, mr5 = 0x001))
       val expect = fr match { case 1 => "1'b0"; case 2 => "2'b01"; case 4 => "2'b10" }
       val t = terminalRhs(b.rtl, "io_dfi_status_freqRatio")
       if (debug) {
@@ -460,8 +460,8 @@ class DfiNetlistLintSpec extends SpinalAnyFunSuite {
     assert(problems.isEmpty, problems.mkString("\n"))
   }
 
-  test("the PHY exposes the whole DFI surface its pads need (DFI 5.2 Table 54)") {
-    val cfg = lintConfig(fr = 2, signalConfig = allSignalsDdr4, mr5 = 0x1800)
+  test("the PHY exposes the whole DFI surface its pads need (DFI 5.2 Table 4, DFI Signal Requirements)") {
+    val cfg = lintConfig(fr = 2, signalConfig = allSignalsDdr4, mr5 = 0x1801)
     val v = phyNetlist(cfg)
     val names = phyNames(cfg)
     assert(names.size > 40, s"PHY bundle leaf list is suspiciously small (${names.size})")

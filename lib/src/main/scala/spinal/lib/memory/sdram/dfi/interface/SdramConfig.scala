@@ -10,7 +10,7 @@ class SdramGeneration(
     val CCD: Int,
     val burstLength: Int,
     val dataRate: Int,
-    // Bank-group aware CAS-to-CAS (tCCD) in nCK, JESD79-4B Table 34.
+    // Bank-group aware CAS-to-CAS (tCCD) in nCK, JESD79-4B Table 13.
     // 0 => collapse to CCD (no bank groups): DDR/DDR2/DDR3 keep exactly the old single-value behavior.
     val ccdL: Int = 0,
     val ccdS: Int = 0,
@@ -70,8 +70,10 @@ object SdramGeneration {
     burstLength = 8,
     dataRate = 2
   )
-  // DDR4: fixed BL8, 2nCK data rate, bank-group aware timing (tCCD_L=4/tCCD_S=2 nCK,
-  // JESD79-4B Table 34). tRRD/tWTR L/S variants live in SdramTiming (ns-based, like all
+  // DDR4: fixed BL8, 2nCK data rate, bank-group aware timing (tCCD_L per the AC table:
+  // 5 nCK @1600/1866, 6 @2133 — SdramConfig.tCCD_L picks it per operating frequency and the
+  // init sequence programs MR6 (Table 13) with the same value; tCCD_S 4 nCK uniform, config
+  // keeps 8 as margin). tRRD/tWTR L/S variants live in SdramTiming (ns-based, like all
   // other cross-bank timings in this codebase).
   val DDR4 = new SdramGeneration(
     RESETn = true,
@@ -81,12 +83,20 @@ object SdramGeneration {
     CCD = 4,
     burstLength = 8,
     dataRate = 2,
-    ccdL = 10, // JESD79-4B 8 Gb speed bin: tCCD_L >= 10 nCK (5 nCK only at >= 3200 MT/s, MR6)
-    ccdS = 8,  // JESD79-4B 8 Gb speed bin: tCCD_S >= 8 nCK (4 nCK at >= 3200 MT/s)
+    ccdL = 5, // tCCD_L floor at the lowest AC bin (JESD79-4B p.189: 5 nCK @1600/1866, 6 @2133).
+             // SdramConfig.tCCD_L lifts it per operating frequency; the init sequence
+             // programs MR6 (Table 13) with the same value. (Was 4: below every bin floor.)
+    ccdS = 8,  // tCCD_S = 4 nCK uniform (JESD79-4 timing-figure notes); 8 is a deliberate conservative margin
     hasModernCmdBus = true,
     hasDbi = true,
     hasCaParity = true
   )
+
+  /** JESD79-4B AC table (p.189) tCCD_L floor in nCK, by DRAM CK frequency: 5 @ DDR4-1600/1866,
+    * 6 @ DDR4-2133; Table 102 has a 2400 column (2666/3200 mostly TBD) with tCCD_L = 6 nCK,
+    * so >=2400 keeps the strictest known floor (6). Sub-1600 (this repo's 200 MHz test point)
+    * uses the 1600 value. */
+  def ddr4TCCD_L_floor(dramMhz: Int): Int = if (dramMhz >= 1066) 6 else 5
 }
 
 case class SdramConfig(
@@ -142,17 +152,36 @@ case class SdramConfig(
 
   /** Write recovery time (tWR) in MC clock cycles.
     * Derived from the user-supplied sdramtime.WTP (ns) when non-zero; otherwise
-    * falls back to the JESD79-4B AC-table minimum of 15 ns (uniform across DDR4
-    * speeds; conservative for older generations, whose tWR may be smaller).
+    * falls back to 15 ns: JESD79-4 (in-repo original) Note 2 gives WRmin[cycles] =
+    * Roundup(tWR[ns]/tCK[ns]), so the ns value is the authority for DDR4. For DDR3/DDR2 the
+    * in-repo specs are silent (ADR-0018), but both in-repo Micron models parameterize
+    * TWR = 15000 ps, so the same fallback is the characterized value there.
     * (Was a hardcoded 6-cycle approximation that undershot the spec at >=DDR4-2400.)
     */
   def tWR = if (sdramtime.WTP != 0) timeCycle(sdramtime.WTP, cycleTime_ns) else timeCycle(15, cycleTime_ns)
 
   def tRAS = timeCycle(sdramtime.RAS, cycleTime_ns)
 
-  def tRTP = math.max(timeCycle(sdramtime.RTP, cycleTime_ns), generation.burstLength / generation.dataRate)
+  def tRTP = math.max(math.max(timeCycle(sdramtime.RTP, cycleTime_ns), generation.burstLength / generation.dataRate), ddr4SpecFloorNck)
 
-  def tRRD = math.max(timeCycle(sdramtime.RRD, cycleTime_ns), generation.burstLength / generation.dataRate)
+  def tRRD = math.max(math.max(timeCycle(sdramtime.RRD, cycleTime_ns), generation.burstLength / generation.dataRate), ddr4SpecFloorNck)
+
+  /** Scheduled tCCD_L in nCK: DDR4 follows the AC table per operating frequency
+    * (JESD79-4B p.189); Table 13 NOTE 1 requires MR6 to be programmed with this same value —
+    * Ddr4InitSequencer applies the lift to the default init sequence. A generation-table value above
+    * the bin floor (e.g. a custom SdramGeneration) wins; the standard DDR4 entry (4 nCK) is always
+    * below it. Other generations
+    * keep the generation-table value. */
+  def tCCD_L = if (generation == SdramGeneration.DDR4) math.max(SdramGeneration.ddr4TCCD_L_floor(ddrMHZ), generation.tCCD_L) else generation.tCCD_L
+
+  /** JESD79-4B AC floors (p.189-190) in nCK: tRRD_L (2K page — the strictest page size, this
+    * DUT has no page-size knob) = Max(4 nCK, 7.5 ns @1600 / 6.4 ns @1866+); tRTP =
+    * max(4 nCK, 7.5 ns) at all bins. 7.5 ns is the strictest constant in the table, so
+    * max(4, ceil(7.5 ns/tCK)) meets or exceeds every bin's floor (tRRD_L at most 1 nCK
+    * stricter than the per-bin table at 1866/2133 — legal: a scheduler floor, not a
+    * programmed value). 0 for non-DDR4 generations (their floor stays the burst length). */
+  private def ddr4SpecFloorNck: Int =
+    if (generation == SdramGeneration.DDR4) math.max(4, math.ceil(7.5 / cycleTime_ns).toInt) else 0
 
   /** tRRD_S: ACT to ACT across different bank groups (DDR4 only).
     * Falls back to tRRD when RRD_S is unset; floor is the burst, not tRRD (S may be shorter).
@@ -171,6 +200,10 @@ case class SdramConfig(
 
   def cycleTime_ns = 1000.0 / ddrMHZ
 
+  // ddrWrLat/ddrRdLat are counted MC cycles from the MC-side command issue; the DFI data
+  // window (tphy_wrdata/tRddataEn) is referenced to the PHY's command sampling, which trails
+  // the issue by 2 clocks, hence the -2. Calibrated value validated end-to-end against the
+  // Micron pin model in DfiE2eGen.
   def tPhyWrlat = ddrWrLat - 2
   def tRddataEn = ddrRdLat - 2
 }

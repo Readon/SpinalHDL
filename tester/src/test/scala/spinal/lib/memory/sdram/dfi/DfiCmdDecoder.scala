@@ -71,7 +71,9 @@ object DfiCmdDecoder {
       case (1, 1, 1, 1)                    => Kind.NOP    // (1,1,1)
       // Everything else on an ACTIVE CS is not a command the MC may emit:
       //   (1,1,1,0)+a10=0 = ZQCS (short) — MC never emits (golden mcOp=None)
-      //   (1,0,1,1)        = RFU / SRE / SRX — CKE-transition commands, MC never emits
+      //   (1,0,1,1)        = the RFU row ONLY (Table 16). SRE/SRX are CKE-transition commands
+      //                      (SRE = REF pins + CKE H->L, SRX = NOP pins + CKE L->H) and the MC
+      //                      never drives CKE (tied high), so they are never emitted.
       // Flagging them (rather than silently dropping, as the agent does) turns a spurious
       // appearance into a loud cross-check failure instead of a silent no-op.
       case _                               => Kind.ILLEGAL

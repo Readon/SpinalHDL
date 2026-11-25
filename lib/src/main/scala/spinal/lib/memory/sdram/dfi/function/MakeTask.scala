@@ -6,8 +6,8 @@ import spinal.lib.fsm.{EntryPoint, State, StateMachine}
 
 case class Ddr4ModeRegs(
     mr0: Int = 0x130, // BL8 fixed(A1:A0=00), sequential(A3=0), CL=15 (A12,A6,A5,A4,A2=0,0,1,1,0), DLL reset (A8=1)
-    mr1: Int = 0x000, // output enabled, no write leveling, push-pull, AL=0, DLL enable (A0=1 set by init? see note)
-    mr2: Int = 0x000, // CWL=5, no AL
+    mr1: Int = 0x001, // DLL enable (A0=1): JESD79-4 sec. 3.3 power-up init enables the DLL before the MR0 DLL-reset bit; output enabled, no write leveling, AL=0
+    mr2: Int = 0x000, // CWL=9 (A5:A3=000), RTT_WR dynamic ODT off (A10:A9=00); AL lives in MR1
     mr3: Int = 0x000, // push-pull CA, normal drive strength
     mr4: Int = 0x000, // normal self-refresh temp range, ASR off
     mr5: Int = 0x000, // no CA parity, PPB off
@@ -38,11 +38,13 @@ object SdramInitStep {
     * DDR3/DDR2 presets are dual-source verified (see Ddr3InitSequencer/Ddr2InitSequencer);
     * SDR/MYDDR ship init-less (explicit DfiConfig.initSteps injection remains the escape
     * hatch for any generation). */
-  def defaultFor(generation: SdramGeneration, modeRegs: Ddr4ModeRegs, fr: Int = 2): List[SdramInitStep] =
+  def defaultFor(generation: SdramGeneration, modeRegs: Ddr4ModeRegs, fr: Int = 2, dramMhz: Int = 200): List[SdramInitStep] =
     // DDR4 spacings anchored to JESD79-4B nCK values (tMRD = 8 nCK, tZQinit = 1024 nCK),
     // converted to MC cycles by the frequency ratio so the preset is correct at every fr.
+    // dramMhz (DRAM CK frequency) selects the tCCD_L floor the DDR4 sequence programs into
+    // MR6 (JESD79-4B Table 13 NOTE 1); the default 200 is this repo's test point.
     generation match {
-      case SdramGeneration.DDR4 => Ddr4InitSequencer(modeRegs = modeRegs, tMrdCycles = scala.math.ceil(8.0 / fr).toInt, zqInitCycles = scala.math.ceil(1024.0 / fr).toInt)
+      case SdramGeneration.DDR4 => Ddr4InitSequencer(modeRegs = modeRegs, tMrdCycles = scala.math.ceil(8.0 / fr).toInt, zqInitCycles = scala.math.ceil(1024.0 / fr).toInt, dramMhz = dramMhz)
       case SdramGeneration.DDR3 => Ddr3InitSequencer()
       case SdramGeneration.DDR2 => Ddr2InitSequencer()
       case _                     => Nil
@@ -109,8 +111,15 @@ case class SdramInitSequencer(
   * ZQCL. The initial xprWait lives in the engine, not in this table. Bit-for-bit equivalent
   * to the pre-step-table engine output (verified by the DDR4 regression tests). */
 object Ddr4InitSequencer {
-  def apply(modeRegs: Ddr4ModeRegs, tMrdCycles: Int, zqInitCycles: Int): List[SdramInitStep] = {
-    val ops = List(modeRegs.mr0, modeRegs.mr1, modeRegs.mr2, modeRegs.mr3, modeRegs.mr4, modeRegs.mr5, modeRegs.mr6)
+  def apply(modeRegs: Ddr4ModeRegs, tMrdCycles: Int, zqInitCycles: Int, dramMhz: Int = 200): List[SdramInitStep] = {
+    // JESD79-4B Table 13 NOTE 1: tCCD_L must be programmed per the AC table for the operating
+    // frequency (5 nCK @1600/1866, 6 @2133). The default MR6 (0x000 = code 000 = 4 nCK) is
+    // below every bin floor, so lift the A12:A10 code to the bin floor; a user-programmed
+    // code already at/above the floor passes through unchanged (never lowered).
+    val floorCode = SdramGeneration.ddr4TCCD_L_floor(dramMhz) - 4
+    val userCode = (modeRegs.mr6 >> 10) & 0x7
+    val regs = if (userCode < floorCode) modeRegs.copy(mr6 = (modeRegs.mr6 & ~0x7000) | (floorCode << 10)) else modeRegs
+    val ops = List(regs.mr0, regs.mr1, regs.mr2, regs.mr3, regs.mr4, regs.mr5, regs.mr6)
     List(3, 6, 5, 4, 2, 1, 0).map(mr => SdramInitStep(SdramInitStep.MRS, mr, ops(mr), tMrdCycles)) :+
       SdramInitStep(SdramInitStep.ZQ, 0, 0, zqInitCycles)
   }
@@ -131,9 +140,9 @@ object Ddr4InitSequencer {
   * scheduler once traffic starts). */
 object Ddr3InitSequencer {
   def apply(tMrdCycles: Int = 8, zqCalCycles: Int = 512): List[SdramInitStep] = List(
-    SdramInitStep(SdramInitStep.MRS, 2, 0x200, tMrdCycles), // CWL=5 (A3:0), RTT_WR=60 Ohm (A9)
-    SdramInitStep(SdramInitStep.MRS, 3, 0x000, tMrdCycles), // DLL enabled
-    SdramInitStep(SdramInitStep.MRS, 1, 0x006, tMrdCycles), // RON=34 Ohm (A1), RTT_NOM=60 Ohm (A2)
+    SdramInitStep(SdramInitStep.MRS, 2, 0x200, tMrdCycles), // CWL=5 (A5:A3=000, valid tCK>=2.5ns), RTT_WR=60 Ohm ({A10,A9}=01)
+    SdramInitStep(SdramInitStep.MRS, 3, 0x000, tMrdCycles), // MPR register (all RFU=0); DLL enable is MR1 A0=0
+    SdramInitStep(SdramInitStep.MRS, 1, 0x006, tMrdCycles), // ODT driver=34 Ohm ({A5,A1}=01), RTT_NOM=60 Ohm ({A9,A6,A2}=001), DLL enabled (A0=0)
     SdramInitStep(SdramInitStep.MRS, 0, 0x310, tMrdCycles), // BL8 (A1:0=00), CL5 (A4), WR5 (A9), DLL reset (A8)
     SdramInitStep(SdramInitStep.ZQ, 0, 0, zqCalCycles)
   )
@@ -196,12 +205,14 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
   // place (SdramInitStep.defaultFor). Generations without a preset run init-less exactly as
   // before (no engine component is instantiated, initDone == True).
   val initSeq: List[SdramInitStep] =
-    dfiConfig.initSteps.getOrElse(SdramInitStep.defaultFor(sdram.generation, dfiConfig.ddr4ModeRegs, fr = dfiConfig.frequencyRatio))
-  // xprWaitCycles: the tXPR pause before the first MRS. On real silicon tXPR = Max(tXS, 5 nCK)
-  // ~= tXS (200 us after RESET_n de-assertion, JESD79-4B sec. 3.3 step 5) and is absorbed by the
-  // board's power-up sequencing (SdramConfig.ddrStartDelay = 600 us). Here it is a SIMULATION
-  // pacing value (32 MC cycles) that merely lets reset/CKE settle before the first MRS — it is
-  // NOT a protocol timing and must not be read as an assertion on tXPR.
+    dfiConfig.initSteps.getOrElse(SdramInitStep.defaultFor(sdram.generation, dfiConfig.ddr4ModeRegs, fr = dfiConfig.frequencyRatio, dramMhz = sdram.ddrMHZ))
+  // xprWaitCycles: the tXPR pause before the first MRS. On real silicon tXPR = Max(5 nCK,
+  // tRFC(min) + 10 ns) (JESD79-4B AC table p.190), counted from CKE registered high (sec. 3.3
+  // step 5); the 200 us after RESET_n is the stable-power wait (step 1) and step 2 waits 500 us
+  // until CKE becomes active. The whole window is absorbed by the board's power-up sequencing
+  // (SdramConfig.ddrStartDelay = 600 us). Here it is a SIMULATION pacing value (32 MC cycles)
+  // that merely lets reset/CKE settle before the first MRS — it is NOT a protocol timing and
+  // must not be read as an assertion on tXPR.
   val initEngine = if (initSeq.nonEmpty) SdramInitSequencer(initSeq, xprWaitCycles = 32) else null
   def initDone: Bool = if (initEngine != null) initEngine.io.done else True
   if (dfiConfig.signalConfig.useCtrlMsg && dfiConfig.bootTraining) io.initDoneOut := initDone
@@ -258,7 +269,7 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
   // Bank-group-aware CAS-to-CAS (tCCD) between column commands (capability gate bgWidth>0).
   // Legacy (bgWidth==0): no extra gate (the station's 1-cycle block already provides
   // tCCD_S-equivalent spacing). With bank groups: a column command into the SAME bank group as the previous column command must wait
-  // tCCD_L (4nCK = 2 MC cycles at fr2); cross-group keeps the existing 1-cycle spacing (tCCD_S).
+  // tCCD_L (5/6 nCK per the AC bin, = 3 MC cycles at fr2; SdramConfig.tCCD_L); cross-group keeps the existing 1-cycle spacing (tCCD_S).
   val CCD_BG = if (dfiConfig.sdram.bgWidth > 0) new Area {
     val lastBg = Reg(Bits(dfiConfig.bankGroupWidth bits)) init (B(0, dfiConfig.bankGroupWidth bits))
     val lastValid = RegInit(False)
@@ -269,7 +280,7 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
     val sameGroup = lastBg === io.output.address.bank(dfiConfig.dfiBankWidth, dfiConfig.bankGroupWidth bits).asBits
     val timerL = timing(io.output.read || io.output.write, timeConfig.CCD_L)
     // tCCD_S: consecutive column commands into DIFFERENT bank groups need their own spacing
-    // (JESD79-4B sec. 4.19, 8 nCK at 8 Gb). Only tCCD_L was gated; cross-group traffic fell back
+    // (spec floor 4 nCK; the config's ccdS=8 is a conservative margin). Only tCCD_L was gated; cross-group traffic fell back
     // to the station's one-cycle block, i.e. 2 nCK at fr2 and 1 nCK at fr1.
     val timerS = timing(io.output.read || io.output.write, timeConfig.CCD_S)
     val busy = lastValid && (if (timeConfig.CCD_S >= timeConfig.CCD_L) timerS.busy
@@ -277,6 +288,9 @@ case class MakeTask(taskConfig: TaskConfig, dfiConfig: DfiConfig, addrMap: AddrM
   } else null
   def ccdBgBusy: Bool = if (CCD_BG != null) CCD_BG.busy else False
   val RTW = timing(io.output.read, timeConfig.RTW)
+  // PRE_ALL->ACT: tRPAB (all-bank precharge to ACT) is longer than single-bank tRP; the +1 is a
+  // margin, not a spec-derived value (the in-repo spec extracts carry no tRPAB formula). The
+  // watchdog enforces plain tRP from PRE_ALL, so this is the only all-bank-specific spacing here.
   val RP = timing(io.output.prechargeAll, timeConfig.RP + 1)
   // --- DFI 5.2 multi-chip-select data-burst gap (tphy_wrcsgap / tphy_rdcsgap, Tables 16/19) ---
   // When two consecutive same-direction column bursts target DIFFERENT chip-selects, the PHY

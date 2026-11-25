@@ -6,8 +6,10 @@ import spinal.lib.memory.sdram.dfi._
 
 object UsPhyGen {
   // Optional arg: mr5 hex override (e.g. "0x1800" = write+read DBI enabled).
+  // Default 0x001 (PL4): the status-signal set enables CA parity signals, and DfiConfig now
+  // requires the DRAM side (MR5.A2:A0 != 0, JESD79-4B Table 12) for the feature to be active.
   def main(args: Array[String]): Unit = {
-    val mr5: Int = if (args.length >= 1) java.lang.Integer.decode(args(0)).toInt else 0
+    val mr5: Int = if (args.length >= 1) java.lang.Integer.decode(args(0)).toInt else 0x001
     val sdramtime = SdramTiming(
       generation = 3, RFC = 260, RAS = 38, RP = 15, RCD = 15,
       WTR = 8, WTP = 0, RTP = 8, RRD = 6, REF = 64000, FAW = 35

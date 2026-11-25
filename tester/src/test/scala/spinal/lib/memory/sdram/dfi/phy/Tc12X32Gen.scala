@@ -36,7 +36,7 @@ object Tc12X32Gen {
     val cfg = DfiConfig(
       chipSelectNumber = 2, dataSlice = 1,
       signalConfig = signalConfig, timeConfig = timeConfig,
-      sdram = sdram, ddr4ModeRegs = Ddr4ModeRegs(),
+      sdram = sdram, ddr4ModeRegs = Ddr4ModeRegs(mr5 = 0x001), // PL4: status signals include CA parity (JESD79-4B Table 12)
       initSteps = None, bootTraining = false
     )
     cfg

@@ -8,36 +8,29 @@ import spinal.tester.code.SpinalAnyFunSuite
   * specifies, plus the negative rows (RFU must never be emitted, DES via CS, NOP when idle),
   * plus a feature-coverage ledger of which rows the MC is able to emit at all.
   *
-  * Transcription (JESD79-4, p.24, Table 16 — "Command Truth Table"), verbatim column order
-  * `CS_n ACT_n RAS_n/A16 CAS_n/A15 WE_n/A14 ... A10/AP`, 1 = pin HIGH, `V` = defined H or L,
-  * `X` = don't care:
+  * Transcription (JESD79-4, p.24-25, Table 16 — "Command Truth Table"). The spec table's
+  * columns are [CKE prev, CKE cur, CS_n, ACT_n, RAS_n/A16, CAS_n/A15, WE_n/A14, BG, BA, C,
+  * A13:A11, A10/AP, A0:A9, NOTE]; 1 = pin HIGH, V = defined H or L, X = don't care.
+  * Pin tuples below are (ACT_n, RAS_n/A16, CAS_n/A15, WE_n/A14) with CS_n = L unless noted:
   *
-  *   MRS    H L H L L L   BG BA  OP Code                              (NOTE 12)
-  *   REF    H L H L L H   V  V  V V V V V
-  *   SRE    H L H L L H   V  V  V V V V V                             (7,9)   CKE H->L
-  *   SRX    L H H L L H   V  V  V V V V V                             (7,8,9,10) CKE L->H
-  *   PRE    H L H L H L   BG BA V V V L V
-  *   PREA   H L H L H L   V  V  V V V H V
-  *   RFU    H L H L H H                              <- must never be emitted
-  *   ACT    H L L Row Address(RA) ... BG BA V Row Address(RA)
-  *   WR     H L H H L L   BG BA V V V L CA
-  *   WRS4   H L H H L L   BG BA V L V L CA     (BC4 on the fly)
-  *   WRS8   H L H H L L   BG BA V H V L CA     (BL8 on the fly)
-  *   WRA    H L H H L L   BG BA V V V H CA
-  *   WRAS4  H L H H L L   BG BA V L V H CA
-  *   WRAS8  H L H H L L   BG BA V H V H CA
-  *   RD     H L H H L H   BG BA V V V L CA
-  *   RDS4   H L H H L H   BG BA V L V L CA
-  *   RDS8   H L H H L H   BG BA V H V L CA
-  *   RDA    H L H H L H   BG BA V V V H CA
-  *   RDAS4  H L H H L H   BG BA V L V H CA
-  *   RDAS8  H L H H L H   BG BA V H V H CA
-  *   NOP    H L H H H H   V  V  V V V V V                             (10)
-  *   DES    H H X X X X   X  X  X X X X X
-  *   PDE    H L H X X X X X X X X X X                                 (6)   CKE H->L
-  *   PDX    L H H X X X X X X X X X X                                 (6)   CKE L->H
-  *   ZQCL   H L H H H L   V  V  V V V H V
-  *   ZQCS   H L H H H L   V  V  V V V L V
+  *   MRS    (H,L,L,L)  BG/BA = MR select, OP code on A12:A0            (NOTE 12)
+  *   REF    (H,L,L,H)  A8 = 0 (fixed rate), BG/BA = 0
+  *   SRE    (H,L,L,H)  = REF pins + CKE H->L                           (7,9)
+  *   SRX    (H,H,H,H)  = NOP pins + CKE L->H                           (7,8,9,10)
+  *   PRE    (H,L,H,L)  A10 = L
+  *   PREA   (H,L,H,L)  A10 = H
+  *   RFU    (H,L,H,H)  <- must never be emitted
+  *   ACT    (L,RA16,RA15,RA14)  row address on the bus                 (NOTE 1)
+  *   WR     (H,H,L,L)  A10 = L (fixed BL8/BC4); WRS4/WRS8 set BC_n on A13:A11;
+  *            WRA / WRAS4 / WRAS8 with A10 = H
+  *   RD     (H,H,L,H)  A10 = L; RDS4/RDS8 set BC_n on A13:A11;
+  *            RDA / RDAS4 / RDAS8 with A10 = H
+  *   NOP    (H,H,H,H)                                                   (10)
+  *   DES    CS_n = H, rest X
+  *   PDE    (H,X,X,X)  + CKE H->L                                       (6)
+  *   PDX    (H,X,X,X)  + CKE L->H                                       (6)
+  *   ZQCL   (H,H,H,L)  A10 = H
+  *   ZQCS   (H,H,H,L)  A10 = L
   *
   * NOTE 1 (verbatim): "All DDR4 SDRAM commands are defined by states of CS_n, ACT_n,
   * RAS_n/A16, CAS_n/A15, WE_n/A14 and CKE at the rising edge of the clock. ... When ACT_n = H;
@@ -80,8 +73,8 @@ class SdramCmdTruthTable16Spec extends SpinalAnyFunSuite {
   val table16: Seq[Row] = Seq(
     Row("Mode Register Set",        "MRS",   Pin(1, 0, 0, 0), X, 1, 1, carriesColumn = false, carriesBank = true,  carriesRow = false, opCode = true,  Some("mrs"),          "12"),
     Row("Refresh",                  "REF",   Pin(1, 0, 0, 1), X, 1, 1, carriesColumn = false, carriesBank = false, carriesRow = false, opCode = false, Some("refresh"),      ""),
-    Row("Self Refresh Entry",       "SRE",   Pin(1, 0, 1, 1), X, 1, 0, carriesColumn = false, carriesBank = false, carriesRow = false, opCode = false, None,                 "7,9 CKE H->L"),
-    Row("Self Refresh Exit",        "SRX",   Pin(1, 0, 1, 1), X, 0, 1, carriesColumn = false, carriesBank = false, carriesRow = false, opCode = false, None,                 "7,8,9,10 CKE L->H"),
+    Row("Self Refresh Entry",       "SRE",   Pin(1, 0, 0, 1), X, 1, 0, carriesColumn = false, carriesBank = false, carriesRow = false, opCode = false, None,                 "7,9 REF pins + CKE H->L"),
+    Row("Self Refresh Exit",        "SRX",   Pin(1, 1, 1, 1), X, 0, 1, carriesColumn = false, carriesBank = false, carriesRow = false, opCode = false, None,                 "7,8,9,10 NOP pins + CKE L->H"),
     Row("Single Bank Precharge",    "PRE",   Pin(1, 0, 1, 0), 0, 1, 1, carriesColumn = false, carriesBank = true,  carriesRow = false, opCode = false, Some("precharge"),    ""),
     Row("Precharge all Banks",      "PREA",  Pin(1, 0, 1, 0), 1, 1, 1, carriesColumn = false, carriesBank = false, carriesRow = false, opCode = false, Some("prechargeAll"), ""),
     Row("RFU",                      "RFU",   Pin(1, 0, 1, 1), X, 1, 1, carriesColumn = false, carriesBank = false, carriesRow = false, opCode = false, None,                 "reserved: must never be emitted"),

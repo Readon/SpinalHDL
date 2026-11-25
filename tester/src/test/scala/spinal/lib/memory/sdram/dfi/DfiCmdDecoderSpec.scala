@@ -16,7 +16,8 @@ import spinal.tester.code.SpinalAnyFunSuite
   *   MRS  (1,0,0,0)   REF  (1,0,0,1)   PRE/PREA (1,0,1,0) a10 L/H
   *   ACT  actN=0      WR   (1,1,0,0)   RD   (1,1,0,1)
   *   ZQCL (1,1,1,0) a10=H  NOP  (1,1,1,1)
-  *   (1,1,1,0) a10=L = ZQCS, (1,0,1,1) = RFU/SRE/SRX  -> ILLEGAL (MC never emits)
+  *   (1,1,1,0) a10=L = ZQCS, (1,0,1,1) = the RFU row (SRE/SRX are CKE-transition commands,
+  *   never emitted by the MC) -> ILLEGAL
   */
 class DfiCmdDecoderSpec extends SpinalAnyFunSuite {
   import DfiCmdDecoder.Kind
@@ -43,7 +44,9 @@ class DfiCmdDecoderSpec extends SpinalAnyFunSuite {
   test("DfiCmdDecoder: non-emittable opcodes are flagged ILLEGAL, not silently dropped") {
     // ZQCS (short): same pins as ZQCL but A10=L — the MC never emits it (golden mcOp=None).
     assert(DfiCmdDecoder.decode(1, 1, 1, 0, 0) == Kind.ILLEGAL)
-    // RFU / SRE / SRX: (1,0,1,1) is a CKE-transition command the MC never drives.
+    // (1,0,1,1) is the Table-16 RFU row. SRE/SRX are CKE-transition commands (SRE = REF pins
+    // + CKE H->L, SRX = NOP pins + CKE L->H) and the MC never drives CKE, so it never emits
+    // them.
     assert(DfiCmdDecoder.decode(1, 0, 1, 1, 0) == Kind.ILLEGAL)
     assert(DfiCmdDecoder.decode(1, 0, 1, 1, 1) == Kind.ILLEGAL)
   }

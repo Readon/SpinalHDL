@@ -25,8 +25,9 @@ case class TaskTimingConfig(dfiConfig: DfiConfig) {
 
   def RRD_S = time(dfiConfig.sdram.tRRD_S)
 
-  // tCCD_L/S arrive in nCK (generation table); time() converts nCK -> MC cycles.
-  def CCD_L = time(dfiConfig.sdram.generation.tCCD_L)
+  // tCCD_L/S arrive in nCK; time() converts nCK -> MC cycles. tCCD_L is bin-aware
+  // (SdramConfig.tCCD_L follows the JESD79-4B AC table per operating frequency).
+  def CCD_L = time(dfiConfig.sdram.tCCD_L)
 
   def CCD_S = time(dfiConfig.sdram.generation.tCCD_S)
 

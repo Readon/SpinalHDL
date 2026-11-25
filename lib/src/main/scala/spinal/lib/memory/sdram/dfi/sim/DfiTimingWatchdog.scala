@@ -14,8 +14,8 @@ import scala.collection.mutable
   *  - it consumes `DfiMemoryAgent`'s own decode of JESD79-4B Table 16 (a second decoder, not the
   *    DUT's encoder), and
   *  - its limits come from the ns fields of `SdramTiming` (`RAS/RP/RCD/RFC/FAW/RRD/WTR/RTP`,
-  *    `REF_NS`, `WTR_S`, `RRD_S`) plus the generation's `tCCD_L/tCCD_S`, converted here
-  *    ns -> DRAM cycles -> MC cycles. No expectation is read from `dut.*`.
+  *    `REF_NS`, `WTR_S`, `RRD_S`) plus `SdramConfig.tCCD_L/tCCD_S` (bin-aware for DDR4),
+  *    converted here ns -> DRAM cycles -> MC cycles. No expectation is read from `dut.*`.
   *
   * Unit note (the trap the audit found): `SdramConfig`'s `def tRAS/tRP/tRCD/tRFC/tFAW/tRRD/
   * tWTR/tRTP` are cycles at `cycleTime_ns = 1000/ddrMHZ`, i.e. DRAM-clock cycles, while the

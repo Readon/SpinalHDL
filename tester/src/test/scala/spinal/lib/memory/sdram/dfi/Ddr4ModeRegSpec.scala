@@ -3,8 +3,8 @@ package spinal.lib.memory.sdram.dfi
 import spinal.tester.code.SpinalAnyFunSuite
 
 /**
-  * Mode-register conformance for the DDR4 presets (JESD79-4 Tables 11-15 + the CAS speed-bin
-  * table; DFI 5.2 Table 28 for the write-leveling gate).
+  * Mode-register conformance for the DDR4 presets (JESD79-4B sec. 3.5 MR tables + field
+  * Tables 1-8, 10-13; DFI spec write-leveling gate).
   *
   * The MC programs MR0..MR6 through the init micro-program
   * ([[Ddr4InitSequencer]]/[[SdramInitStep]] in `MakeTask.scala`), so a mode register is a spec
@@ -17,46 +17,64 @@ import spinal.tester.code.SpinalAnyFunSuite
   * own checker (the green-but-wrong pattern ADR-0017 exists to prevent). The PDFs are not in git
   * (ADR-0017 decision 7), so the transcription is inlined here.
   *
-  * Transcription notes (JESD79-4):
-  *  - MR0 (Table 11): A1:A0 burst length (00=BL8 fixed, 01=BC4/on-the-fly, 10=BC4 fixed,
-  *    11=Reserved), A3 burst type (0=sequential), A8 DLL reset, A7 top-only temperature range,
-  *    A6,A5,A4,A2 = CAS latency code, A5,A4 = additive latency (00=0), A17/A13/A12 RFU=0,
-  *    BG1 RFU=0, BG0+BA1:BA0 = MR select.
-  *  - CAS code A6,A5,A4,A2 -> CL: 0000=9, 0001=10, 0010=11, 0011=12, 0100=13, 0101=14,
-  *    0110=15, 0111=16, 1000=18, 1001=20, 1010=22, 1011=24, 11xx=Reserved (speed-bin table).
-  *  - MR1 (Table 12): A12 Qoff, A11 TDQS, A10:A8 RTT_NOM, A7 write leveling enable,
-  *    A4:A3 additive latency (00=0).
-  *  - MR2 (Table 13): A2 = CA parity enable.
-  *  - MR3 (Table 14): A8:A6 = refresh rate 000=1x, 001=2x, 010=4x, 101=on-the-fly 2x,
-  *    110=on-the-fly 4x; A12 reserved; A11 = MPRB; A10:A8 = MPR pull-up/pull-down/RTT.
-  *  - MR4 (Table 15): A3 = TCR (temperature controlled refresh) enable.
-  *  - MR5: A12 = DBI over read enable, A11 = DBI over write enable, A2:A0 = CA parity latency
-  *    (tPARALY).
-  *  - MR6: A12 = tCCD_L extension, A13 = DBI write capture, A10:A9 + A8:A0 = VrefDQ.
+  * Transcription notes (JESD79-4B; the MR maps live in sec. 3.5, the field tables below):
+  *  - MR0: A1:A0 burst length (00=BL8 fixed, 01=BC4/on-the-fly, 10=BC4 fixed, 11=Reserved),
+  *    A3 burst type (0=sequential), A8 DLL reset, A7 TM (Test Mode, 0=Normal 1=Test),
+  *    A6,A5,A4,A2 = CAS latency code (Table 2), A11:A9 = WR/RTP (Table 1);
+  *    RFU=0: A17, A13, A12.
+  *  - CAS code (A6,A5,A4,A2) -> CL: 0000=9, 0001=10, 0010=11, 0011=12, 0100=13, 0101=14,
+  *    0110=15, 0111=16, 1000=18, 1001=20, 1010=22, 1011=24, 11xx=Reserved (Table 2).
+  *  - MR1: A12 Qoff, A11 TDQS, A10:A8 RTT_NOM (Table 3), A7 write leveling enable,
+  *    A4:A3 additive latency (00=0, 01=CL-1, 10=CL-2, 11=rsvd), A2:A1 driver impedance
+  *    (Table 4), A0 DLL enable; RFU=0: A17, A13, A6, A5.
+  *  - MR2: A12 Write CRC, A10:A9 RTT_WR (Table 5), A7:A6 LP ASR, A5:A3 CWL (Table 6);
+  *    RFU=0: A17, A13, A11, A8, A2:A0. (A2 is NOT a CA-parity enable — it is RFU; the
+  *    DRAM-side CA-parity enable is MR5 A2:A0 != 0, sec. 4.17.)
+  *  - MR3: A12:A11 MPR read format, A10:A9 WriteCMD latency CRC/DM (Table 8), A8:A6 fine
+  *    granularity refresh (Table 7: 000=1x, 001=2x, 010=4x, 101/110=on-the-fly), A5 temp
+  *    sensor, A4 per-DRAM; RFU=0: A17, A13.
+  *  - MR4: A12 write preamble, A11 read preamble, A10 RPT, A9 SR abort, A8:A6 CAL (Table 10),
+  *    A4 Vref monitor, A3 TCR enable, A2 TCR range, A1 max PD; RFU=0: A17, A13, A5, A0.
+  *  - MR5: A12 Read DBI, A11 Write DBI, A10 Data Mask, A9 CA parity persistent error,
+  *    A8:A6 RTT_PARK (Table 11), A5 ODT-in-PD, A4 CA parity error status, A3 CRC error clear,
+  *    A2:A0 C/A Parity Latency Mode (Table 12: 000=disable, 001=PL4, 010=PL5, 011=PL6,
+  *    100=PL8, 101-111 rsvd) — non-zero ENABLES DRAM-side CA parity (sec. 4.17).
+  *  - MR6: A12:A10 tCCD_L (Table 13: 000=4 ... 100=8 nCK, codes 101+ rsvd), A7 VrefDQ
+  *    training enable, A6 VrefDQ range, A5:A0 VrefDQ value; RFU=0: A17, A13, A9, A8.
   */
 class Ddr4ModeRegSpec extends SpinalAnyFunSuite {
 
   import Ddr4ModeRegGolden._
 
-  test("MR0 default (0x130) decodes to the fields its own comment claims (Table 11)") {
+  test("MR0 default (0x130) decodes to the fields its own comment claims (sec. 3.5 MR0; CAS code Table 2)") {
     val mr0 = Ddr4ModeRegs().mr0
     assert(mr0 == 0x130, f"default MR0 changed: 0x$mr0%04X")
-    assert(burstLength(mr0) == 8, f"MR0 A1:A0=00 => BL8 fixed (Table 11); got 0x$mr0%04X")
-    assert(burstSequential(mr0), "MR0 A3=0 => sequential burst (Table 11)")
+    assert(burstLength(mr0) == 8, f"MR0 A1:A0=00 => BL8 fixed (sec. 3.5 MR0 table); got 0x$mr0%04X")
+    assert(burstSequential(mr0), "MR0 A3=0 => sequential burst (sec. 3.5 MR0 table)")
     assert(dllReset(mr0), "MR0 A8=1: the init DLL reset, required by JESD79-4 sec. 3.3 step 12")
     assert(casLatency(mr0) == Some(15), s"MR0 CAS code must decode to CL15, got ${casLatency(mr0)}")
-    // AL lives in MR1 A5:A4 (Table 12), NOT in MR0 — MR0 A6:A4,A2 is the CAS Latency field
+    // AL lives in MR1 A4:A3, NOT in MR0 — MR0 A6:A4,A2 is the CAS Latency field
     // (Table 2). The scheduler's AL=0 assumption is a statement about MR1, which the MC writes 0.
-    assert(additiveLatency(Ddr4ModeRegs().mr1) == 0, "MR1 A5:A4 = 00 => AL disabled (Table 12); the scheduler assumes AL=0")
+    assert(additiveLatency(Ddr4ModeRegs().mr1) == 0, "MR1 A4:A3 = 00 => AL disabled; the scheduler assumes AL=0")
     assert(encodeCl(15) == mr0, "the CL encoder (Table 2 field A6,A5,A4,A2, plus the A8 DLL reset it sets) must reproduce the default MR0")
   }
 
-  test("no MR preset sets an RFU bit (Tables 11-15: 'must be programmed to 0 during MRS')") {
-    // RFU on MR0/MR1: A17, A13, A12, plus BG1 in the MR-select field. JESD79-4 Table 11 marks
-    // A17/A13/A12 RFU = 0; a set bit there is a programming violation the agent's MR map
-    // tolerates because it only records what it sees.
-    Ddr4ModeRegs().productIterator.collect { case v: Int => v }.foreach { op =>
-      assert((op & 0x1E000) == 0, f"a preset OP code sets an RFU bit (A17,A13:A10 must be 0): 0x$op%04X")
+  test("no MR preset sets an RFU bit (JESD79-4B sec. 3.5: RFU fields 'must be programmed to 0')") {
+    // Per-register must-be-zero RFU bits, restricted to the on-bus 14-bit MRS OP code
+    // A13:A0; A16:A14 are command pins at MRS time (JESD79-4B Table 16 NOTE 1) and A17 is a
+    // phantom bit (Table 16 NOTE 12), so neither is programmable. The old single 0x1E000
+    // mask was wrong on both ends: it checked dead bits A16:A14 and missed A12 (MR0) and
+    // the per-register RFU bits of MR1-MR6.
+    val rfu = Seq(
+      ("MR0", Ddr4ModeRegs().mr0, 0x3000), // A13, A12
+      ("MR1", Ddr4ModeRegs().mr1, 0x2060), // A13, A6, A5
+      ("MR2", Ddr4ModeRegs().mr2, 0x2907), // A13, A11, A8, A2:A0
+      ("MR3", Ddr4ModeRegs().mr3, 0x2000), // A13
+      ("MR4", Ddr4ModeRegs().mr4, 0x2021), // A13, A5, A0
+      ("MR5", Ddr4ModeRegs().mr5, 0x2000), // A13
+      ("MR6", Ddr4ModeRegs().mr6, 0x2300)  // A13, A9, A8
+    ).foreach { case (name, op, mask) =>
+      assert((op & mask) == 0, s"$name preset OP code sets an RFU bit (mask 0x$mask%X must be 0): 0x$op%04X")
     }
   }
 
@@ -69,22 +87,26 @@ class Ddr4ModeRegSpec extends SpinalAnyFunSuite {
     assert(casLatency(clBits(0xc) | (1 << 8)).isEmpty, "11xx is Reserved in the speed-bin table")
   }
 
-  test("MR1 default keeps write leveling disabled and Qoff off (Table 12)") {
+  test("MR1 default keeps write leveling disabled and Qoff off (sec. 3.5 MR1; RTT_NOM Table 3)") {
     val mr1 = Ddr4ModeRegs().mr1
     assert(((mr1 >> 7) & 1) == 0, "MR1.A7 write leveling enable is 0 in the default preset")
     assert(((mr1 >> 12) & 1) == 0, "MR1.A12 Qoff=0 => output buffer enabled")
     assert(rttNom(mr1) == 0, "MR1.A10:A8 RTT_NOM=0 (RZQ/1 off) — the reference model's ODT monitor has no RTT term, so the preset must stay inert")
-    // DFI 5.2 Table 28: "Write pulses sent by the PHY on receipt of a dfi_wrlvl_en command from
-    // the MC (with DDR4 MR1.A7 enabled)". Nothing in this repo sets MR1.A7, so the legacy write
-    // leveling handshake (io.legacyWrlvlTrigger) can only work for a user who injects MR1.A7
-    // themselves. Assert the gate is at least observable, and record the gap.
+    // DDR4 write leveling needs the DRAM-side MR1.A7 write-leveling enable (JESD79-4B sec. 3.5:
+    // "A7 Write Leveling Enable, 0 = Disable, 1 = Enable"). Nothing in this repo sets MR1.A7, so
+    // the legacy write leveling handshake (io.legacyWrlvlTrigger) can only work for a user who
+    // injects MR1.A7 themselves. Assert the gate is at least observable, and record the gap.
     assert(writeLevelingEnable(mr1) == false,
-      "MR1.A7 is not programmed by any preset: the DDR4 write-leveling precondition (DFI 5.2 " +
-      "Table 28) is unmet by the built-in preset")
+      "MR1.A7 is not programmed by any preset: the DDR4 write-leveling precondition (JESD79-4B " +
+      "sec. 3.5 MR1.A7) is unmet by the built-in preset")
+    // JESD79-4 sec. 3.3 power-up init: the DLL must be ENABLED (MR1.A0=1) before the MR0
+    // DLL-reset bit re-locks it; a preset with A0=0 leaves the DRAM's DLL off on real silicon.
+    assert((mr1 & 1) == 1,
+      "MR1.A0=1 (DLL enable) is required by JESD79-4 sec. 3.3; the default preset must set it")
   }
 
-  test("MR3 refresh-rate bits and REF_RATE must be the same decision (Table 14, sec. 4.9.2)") {
-    // JESD79-4 Table 14: A8:A6 = 000 1x, 001 fixed 2x, 010 fixed 4x, 101 on-the-fly 2x,
+  test("MR3 refresh-rate bits and REF_RATE must be the same decision (Table 7, sec. 4.9.2)") {
+    // JESD79-4 Table 7: A8:A6 = 000 1x, 001 fixed 2x, 010 fixed 4x, 101 on-the-fly 2x,
     // 110 on-the-fly 4x; the scheduler divides tREFI by SdramTiming.REF_RATE (SdramConfig.tREF).
     assert(refreshRateOf(Ddr4ModeRegs().mr3) == 1, "default MR3 = normal 1x refresh")
     Seq(1 -> 0x000, 2 -> 0x040, 4 -> 0x080).foreach { case (rate, bits) =>
@@ -102,7 +124,7 @@ class Ddr4ModeRegSpec extends SpinalAnyFunSuite {
     }
   }
 
-  test("MR4 TCR is disabled and the MC has no derating path (Table 15)") {
+  test("MR4 TCR is disabled and the MC has no derating path (sec. 3.5 MR4)") {
     val mr4 = Ddr4ModeRegs().mr4
     assert(((mr4 >> 3) & 1) == 0, "MR4.A3 TCR must stay 0: the scheduler has no 3.9us derating path")
     // JESD79-4 sec. 4.8: above 85 C the DRAM requires tREFI halved; TCR off means the *system*
@@ -111,7 +133,7 @@ class Ddr4ModeRegSpec extends SpinalAnyFunSuite {
     assert(tcrEnable(mr4) == false)
   }
 
-  test("MR5 DBI bits are what gates the MC datapath (Table 15, sec. 4.11)") {
+  test("MR5 DBI bits are what gates the MC datapath (Tables 28/29, sec. 4.11)") {
     Seq(0x0000, 0x1000, 0x0800, 0x1800).foreach { mr5 =>
       val cfg = Ddr4Cfg(fr = 2, mr5 = mr5)
       val rdBit = (mr5 >> 12) & 1
@@ -122,26 +144,29 @@ class Ddr4ModeRegSpec extends SpinalAnyFunSuite {
     }
   }
 
-  test("MR2/MR6 defaults keep CA parity and tCCD_L extension off (Table 13, Table 16)") {
+  test("CA parity gates on MR5 A2:A0 and the init sequence lifts MR6 tCCD_L (Table 12, Table 13)") {
     val regs = Ddr4ModeRegs()
-    assert(caParityEnable(regs.mr2) == false, "MR2.A2 CA parity enable = 0 in the default preset")
-    assert(((regs.mr6 >> 12) & 1) == 0, "MR6.A12 tCCD_L extension = 0 (tCCD_L = 4 nCK, JESD79-4 Table 34)")
-    assert(((regs.mr6 >> 13) & 1) == 0, "MR6.A13 DBI write capture = 0")
-    // The MC gates dfi_parity on SIGNAL PRESENCE only (DfiConfig: useCaParity =
-    // generation.hasCaParity && signalConfig.useParity), NOT on MR2.A2 — asymmetric with the
-    // MR-gated DBI path. A board that turns on dfi_parity without MR2.A2 gets parity the DRAM
-    // ignores, and no test can see it. Recorded as ADR-0017 finding F7.
-    val cfg = Ddr4Cfg(fr = 2, caParity = true)
-    assert(cfg.useCaParity, "the signal-level gate is on")
-    assert(caParityEnable(cfg.ddr4ModeRegs.mr2) == false,
-      "MR2.A2 is not programmed by any preset: the parity gate is signal-presence only, " +
-      "so MC-generated parity is not enabled on a default-configured DRAM (asymmetric with " +
-      "the MR5-gated DBI path)")
+    assert((regs.mr5 & 0x7) == 0, "raw MR5 A2:A0 CA-parity latency = 000 (disabled) in the default preset")
+    assert(regs.mr6 == 0x000, "raw MR6 default: tCCD_L field A12:A10 = 000")
+    // The DRAM-side CA-parity enable is MR5 A2:A0 != 0 (JESD79-4B Table 12 + sec. 4.17).
+    // DfiConfig elaboration-gates useCaParity on it and fails fast in the catastrophic
+    // direction: a parity-surface config that leaves the latency mode at 0 drives parity
+    // the DRAM ignores.
+    val cfg = Ddr4Cfg(fr = 2, caParity = true, mr5 = 0x0001)
+    assert(cfg.useCaParity, "parity surface + MR5 PL4 -> useCaParity on")
+    assert((cfg.ddr4ModeRegs.mr5 & 0x7) != 0, "the DRAM-side MR5 gate is what enables parity, not signal presence")
+    // Table 13 NOTE 1: program tCCD_L per the AC table; at the 400 MT/s test point the floor
+    // is 5 nCK, so the init sequence lifts MR6 A12:A10 from 000 to 001.
+    val mr6Step = SdramInitStep.defaultFor(SdramGeneration.DDR4, regs, fr = 2)
+      .find(s => s.kind == SdramInitStep.MRS && s.mrIndex == 6)
+      .map(_.opCode)
+    assert(mr6Step == Some(0x400), s"init MR6 must program tCCD_L = 5 nCK (AC floor, code 001 in A12:A10), got $mr6Step")
   }
 }
 
 /**
-  * Test-side golden decoder for the DDR4 mode registers (JESD79-4 Tables 11-16). Not derived
+  * Test-side golden decoder for the DDR4 mode registers (JESD79-4B sec. 3.5 MR tables +
+  * Tables 2, 3, 6, 7, 12, 13). Not derived
   * from the DUT. Bit positions are the A-bit numbers the tables use; the MR-select field
   * (BG0, BA1:BA0) is carried in the command's bank field, not in the OP code, so it is out of
   * these masks.
@@ -159,10 +184,11 @@ object Ddr4ModeRegGolden {
   def burstLength(mr0: Int): Int = (mr0 & 0x3) match { case 0 => 8; case 1 => -1; case 2 => 4; case _ => -1 }
   def burstSequential(mr0: Int): Boolean = ((mr0 >> 3) & 1) == 0
   def dllReset(mr0: Int): Boolean = ((mr0 >> 8) & 1) == 1
-  def additiveLatency(mr0: Int): Int = (mr0 >> 4) & 0x3
+  /** Additive latency: MR1 A4:A3 (00=0, 01=CL-1, 10=CL-2, 11=rsvd). NOT an MR0 field (its
+    * A6:A4,A2 is the CAS-latency field), and NOT A5:A4 (the old decoder read the wrong pair). */
+  def additiveLatency(mr1: Int): Int = (mr1 >> 3) & 0x3
   def writeLevelingEnable(mr1: Int): Boolean = ((mr1 >> 7) & 1) == 1
   def rttNom(mr1: Int): Int = (mr1 >> 8) & 0x7
-  def caParityEnable(mr2: Int): Boolean = ((mr2 >> 2) & 1) == 1
   /** 1/2/4 for the fixed encodings; -1 for on-the-fly/reserved (no fixed scheduler meaning). */
   def refreshRateOf(mr3: Int): Int = (mr3 >> 6) & 0x7 match {
     case 0 => 1
@@ -182,7 +208,7 @@ object Ddr4ModeRegGolden {
   * parity axes exposed.
   *
   * `rate` sets BOTH halves of the refresh-rate decision: `SdramTiming.REF_RATE` (the MC side,
-  * divides tREFI) and MR3.A8:A6 (the DRAM side, JESD79-4 Table 14). tREFI is the absolute
+  * divides tREFI) and MR3.A8:A6 (the DRAM side, JESD79-4 Table 7). tREFI is the absolute
   * `REF_NS` = 7800 ns, not the legacy per-row `REF` (us) derivation
   * (SdramConfig.scala:116-122: REF_NS=0 falls back to `REF*ddrMHZ/rowSize`).
   */
@@ -198,7 +224,7 @@ object Ddr4Cfg {
             ranks: Int = 1,
             ddrMHz: Int = 200,
             mr0: Int = 0x130,
-            mr1: Int = 0x000,
+            mr1: Int = 0x001,
             mr2: Int = 0x000,
             mr5: Int = 0x0000,
             caParity: Boolean = false,

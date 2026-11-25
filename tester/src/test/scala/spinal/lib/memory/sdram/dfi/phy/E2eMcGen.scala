@@ -12,7 +12,10 @@ object E2eMcGen {
   def main(args: Array[String]): Unit = {
     // Optional args: mr5 hex override (e.g. "0x1800" = write+read DBI enabled),
     // sourceWidth (BMB source arbitration; 0 = single source, 1 = 2 sources).
-    val mr5: Int = if (args.length >= 1) java.lang.Integer.decode(args(0)).toInt else 0
+    // Default 0x001: CA parity latency PL4 — the status surface (useStatusSignals = true)
+    // carries dfi_parity_in, so the DRAM-side enable (MR5 A2:A0, JESD79-4B Table 12) must be
+    // programmed; DfiConfig fails elaboration otherwise.
+    val mr5: Int = if (args.length >= 1) java.lang.Integer.decode(args(0)).toInt else 0x001
     val srcW: Int = if (args.length >= 2) args(1).toInt else 0
 val sdramtime = SdramTiming(
       generation = 3, RFC = 260, RAS = 38, RP = 15, RCD = 15,
