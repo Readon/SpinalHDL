@@ -72,11 +72,13 @@ case class CmdTxd(taskConfig: TaskConfig, dfiConfig: DfiConfig) extends Componen
     // A14 <- RA[14], A15 <- RA[15], A16 <- RA[16]; zero-extended beyond rowWidth.
     val rowFull = io.task.address.row.resize(17)
 
-    // cid stays 0: rank selection uses csN (one chip-select per rank); cid is an HBM-style
-    // alternative the PHY ignores in this topology. (payload.setAll() above would otherwise
-    // leave cid=1 on every command.)
+    // dfi_cid carries the 3DS logical rank (DFI 5.2 sec. 4.5.2 / Table 46: logical ranks map
+    // onto dfi_cid[2:0]). This MC's task carries one cs index per physical rank, so the rank
+    // index is zero-extended onto dfi_cid (rank 0 -> CID 0, rank 1 -> CID 1 for cidWidth=2):
+    // the DFI-boundary parity logic (DfiAlignment, DFI 5.2 Table 4 dfi_parity_in row set) counts the driven
+    // cid bits. (payload.setAll() above would otherwise leave cid=1 on every command.)
     when(active || write || read || precharge || prechargeAll || refresh || io.task.mrs || io.task.zq) {
-      cmdphase(dfiConfig.timeConfig.cmdPhase).cid := B(0, dfiConfig.chipIdWidth bits)
+      cmdphase(dfiConfig.timeConfig.cmdPhase).cid := io.task.address.cs.asBits.resize(dfiConfig.chipIdWidth)
     }
 
     when(active) {

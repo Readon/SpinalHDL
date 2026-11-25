@@ -20,8 +20,8 @@ case class CAAlignment(config: DfiConfig) extends Component {
   // In general, the dfi_reset_n signal is defined as low at reset; however, in some cases it may be necessary
   // to hold dfi_reset_n high during initialization.
   if (config.useResetN) io.output.resetN.setAll()
-  // dfi_odt (DFI 5.2 Table 37): the MC drives ODT in all phases, asserting for the CS whose
-  // data window is active (write or read) and parking elsewhere. The per-phase/per-CS enable
+  // dfi_odt (DFI 5.2 Table 4 dfi_odt_pN row + §4.10.2): the MC drives ODT in all phases,
+  // asserting for the CS whose data window is active (write or read) and parking elsewhere. The per-phase/per-CS enable
   // is computed at the Alignment top level from the sibling Wr/RdAlignment windows and fed in
   // via io.odtEn; this component just repacks it onto the phase-major dfi_odt bus.
   if (config.useOdt) {
@@ -67,15 +67,18 @@ case class CAAlignment(config: DfiConfig) extends Component {
     }
   }
 
-  // DDR4 CA parity (JESD79-4B §4.17): even parity = XOR of every COVERED CA pin of that phase,
-  // computed from the values actually driven on the bus this cycle (command phases use the
-  // command values, NOP phases the idle defaults — idle XORs to 0 because address/bank/bg idle
-  // at 0 and act_n/ras/cas/we idle at 1, four 1s -> 0). Coverage set: ACT_n, RAS_n/A16,
-  // CAS_n/A15, WE_n/A14, A13..A0, BA, BG. A16/A15/A14 are taken from the dedicated RAS/CAS/WE
-  // pins ONLY: on ACT the address bus carries the full row, so its top three bits duplicate
-  // RAS/CAS/WE — the address term is therefore masked to the low 14 bits so each pin is counted
-  // exactly once. CID (C0-C2 die-select) IS covered per §4.17 for 3DS/stacked devices.
-  // CS_n/CKE/ODT are deliberately NOT covered (spec). Same-cycle (tcapar_lat = 0).
+  // DDR4 CA parity at the DFI boundary: dfi_parity_in_pN is the even parity of the DFI command
+  // bus (DFI 5.2 Table 4, dfi_parity_in row: dfi_address, dfi_bank, dfi_bg, dfi_act_n, dfi_cas_n, dfi_cid,
+  // dfi_ras_n, dfi_we_n). The DFI-boundary set INCLUDES CID, unlike the DRAM-pin set of
+  // JESD79-4B §4.17 (ACT_n, RAS_n/A16, CAS_n/A15, WE_n/A14, A13..A0, BA, BG — no CID): a PHY
+  // that translates to §4.17 pins must recompute parity for the DRAM; this DUT drives the
+  // Table 4 (dfi_parity_in row) value. Even parity = XOR of the covered signals, computed from the values actually
+  // driven on the bus this cycle (command phases use the command values, NOP phases the idle
+  // defaults — idle XORs to 0 because address/bank/bg/cid idle at 0 and act_n/ras/cas/we idle
+  // at 1, four 1s -> 0). A16/A15/A14 are taken from the dedicated RAS/CAS/WE pins ONLY: on ACT
+  // the address bus carries the full row, so its top three bits duplicate RAS/CAS/WE — the
+  // address term is therefore masked to the low 14 bits so each pin is counted exactly once.
+  // CS_n/CKE/ODT are deliberately NOT covered (both conventions). Same-cycle (tcapar_lat = 0).
   if (config.useCaParity) {
     for (i <- 0 until config.frequencyRatio) {
       val addrCovered = Math.min(14, config.addressWidth) // A13..A0 only; A16/A15/A14 come from RAS/CAS/WE
@@ -193,9 +196,6 @@ case class WrAlignment(config: DfiConfig) extends Component {
   val wrdataHistory = Vec(Vec(DfiWrData(config), timeConfig.tPhyWrData / frequencyRatio + 2), frequencyRatio)
   for (i <- 0 until (frequencyRatio)) {
     wrdataHistory(i) := History(io.input(i).payload, 0 to timeConfig.tPhyWrData / frequencyRatio + 1)
-    io.output.wr(i).wrdata.assignDontCare()
-    io.output.wr(i).wrdataMask.assignDontCare()
-    if (config.useWrDbi) io.output.wr(i).wrdataDbiN.assignDontCare()
   }
 
   for (phase <- 0 until (frequencyRatio)) {

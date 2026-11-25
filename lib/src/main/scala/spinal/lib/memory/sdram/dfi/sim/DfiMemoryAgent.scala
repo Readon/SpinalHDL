@@ -72,10 +72,19 @@ class DfiMemoryAgent(
   val weNProxy = ctrl.weN.simProxy()
   val actNProxy = if (modernCmdBus) ctrl.actN.simProxy() else null
   val bgProxy = if (modernCmdBus) ctrl.bg.simProxy() else null
-  // DDR4 CA parity (JESD79-4B §4.17): the DRAM-side model recomputes even parity over the covered
-  // CA pins (ACT_n, RAS_n/A16, CAS_n/A15, WE_n/A14, A13..A0, BA, BG — NOT CKE/ODT/CS_n) from the
-  // bus at cmdPhase every cycle and compares with the DUT's dfi_parity. On a mismatch the DRAM
-  // IGNORES the command (no enqueue / no data movement) and pulls ALERT_n low for one cycle
+  // DDR4 CA parity (JESD79-4B §4.17 / DFI 5.2 §4.12): the agent sits at the DFI boundary
+  // (MC -> PHY) and recomputes the parity the DFI 5.2 Table 4 (dfi_parity_in row) signal set defines —
+  // dfi_address (A13..A0), dfi_bank, dfi_bg, dfi_act_n, dfi_cas_n, dfi_cid, dfi_ras_n,
+  // dfi_we_n, i.e. INCLUDING CID — from the bus at cmdPhase every cycle and compares it with
+  // the DUT's dfi_parity. The DRAM-pin convention (JESD79-4B §4.17: PAR covers ACT_n,
+  // RAS_n/A16, CAS_n/A15, WE_n/A14, BG, BA, A13..A0 — NOT CID, CID is not a DRAM pin) is
+  // modeled in parallel as `expectedDramPin` below: the two conventions coincide only when
+  // bitCount(CID) is even, so for CID≠0 traffic (3DS logical ranks) the DFI-boundary value
+  // the DUT drives and the value a real DRAM would check over its own pins DIFFER, and a 3DS
+  // PHY must translate between them. This agent models that split (counters below) but NOT
+  // the PHY translation itself — it checks the DFI-boundary convention only, so a DUT parity
+  // bug is a mismatch and a CID≠0 command is never misjudged. On a mismatch the DRAM IGNORES
+  // the command (no enqueue / no data movement) and pulls ALERT_n low for one cycle
   // (tPAR_ALERT_ON simplified to 1 cycle). parityCorruptCycle simulates a corrupted parity bit
   // arriving at the DRAM (wire-level error): the first idle (CS-all-high) cycle at/after that
   // cycle sees its received parity flipped — the command bus itself stays intact, so no traffic
@@ -85,6 +94,13 @@ class DfiMemoryAgent(
   val alertNProxy = if (useCaParity && status != null && status.alertN != null) status.alertN.simProxy() else null
   var parityCorruptCycle = -1L
   var alertLowCount = 0
+  // Dual-convention counters (3DS / CID≠0): command phases carrying a non-zero CID, and of
+  // those the phases where the DFI-boundary expected value and the DRAM-pin expected value
+  // disagree (odd bitCount(CID)). The tester asserts these so a case that claims to exercise
+  // CID≠0 cannot pass vacuously (a DUT regressing to cid=0, or the agent collapsing the two
+  // conventions into one, fails the suite).
+  var cidNonzeroCmds = 0L
+  var cidDivergentCmds = 0L
 
   val rowAddrQueue = mutable.Queue[Long]()
   val bankQueue = mutable.Queue[Long]()
@@ -475,12 +491,12 @@ class DfiMemoryAgent(
       // ---- DDR4 CA parity check (DRAM-side model, see useCaParity comment above) ----
       // Even parity: the parity bit equals the XOR of the covered pins, so pins+parity have an
       // even count of ones. Expected parity is recomputed here from the cmdPhase bus slices,
-      // independently of the DUT's RTL XOR tree. Coverage: actN/ras/cas/weN + bg + bank +
-      // A13..A0 (the low 14 address bits). A16/A15/A14 are the RAS/CAS/WE pins and are NOT
-      // re-counted from the address bus (on ACT the address bus duplicates them in its top bits,
-      // so counting the full width would double-count and cancel the ACT row's top three bits).
-      // CID (C0-C2 die-select) IS covered per §4.17 for 3DS/stacked devices. Idle phases XOR to 0
-      // (addr/bank/bg idle 0,
+      // independently of the DUT's RTL XOR tree. DFI 5.2 Table 4 (dfi_parity_in row) set (this boundary, incl.
+      // dfi_cid): actN/ras/cas/weN + cid + bg + bank + A13..A0 (the low 14 address bits).
+      // A16/A15/A14 are the RAS/CAS/WE pins and are NOT re-counted from the address bus (on ACT
+      // the address bus duplicates them in its top bits, so counting the full width would
+      // double-count and cancel the ACT row's top three bits). JESD79-4B §4.17 set (DRAM pins,
+      // no CID): the same terms minus cid. Idle phases XOR to 0 (addr/bank/bg/cid idle 0,
       // act_n/ras/cas/we idle 1, four 1s -> 0).
       var cmdDropped = false
       if (useCaParity) {
@@ -495,11 +511,20 @@ class DfiMemoryAgent(
           parityCorruptCycle = -1
           println(s"[CAPARITY] $agentCycle injected parity corruption on idle phase $cmdPhase")
         }
+        val cidOnes = Integer.bitCount(cidSlice)
         val ones =
           (if (actN) 1 else 0) + (if (ras) 1 else 0) + (if (cas) 1 else 0) + (if (weN) 1 else 0) +
-            Integer.bitCount(cidSlice) + Integer.bitCount(cmdBg.toInt) +
+            cidOnes + Integer.bitCount(cmdBg.toInt) +
             java.lang.Long.bitCount(bankSlice) + java.lang.Long.bitCount(addrCovered)
-        val expected = (ones & 1) == 1 // parity bit completes pins+parity to an even count
+        val expected = (ones & 1) == 1 // DFI 5.2 Table 4 (dfi_parity_in row) boundary set (includes dfi_cid): even count incl. parity bit
+        // JESD79-4B §4.17 DRAM-pin set (no CID): what a stacked die would compute over its own
+        // pins. Differs from `expected` exactly when bitCount(CID) is odd — the CID≠0 split
+        // this ticket exists to prove is exercised, not assumed.
+        val expectedDramPin = ((ones - cidOnes) & 1) == 1
+        if (cidSlice != 0) { // cid bus idles at 0, so non-zero cid marks a CID≠0 command phase
+          cidNonzeroCmds += 1
+          if (expected != expectedDramPin) cidDivergentCmds += 1
+        }
         if (received != expected) {
           cmdDropped = true
           alertNProxy #= 0 // ALERT_n low-active; tPAR_ALERT_ON simplified to 1 cycle
